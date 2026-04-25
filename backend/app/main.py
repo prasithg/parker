@@ -2,27 +2,35 @@
 
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 
-from app.config import settings
-from app.db.database import create_tables
 from app.calls.router import router as calls_router
+from app.calls.scheduler import setup_scheduler
+from app.config import settings
 from app.dashboard.router import router as dashboard_router
+from app.db.database import SessionLocal, create_tables
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: create DB tables, start scheduler."""
+
     create_tables()
-    # TODO: start APScheduler for call scheduling
-    yield
-    # Shutdown
+    scheduler = BackgroundScheduler(timezone="America/New_York")
+    setup_scheduler(scheduler, SessionLocal)
+    scheduler.start()
+    app.state.scheduler = scheduler
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
     title="ParkinsClaw",
     description="Voice-first Parkinson's companion",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
