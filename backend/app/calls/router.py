@@ -1,4 +1,4 @@
-"""Call scheduling, triggering, and history endpoints."""
+"""Call triggering and history endpoints."""
 
 from __future__ import annotations
 
@@ -27,43 +27,37 @@ async def trigger_call(
 
 
 @router.get("/history")
-async def call_history(
-    limit: int = 20,
-    db: Session = Depends(get_db),
-):
-    """Return recent call logs with dose-log details."""
+async def call_history(limit: int = 20, db: Session = Depends(get_db)):
+    """Return recent call logs."""
     calls = (
         db.query(CallLog)
         .order_by(CallLog.started_at.desc())
         .limit(limit)
         .all()
     )
-    return [_call_payload(db, call) for call in calls]
+    return [
+        {
+            "id": c.id,
+            "call_sid": c.call_sid,
+            "call_type": c.call_type,
+            "started_at": c.started_at,
+            "ended_at": c.ended_at,
+            "duration_seconds": c.duration_seconds,
+            "summary": c.summary,
+            "mood": c.patient_mood,
+            "dose_logs": [
+                {
+                    "medication_id": d.medication_id,
+                    "med_name": _med_name(db, d.medication_id),
+                    "confirmed": d.confirmed,
+                }
+                for d in c.dose_logs
+            ],
+        }
+        for c in calls
+    ]
 
 
-def _call_payload(db: Session, call: CallLog) -> dict:
-    return {
-        "id": call.id,
-        "call_sid": call.call_sid,
-        "call_type": call.call_type,
-        "started_at": call.started_at,
-        "ended_at": call.ended_at,
-        "duration_seconds": call.duration_seconds,
-        "summary": call.summary,
-        "mood": call.patient_mood,
-        "dose_logs": [
-            {
-                "id": dose.id,
-                "medication_id": dose.medication_id,
-                "med_name": _med_name(db, dose.medication_id),
-                "scheduled_time": dose.scheduled_time,
-                "confirmed": dose.confirmed,
-            }
-            for dose in call.dose_logs
-        ],
-    }
-
-
-def _med_name(db: Session, medication_id: int) -> str | None:
-    medication = db.get(Medication, medication_id)
-    return medication.name if medication else None
+def _med_name(db: Session, mid: int) -> str | None:
+    m = db.get(Medication, mid)
+    return m.name if m else None

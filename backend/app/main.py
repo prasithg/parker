@@ -15,7 +15,6 @@ from app.db.database import SessionLocal, create_tables
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: create DB tables, start scheduler."""
-
     create_tables()
     scheduler = BackgroundScheduler(timezone="America/New_York")
     setup_scheduler(scheduler, SessionLocal)

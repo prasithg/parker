@@ -136,7 +136,7 @@ def stop_scheduler() -> None:
 
 
 def is_quiet_hours(value: time | datetime | None = None) -> bool:
-    """Backward-compatible quiet-hours wrapper used by early tests."""
+    """Backward-compatible quiet-hours wrapper."""
 
     if isinstance(value, time):
         return value < time(8, 0) or value > time(21, 0)
