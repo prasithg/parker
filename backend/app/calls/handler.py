@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 import logging
 from datetime import datetime
-from typing import Callable
+from typing import Callable, Optional, Union
 from urllib.parse import parse_qs
 
 from fastapi import Request
@@ -39,21 +39,27 @@ def get_twilio_client():
 
 
 def trigger_outbound_call(
-    db: Session | None = None,
-    to: str | None = None,
+    to_number: Optional[Union[str, Session]] = None,
     call_type: str = "check_in",
-    *,
-    to_number: str | None = None,
     webhook_url: str = "/calls/twilio/voice",
     db_session_factory: Callable[[], Session] | None = None,
-) -> CallLog | str:
+    db: Optional[Session] = None,
+) -> Union[CallLog, str]:
     """Create a CallLog and initiate an outbound call when Twilio is configured."""
+
+    return_call_log = False
+    if isinstance(to_number, Session):
+        db = to_number
+        to_number = None
+        return_call_log = True
+    if db is not None:
+        return_call_log = True
 
     owns_session = db is None
     if db is None:
         db = db_session_factory() if db_session_factory else SessionLocal()
 
-    to = to_number or to or settings.patient_phone_number
+    to = to_number or settings.patient_phone_number
     try:
         call_log = CallLog(
             call_sid=f"pending-{datetime.utcnow().timestamp()}",
@@ -80,11 +86,11 @@ def trigger_outbound_call(
         db.commit()
         db.refresh(call_log)
         logger.info("Outbound %s call placed: %s -> %s", call_type, call_log.call_sid, to)
-        return call_log.call_sid if db_session_factory else call_log
+        return call_log if return_call_log else call_log.call_sid
     except Exception:
         logger.exception("Failed to trigger outbound call")
         db.rollback()
-        return "" if db_session_factory else None
+        return None if return_call_log else ""
     finally:
         if owns_session:
             db.close()
@@ -127,10 +133,10 @@ async def handle_twilio_voice_webhook(request: Request) -> str:
 
 def handle_call_completion(
     call_sid: str,
-    duration_seconds: int | None = None,
-    recording_url: str | None = None,
-    duration: int | None = None,
-) -> CallLog | None:
+    duration_seconds: Optional[int] = None,
+    recording_url: Optional[str] = None,
+    duration: Optional[int] = None,
+) -> Optional[CallLog]:
     """Update a call log when a call finishes and summarize the transcript."""
 
     del recording_url
@@ -154,7 +160,7 @@ def handle_call_completion(
         db.close()
 
 
-async def _read_twilio_form(request: Request) -> dict[str, list[str]]:
+async def _read_twilio_form(request: Request) -> dict[str, List[str]]:
     body = await request.body()
     if not body:
         return {}

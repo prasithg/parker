@@ -1,7 +1,9 @@
 """Pydantic schemas for medication and call summaries."""
 
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -49,8 +51,8 @@ class CallSummary(BaseModel):
     """Summary data for a completed call."""
 
     call_id: int
-    started_at: datetime | None
-    duration_seconds: int | None
-    summary: str | None
-    mood: str | None
+    started_at: Optional[datetime]
+    duration_seconds: Optional[int]
+    summary: Optional[str]
+    mood: Optional[str]
     dose_logs: list[dict[str, Any]] = Field(default_factory=list)
