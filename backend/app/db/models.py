@@ -25,6 +25,7 @@ class CallLog(Base):
 
     dose_logs: Mapped[list["DoseLog"]] = relationship(back_populates="call_log")
     mood_entries: Mapped[list["MoodEntry"]] = relationship(back_populates="call_log")
+    escalations: Mapped[list["Escalation"]] = relationship("Escalation", back_populates="call_log")
 
 
 class Medication(Base):

@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy.orm import Session
+
+from app.escalation.engine import get_open_escalations
+from app.meds.tracker import get_due_medications
+from app.memory.store import get_context_for_next_call
+
 BASE_IDENTITY = (
     "You are ParkinsClaw, a voice companion calling in a trusted family "
     "member's cloned voice. You sound warm, patient, familiar, and never "
@@ -86,3 +92,29 @@ def _format_due_meds(due_meds: list[dict[str, Any]]) -> str:
             detail = f"{detail} at {scheduled}"
         lines.append(f"- {detail}")
     return "\n\nDue medications:\n" + "\n".join(lines)
+
+
+def build_system_prompt_with_context(
+    db: Session,
+    call_type: str,
+    patient_name: str = "Dad",
+) -> str:
+    """Build a system prompt enriched with memories, meds, and open escalations."""
+
+    due_meds = [
+        {"name": med.name, "dosage": med.dosage, "time": scheduled_time}
+        for med, scheduled_time in get_due_medications(db)
+    ]
+    context_parts = [get_context_for_next_call(db)]
+    open_escalations = get_open_escalations(db)
+    if open_escalations:
+        context_parts.append("Open escalations to be aware of:")
+        context_parts.extend(
+            f"- {item.severity}: {item.reason}" for item in open_escalations
+        )
+    return get_system_prompt(
+        call_type=call_type,
+        patient_name=patient_name,
+        due_meds=due_meds,
+        recent_context="\n".join(context_parts),
+    )

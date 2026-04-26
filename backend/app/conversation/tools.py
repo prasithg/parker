@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
 from app.db.models import CallLog, Medication, MoodEntry
+from app.escalation.engine import create_escalation
+from app.exercises.session import complete_exercise, start_exercise
 from app.meds.tracker import log_dose
 
 logger = logging.getLogger("parkinsclaw.tools")
@@ -59,10 +60,37 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "exercise_type": {
                         "type": "string",
-                        "enum": ["word_game", "memory_recall", "trivia"],
+                        "enum": [
+                            "word_game", "memory_recall", "trivia", "conversation_starter",
+                            "word_association", "category_naming", "word_chain",
+                            "three_word_recall", "story_recall", "daily_event_recall",
+                            "general_trivia", "number_games", "would_you_rather",
+                            "this_or_that", "tell_me_about"
+                        ],
                     }
                 },
                 "required": ["exercise_type"],
+            },
+        },
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_exercise_result",
+            "description": "Complete and score a cognitive exercise after the patient responds.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "exercise_result_id": {"type": "integer"},
+                    "patient_response": {"type": "string"},
+                    "score": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5,
+                    },
+                },
+                "required": ["exercise_result_id", "patient_response"],
             },
         },
     },
@@ -144,18 +172,37 @@ def handle_cognitive_exercise(
     call_log_id: int,
     exercise_type: str,
 ) -> dict[str, Any]:
-    """Return a short exercise prompt for the agent to use."""
+    """Start a cognitive exercise and return guidance for the agent."""
 
-    del db, call_log_id
-    prompts = {
-        "word_game": "Let's name a few fruits together. What is one fruit you like?",
-        "memory_recall": "I'll say three words: garden, penny, radio. Can you say them back?",
-        "trivia": "Here's a gentle trivia question: what season comes after spring?",
-    }
+    result, follow_up = start_exercise(db, call_log_id, exercise_type)
     return {
         "status": "started",
-        "exercise_type": exercise_type,
-        "prompt": prompts.get(exercise_type, prompts["word_game"]),
+        "exercise_result_id": result.id,
+        "exercise_type": result.exercise_type,
+        "difficulty": result.difficulty,
+        "prompt": result.prompt_given,
+        "follow_up_prompt": follow_up,
+    }
+
+
+def handle_complete_exercise_result(
+    db: Session,
+    call_log_id: int,
+    exercise_result_id: int,
+    patient_response: str,
+    score: int | None = None,
+) -> dict[str, Any]:
+    """Persist the result of a completed cognitive exercise."""
+
+    del call_log_id
+    result = complete_exercise(db, exercise_result_id, patient_response, score)
+    if result is None:
+        return {"status": "error", "message": "Exercise result not found"}
+    return {
+        "status": "completed",
+        "exercise_result_id": result.id,
+        "score": result.score,
+        "completed": result.completed,
     }
 
 
@@ -165,20 +212,16 @@ def handle_escalate_to_family(
     reason: str,
     severity: str,
 ) -> dict[str, Any]:
-    """Record an escalation signal for v0 through logs and call summary text."""
+    """Create a durable escalation for family review."""
 
-    call = db.get(CallLog, call_log_id)
-    alert_text = f"Family escalation ({severity}): {reason}"
-    if call:
-        existing = call.summary or ""
-        call.summary = f"{existing}\n{alert_text}".strip()
-        db.commit()
-    logger.warning("Escalation for call %s [%s]: %s", call_log_id, severity, reason)
+    escalation = create_escalation(db, call_log_id=call_log_id, reason=reason, severity=severity)
+    logger.warning("Escalation created for call %s [%s]: %s", call_log_id, severity, reason)
     return {
         "status": "escalated",
-        "severity": severity,
-        "reason": reason,
-        "recorded_at": datetime.utcnow().isoformat(),
+        "escalation_id": escalation.id,
+        "severity": escalation.severity,
+        "reason": escalation.reason,
+        "notified_contacts": escalation.notified_contacts,
     }
 
 
@@ -186,6 +229,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "log_medication": handle_log_medication,
     "record_mood": handle_record_mood,
     "cognitive_exercise": handle_cognitive_exercise,
+    "complete_exercise_result": handle_complete_exercise_result,
     "escalate_to_family": handle_escalate_to_family,
 }
 

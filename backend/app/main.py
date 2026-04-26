@@ -9,6 +9,8 @@ from app.calls.router import router as calls_router
 from app.calls.scheduler import setup_scheduler
 from app.config import settings
 from app.dashboard.router import router as dashboard_router
+from app.escalation.router import router as escalation_router
+from app.memory.router import router as memory_router
 from app.db.database import SessionLocal, create_tables
 
 
@@ -35,6 +37,8 @@ app = FastAPI(
 
 app.include_router(calls_router, prefix="/calls", tags=["calls"])
 app.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
+app.include_router(escalation_router, prefix="/escalations", tags=["escalations"])
+app.include_router(memory_router, prefix="/memory", tags=["memory"])
 
 
 @app.get("/health")
