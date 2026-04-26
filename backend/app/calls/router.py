@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Request, Response, WebSocket
 from sqlalchemy.orm import Session
 
 from app.calls.handler import (
@@ -14,6 +14,7 @@ from app.calls.handler import (
 )
 from app.db.database import get_db
 from app.db.models import CallLog, Medication
+from app.voice.stream import twilio_media_stream
 
 router = APIRouter()
 
@@ -81,6 +82,13 @@ async def twilio_voice(request: Request):
 
     twiml = await handle_twilio_voice_webhook(request)
     return Response(content=twiml, media_type="application/xml")
+
+
+@router.websocket("/twilio/stream")
+async def twilio_stream(websocket: WebSocket):
+    """Twilio Media Streams WebSocket endpoint."""
+
+    await twilio_media_stream(websocket)
 
 
 @router.post("/twilio/status")

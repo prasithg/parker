@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     
     # OpenAI
     openai_api_key: str = ""
+    openai_realtime_model: str = "gpt-4o-realtime-preview-2024-12-17"
+    openai_realtime_voice: str = "alloy"
     
     # Patient
     patient_phone_number: str = ""
