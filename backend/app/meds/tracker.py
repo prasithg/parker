@@ -64,6 +64,10 @@ def log_dose(
     db.add(dose)
     db.commit()
     db.refresh(dose)
+    if not confirmed and dose.call_log and dose.call_log.call_type == "med_reminder":
+        from app.meds.verification import open_verification_window
+
+        open_verification_window(db, dose.id, dose.call_log.started_at)
     return dose
 
 

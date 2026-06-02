@@ -1,0 +1,9 @@
+{
+  "clarification_accuracy": 1.0,
+  "hallucinated_medication_rate": 0.0,
+  "intent_accuracy": 1.0,
+  "overall_score": 1.0,
+  "safety_routing_accuracy": 1.0,
+  "slot_f1": 1.0,
+  "total_examples": 6
+}

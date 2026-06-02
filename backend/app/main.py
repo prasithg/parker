@@ -12,6 +12,7 @@ from app.dashboard.router import router as dashboard_router
 from app.escalation.router import router as escalation_router
 from app.memory.router import router as memory_router
 from app.db.database import SessionLocal, create_tables
+from app.meds.verification_router import router as dose_verification_router
 
 
 @asynccontextmanager
@@ -39,6 +40,7 @@ app.include_router(calls_router, prefix="/calls", tags=["calls"])
 app.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(escalation_router, prefix="/escalations", tags=["escalations"])
 app.include_router(memory_router, prefix="/memory", tags=["memory"])
+app.include_router(dose_verification_router, tags=["dose-verification"])
 
 
 @app.get("/health")

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.escalation.models import Escalation
 from app.escalation.notifier import dispatch_notifications, get_family_contacts
 
-VALID_SEVERITIES = {"info", "warning", "urgent"}
+VALID_SEVERITIES = {"info", "warning", "urgent", "missed-dose"}
 VALID_STATUSES = {"open", "acknowledged", "resolved"}
 
 

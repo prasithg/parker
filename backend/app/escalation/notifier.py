@@ -108,7 +108,7 @@ def dispatch_notifications(
 def _contacts_for_severity(contacts: list[FamilyContact], severity: str) -> list[FamilyContact]:
     if severity == "info":
         return [contact for contact in contacts if contact.role == "primary_caregiver"]
-    if severity == "warning":
+    if severity in {"warning", "missed-dose"}:
         return [contact for contact in contacts if contact.role in {"primary_caregiver", "family"}]
     if severity == "urgent":
         return contacts

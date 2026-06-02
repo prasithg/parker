@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -50,6 +50,40 @@ class DoseLog(Base):
     patient_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     call_log: Mapped["CallLog"] = relationship(back_populates="dose_logs")
+    verifications: Mapped[list["DoseVerification"]] = relationship(back_populates="dose")
+
+
+class DoseVerification(Base):
+    __tablename__ = "dose_verifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dose_id: Mapped[int] = mapped_column(Integer, ForeignKey("dose_logs.id"), index=True)
+    verification_type: Mapped[str] = mapped_column(
+        Enum(
+            "photo",
+            "text",
+            "caregiver_attested",
+            name="dose_verification_type",
+            native_enum=False,
+        ),
+        index=True,
+    )
+    image_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    text_attestation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "pending",
+            "verified",
+            "missed",
+            name="dose_verification_status",
+            native_enum=False,
+        ),
+        default="pending",
+        index=True,
+    )
+
+    dose: Mapped["DoseLog"] = relationship(back_populates="verifications")
 
 
 class MoodEntry(Base):

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     
     # Database
     database_url: str = "sqlite:///./parkinsclaw.db"
+    dose_verification_window_minutes: int = 30
     
     # Dashboard auth
     dashboard_username: str = "family"
