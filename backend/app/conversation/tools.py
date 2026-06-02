@@ -8,6 +8,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from app.db.models import CallLog, Medication, MoodEntry
+from app.parker.pipeline import capture_intent
 from app.escalation.engine import create_escalation
 from app.exercises.session import complete_exercise, start_exercise
 from app.meds.tracker import log_dose
@@ -112,7 +113,63 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_intent",
+            "description": (
+                "Capture a patient or caregiver's future intent for Parker to resolve, "
+                "stage, and resurface later. Use only for reversible follow-up intents "
+                "such as reminders, not purchases or medical changes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "intent_text": {"type": "string"},
+                    "requested_action": {
+                        "type": "string",
+                        "description": "Requested action, e.g. remind/reminder.",
+                    },
+                    "due_at": {
+                        "type": "string",
+                        "description": "Optional ISO-8601 timestamp for when the intent should resurface.",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Short human-readable subject to resurface.",
+                    },
+                },
+                "required": ["intent_text"],
+            },
+        },
+    },
 ]
+
+def handle_capture_intent(
+    db: Session,
+    call_log_id: int,
+    intent_text: str,
+    requested_action: str = "remind",
+    due_at: str | None = None,
+    subject: str | None = None,
+) -> dict[str, Any]:
+    """Persist a future intent for Parker's resolve/stage/resurface loop."""
+
+    captured = capture_intent(
+        db,
+        call_log_id=call_log_id,
+        intent_text=intent_text,
+        requested_action=requested_action,
+        due_at=due_at,
+        subject=subject,
+    )
+    return {
+        "status": "captured",
+        "captured_intent_id": captured.id,
+        "requested_action": captured.requested_action,
+        "due_at": captured.due_at.isoformat() if captured.due_at else None,
+    }
+
 
 # Compatibility with the initial scaffold.
 ALL_TOOLS = TOOL_DEFINITIONS
@@ -226,6 +283,7 @@ def handle_escalate_to_family(
 
 
 TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
+    "capture_intent": handle_capture_intent,
     "log_medication": handle_log_medication,
     "record_mood": handle_record_mood,
     "cognitive_exercise": handle_cognitive_exercise,
