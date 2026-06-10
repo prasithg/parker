@@ -70,7 +70,7 @@ Deferred: a machine credential for the assistant loop (tick/resurface) when it l
 
 Shipped: `split_utterances` in `backend/app/voice/transcribe.py`, applied inside `transcribe_audio` so its contract is now genuinely "one line per utterance". Two boundary rules: sentence punctuation (`./!/?` + whitespace) and comma-joined capture commands (`, [and] tell|remind|message|send …` — the exact merge Whisper produces for pause-free speech, observed verbatim from the synthesized wav). The critical non-rule: ellipsis disfluencies are never split — "Call... the... you know..." is the text loop's repair-choice cue and must arrive intact (regression-pinned). Verified on real audio: the same wav that previously captured one garbled reminder now stages a reminder + a drafted message to Sarah. Tests: 7 new cases in `backend/tests/test_voice_transcribe.py`.
 
-Deferred: smarter clause splitting (e.g. "and"-joined commands without a comma); live microphone capture (done in the next slice).
+Deferred: smarter clause splitting (e.g. "and"-joined commands without a comma — done in slice 10); live microphone capture (done in the next slice).
 
 ## Post-milestone slice (2026-06-10, seventh): live microphone capture — `make talk`
 
@@ -96,3 +96,9 @@ Shipped: all remaining `parkinsclaw` identifiers renamed to `parker` across the 
 No schema change — existing local DBs named `parkinsclaw.db` are unaffected until `make reset-db`. `make reset-db` now cleans up both names so both old and new installs start clean.
 
 Deferred: nothing. The project now reads as Parker end to end.
+
+## Post-milestone slice (2026-06-10, tenth): and-joined command splitting + Makefile print fix
+
+Shipped: extended `_COMMAND_BOUNDARY` in `backend/app/voice/transcribe.py` to also split on bare `\s+and\s+(capture-verb)` — no comma required. Previously only the comma form (", tell Sarah") was handled; now "Remind me to stretch and tell Sarah hi" correctly produces two utterances. Non-capture uses of "and" (list items like "apples and oranges") are unchanged — the capture-verb lookahead is the discriminator. Also fixed the Makefile `reset-db` print message which still said `parkinsclaw.db` after the slice-9 rename. Tests: 4 new cases in `backend/tests/test_voice_transcribe.py` (bare-and split, multiple bare-and, no-split for list items, and-remind boundary).
+
+Deferred: nothing voice-splitting–related remains. Next open item: model-driven repair-choice candidate generation.

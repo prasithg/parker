@@ -98,6 +98,39 @@ def test_split_utterances_leaves_plain_commas_alone():
     assert split_utterances([line]) == [line]
 
 
+def test_split_utterances_on_bare_and_command():
+    # No comma — "and tell" is a second command, not a list conjunction
+    assert split_utterances(["Remind me to stretch and tell Sarah hi"]) == [
+        "Remind me to stretch",
+        "tell Sarah hi",
+    ]
+
+
+def test_split_utterances_on_multiple_bare_and_commands():
+    assert split_utterances(
+        ["Remind me to stretch and tell Sarah hi and send Rohan a note"]
+    ) == [
+        "Remind me to stretch",
+        "tell Sarah hi",
+        "send Rohan a note",
+    ]
+
+
+def test_split_utterances_and_with_no_capture_verb_left_alone():
+    # "and oranges" is a list item, not a new command
+    line = "Remind me to buy apples and oranges"
+    assert split_utterances([line]) == [line]
+
+
+def test_split_utterances_and_remind_is_a_command_boundary():
+    assert split_utterances(
+        ["Remind me to water the plants and remind me to call the doctor"]
+    ) == [
+        "Remind me to water the plants",
+        "remind me to call the doctor",
+    ]
+
+
 def test_merged_segment_yields_two_captured_intents(db, audio_file):
     exchanges = run_voice_demo(
         db,

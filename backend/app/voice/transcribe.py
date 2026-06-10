@@ -24,10 +24,15 @@ Transcriber = Callable[[Path], list[str]]
 # disfluency the text loop routes to repair choices and must stay intact.
 _SENTENCE_BOUNDARY = re.compile(r"(?<!\.\.)(?<=[.!?])\s+")
 
-# Pause-free speech makes Whisper join two commands with a comma
-# ("…this evening, tell Sarah…"). Split before the text loop's capture
-# verbs, consuming a joining "and" so the fragment matches its patterns.
-_COMMAND_BOUNDARY = re.compile(r",\s+(?:and\s+)?(?=(?:tell|remind|message|send)\b)", re.IGNORECASE)
+# Pause-free speech makes Whisper join two commands — either with a comma
+# ("…this evening, tell Sarah…") or with "and" alone ("…stretch and tell
+# Sarah…"). Split before the text loop's capture verbs in both forms.
+# "and" without a capture verb (e.g. "apples and oranges") does not match.
+_COMMAND_BOUNDARY = re.compile(
+    r",\s+(?:and\s+)?(?=(?:tell|remind|message|send)\b)"  # comma form: ", [and] tell"
+    r"|\s+and\s+(?=(?:tell|remind|message|send)\b)",       # bare form: " and tell"
+    re.IGNORECASE,
+)
 
 VOICE_DEPS_HINT = (
     "faster-whisper is not installed. It is an optional, local-only "
