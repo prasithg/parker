@@ -102,3 +102,13 @@ Deferred: nothing. The project now reads as Parker end to end.
 Shipped: extended `_COMMAND_BOUNDARY` in `backend/app/voice/transcribe.py` to also split on bare `\s+and\s+(capture-verb)` — no comma required. Previously only the comma form (", tell Sarah") was handled; now "Remind me to stretch and tell Sarah hi" correctly produces two utterances. Non-capture uses of "and" (list items like "apples and oranges") are unchanged — the capture-verb lookahead is the discriminator. Also fixed the Makefile `reset-db` print message which still said `parkinsclaw.db` after the slice-9 rename. Tests: 4 new cases in `backend/tests/test_voice_transcribe.py` (bare-and split, multiple bare-and, no-split for list items, and-remind boundary).
 
 Deferred: nothing voice-splitting–related remains. Next open item: model-driven repair-choice candidate generation.
+
+## Post-milestone slice (2026-06-10, eleventh): model-driven repair-choice generation
+
+Shipped: `suggest_repair_candidates(utterance, *, client, model)` added to `backend/app/conversation/repair.py`. Makes a `claude-haiku-4-5-20251001` call (fast, cheap) with a tight system prompt that asks for exactly 2 JSON candidates, specific to the utterance, using only the policy-safe action types `reminder` and `family_message`. Never raises: any error (missing key, network, malformed JSON, unsafe action type, over-length label) falls back to the hardcoded `["set a reminder about this", "send a family message about this"]` candidates without interrupting the conversation. `TextSession.__init__` gains an optional `model_client` keyword arg (injectable `anthropic.Anthropic` instance; `None` → fallback). `anthropic>=0.50.0` added to `backend/requirements.txt` and `anthropic_api_key: str = ""` added to `Settings`.
+
+Previously ambiguous utterances always got the same generic "set a reminder / send a family message" options. With an API key set, Parker now offers choices grounded in what was actually said: "Call... the... you know... the one with the garden..." → "remind you to call your neighbour" / "message your neighbour". Fallback keeps the zero-config demo fully functional with no key.
+
+Tests: `backend/tests/test_repair_suggest.py` — model candidates returned, no-key fallback, API-error fallback, malformed-JSON fallback, wrong-count fallback, unsafe-action-type fallback, over-length fallback, utterance present in prompt, TextSession wired end-to-end, fallback-only session still produces valid choices, model→selection→capture round-trip.
+
+Deferred: more than 2 candidates (current prompt locks to 2 for simplicity); multi-turn repair (feeding the conversation history to the model for better grounding).

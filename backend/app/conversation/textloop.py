@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
+from app.conversation.repair import suggest_repair_candidates
 from app.conversation.tools import execute_tool
 
 MED_WORDS = ("pill", "pills", "medication", "meds", "dose")
@@ -33,9 +34,10 @@ REMIND_PATTERN = re.compile(r"^remind\s+(?:me|us|him|her|dad|mom)?\s*(?:to\s+)?(
 class TextSession:
     """One conversational text session bound to a call log."""
 
-    def __init__(self, db: Session, call_log_id: int):
+    def __init__(self, db: Session, call_log_id: int, *, model_client: "Any | None" = None):
         self.db = db
         self.call_log_id = call_log_id
+        self._model_client = model_client  # anthropic.Anthropic or None; None → hardcoded fallback
         self._pending_choices: Optional[list[dict[str, Any]]] = None
         self._pending_utterance: Optional[str] = None
 
@@ -100,16 +102,13 @@ class TextSession:
         return self._offer_choices(utterance)
 
     def _offer_choices(self, utterance: str) -> dict[str, Any]:
+        raw = suggest_repair_candidates(utterance, client=self._model_client)
+        candidates = [{"label": lbl, "action_type": at} for lbl, at in raw]
         result = execute_tool(
             self.db,
             self.call_log_id,
             "offer_repair_choices",
-            {
-                "candidates": [
-                    {"label": "set a reminder about this", "action_type": "reminder"},
-                    {"label": "send a family message about this", "action_type": "family_message"},
-                ],
-            },
+            {"candidates": candidates},
         )
         self._pending_choices = result["choices"]
         self._pending_utterance = utterance

@@ -100,3 +100,93 @@ def build_repair_prompt(
 
     choices.append(RepairChoice(label=NONE_OF_THESE_LABEL, action_type=None))
     return RepairPrompt(question=question.strip(), choices=tuple(choices))
+
+
+# ---------------------------------------------------------------------------
+# Model-driven candidate generation (opt-in; falls back when key not set)
+# ---------------------------------------------------------------------------
+
+_SUGGEST_SYSTEM = """\
+You are Parker, a home assistant for people with Parkinson's disease. \
+Your job is to suggest 2 clear, specific repair choices for an ambiguous utterance so the user can \
+pick the right interpretation with a single spoken number.
+
+Rules:
+- Output ONLY a JSON array, no explanation, no markdown.
+- Exactly 2 elements. Each element: {"label": "...", "action_type": "..."}
+- action_type must be "reminder" or "family_message" — nothing else.
+- Labels ≤ 80 characters, phrased as Parker confirming what to do (e.g. \
+"remind you to call Dr Smith", "send Priya a message about this").
+- Labels must be specific to the utterance — never generic \
+("set a reminder about this" is not acceptable).
+- Do not invent family member names if none are mentioned; use "a family member" instead.
+"""
+
+_SUGGEST_USER = "Utterance: {utterance}"
+
+_FALLBACK_CANDIDATES: list[tuple[str, str]] = [
+    ("set a reminder about this", "reminder"),
+    ("send a family message about this", "family_message"),
+]
+
+
+def suggest_repair_candidates(
+    utterance: str,
+    *,
+    client: "Any | None" = None,
+    model: str = "claude-haiku-4-5-20251001",
+) -> list[tuple[str, "str | None"]]:
+    """Ask Claude for 2 contextually specific repair candidates.
+
+    Returns a list of (label, action_type) tuples for ``build_repair_prompt``.
+    Never raises: falls back to generic hardcoded candidates on any error
+    (missing key, network, malformed JSON, validation failure).
+
+    ``client`` must be an ``anthropic.Anthropic`` instance. When *None*, one
+    is constructed from ``settings.anthropic_api_key``; if that is also empty
+    the fallback candidates are returned immediately (no import attempted).
+    """
+    import json as _json
+    import logging
+
+    from app.config import settings
+
+    log = logging.getLogger("parker.repair")
+
+    def _fallback(reason: str) -> list[tuple[str, str | None]]:
+        log.debug("suggest_repair_candidates fallback (%s)", reason)
+        return list(_FALLBACK_CANDIDATES)
+
+    if client is None:
+        if not settings.anthropic_api_key:
+            return _fallback("no api key")
+        try:
+            import anthropic as _anthropic
+            client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        except Exception as exc:  # noqa: BLE001
+            return _fallback(f"client init: {exc}")
+
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=256,
+            system=_SUGGEST_SYSTEM,
+            messages=[{"role": "user", "content": _SUGGEST_USER.format(utterance=utterance)}],
+        )
+        raw = response.content[0].text.strip()
+        data = _json.loads(raw)
+        if not isinstance(data, list) or len(data) != 2:
+            return _fallback(f"unexpected shape: {raw[:80]}")
+        candidates: list[tuple[str, str | None]] = []
+        for item in data:
+            label = str(item.get("label", "")).strip()
+            action_type = item.get("action_type")
+            if not label:
+                return _fallback("blank label in response")
+            candidates.append((label, action_type))
+        # validate through build_repair_prompt — catches unsafe action types,
+        # over-long labels, etc. before they reach the user
+        build_repair_prompt(candidates)
+        return candidates
+    except Exception as exc:  # noqa: BLE001
+        return _fallback(str(exc))

@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     dashboard_username: str = "family"
     dashboard_password: str = ""
 
+    # Anthropic (model-driven repair choices; falls back to hardcoded when unset)
+    anthropic_api_key: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
