@@ -25,6 +25,7 @@ REVIEW_PAGE_HTML = """<!doctype html>
   .badge { display: inline-block; font-size: .75rem; padding: .1rem .5rem; border-radius: 10px; background: #eee; margin-left: .5rem; }
   .badge.staged, .badge.queued_local { background: #fff3cd; }
   .badge.confirmed, .badge.approved_local { background: #d4edda; }
+  .badge.executed { background: #e2e3e5; }
   .badge.info { background: #d6e4f0; }
   .badge.warning, .badge.urgent { background: #f8d7da; }
   .note { background: #f4f7f4; border-radius: 8px; padding: .6rem 1rem; font-size: .85rem; }
@@ -51,6 +52,9 @@ approving marks it reviewed; nothing is ever sent externally from this page.</p>
 
 <h2 id="h-escalations">Other open escalations</h2>
 <div id="escalations"></div>
+
+<h2 id="h-history">Recently done (stayed on this machine)</h2>
+<div id="history"></div>
 
 <script>
 async function post(url, body) {
@@ -112,6 +116,14 @@ function escalationCard(e) {
   return card;
 }
 
+function historyCard(a) {
+  const what = a.action_type === 'family_message'
+    ? `Message to <b>${a.recipient ?? '(no recipient)'}</b>: “${a.message_text ?? ''}” — queued to local outbox`
+    : `Reminder: <b>${a.subject ?? ''}</b>`;
+  return el(`<div class="card">${what}<span class="badge executed">executed</span>
+    <div class="meta">done ${a.executed_at ?? '—'} · confirmed by ${a.confirmed_by ?? '—'} · ${a.execution_result ?? ''}</div></div>`);
+}
+
 function fill(id, items, builder, emptyText, headerBase) {
   const root = document.getElementById(id);
   root.innerHTML = '';
@@ -128,6 +140,7 @@ async function load() {
   fill('approved', data.outbox_approved, outboxCard, 'Nothing approved yet.', 'Approved — reviewed by you, still local only');
   fill('candidates', data.escalation_candidates, escalationCard, 'No non-response candidates.', 'Non-response escalation candidates');
   fill('escalations', data.open_escalations, escalationCard, 'No open escalations.', 'Other open escalations');
+  fill('history', data.recent_history, historyCard, 'Nothing executed yet.', 'Recently done (stayed on this machine)');
   document.getElementById('updated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
 }
 load();

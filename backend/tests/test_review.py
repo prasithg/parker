@@ -1,6 +1,6 @@
 """Caregiver review surface tests: cancel control, review feed, HTML page."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -185,3 +185,62 @@ def test_cancelled_outbox_message_leaves_review_feed(db):
     review = client.get("/parker/review").json()
 
     assert review["outbox_queued"] == []
+
+
+def test_review_recent_history_shows_executed_actions_newest_first(db):
+    client = TestClient(app)
+    call = _call(db, sid="CA_HISTORY")
+    first = _staged(db, call, subject="morning stretch")
+    second = _staged(db, call, subject="water the plants")
+    for action, when in ((first, datetime(2026, 6, 10, 9, 0)), (second, datetime(2026, 6, 10, 11, 0))):
+        confirm_staged_action(db, action.id, now=when)
+        execute_staged_action(db, action.id, now=when)
+
+    data = client.get("/parker/review").json()
+
+    assert "recent_history" in data
+    subjects = [item["subject"] for item in data["recent_history"]]
+    assert subjects == ["water the plants", "morning stretch"]  # newest first
+    top = data["recent_history"][0]
+    assert top["status"] == "executed"
+    assert top["executed_at"] == "2026-06-10T11:00:00"
+    assert top["execution_result"]
+
+
+def test_review_recent_history_excludes_pending_and_cancelled(db):
+    client = TestClient(app)
+    call = _call(db, sid="CA_HISTORY2")
+    _staged(db, call, subject="still pending")
+    cancelled = _staged(db, call, subject="changed my mind")
+    cancel_staged_action(db, cancelled.id, now=NOW)
+    done = _staged(db, call, subject="actually done")
+    confirm_staged_action(db, done.id, now=NOW)
+    execute_staged_action(db, done.id, now=NOW)
+
+    history = client.get("/parker/review").json()["recent_history"]
+
+    assert [item["subject"] for item in history] == ["actually done"]
+
+
+def test_review_recent_history_caps_at_limit(db):
+    from app.parker.router import RECENT_HISTORY_LIMIT
+
+    client = TestClient(app)
+    call = _call(db, sid="CA_HISTORY3")
+    for i in range(RECENT_HISTORY_LIMIT + 2):
+        action = _staged(db, call, subject=f"task {i}")
+        when = datetime(2026, 6, 10, 8, 0) + timedelta(minutes=i)
+        confirm_staged_action(db, action.id, now=when)
+        execute_staged_action(db, action.id, now=when)
+
+    history = client.get("/parker/review").json()["recent_history"]
+
+    assert len(history) == RECENT_HISTORY_LIMIT
+    assert history[0]["subject"] == f"task {RECENT_HISTORY_LIMIT + 1}"  # newest kept
+
+
+def test_review_ui_includes_history_section(db):
+    client = TestClient(app)
+    page = client.get("/parker/review/ui").text
+    assert "Recently done" in page
+    assert "recent_history" in page

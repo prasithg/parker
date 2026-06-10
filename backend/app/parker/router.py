@@ -32,6 +32,8 @@ from app.parker.review_ui import REVIEW_PAGE_HTML
 
 router = APIRouter()
 
+RECENT_HISTORY_LIMIT = 10
+
 
 class TickRequest(BaseModel):
     now: datetime | None = None
@@ -151,12 +153,21 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
         item for item in escalations if item["reason"].startswith(CANDIDATE_REASON_PREFIX)
     ]
     others = [item for item in escalations if not item["reason"].startswith(CANDIDATE_REASON_PREFIX)]
+    # The trust surface: what Parker actually did, newest first.
+    history = (
+        db.query(StagedAction)
+        .filter(StagedAction.status == "executed")
+        .order_by(StagedAction.executed_at.desc(), StagedAction.id.desc())
+        .limit(RECENT_HISTORY_LIMIT)
+        .all()
+    )
     return {
         "pending_actions": [_serialize_action(action) for action in pending],
         "outbox_queued": [_serialize_outbox_message(message) for message in queued],
         "outbox_approved": [_serialize_outbox_message(message) for message in approved],
         "escalation_candidates": candidates,
         "open_escalations": others,
+        "recent_history": [_serialize_action(action) for action in history],
     }
 
 
@@ -242,6 +253,7 @@ def _serialize_action(action: StagedAction) -> dict[str, Any]:
         "resurface_count": action.resurface_count,
         "last_resurfaced_at": action.last_resurfaced_at.isoformat() if action.last_resurfaced_at else None,
         "confirmed_by": action.confirmed_by,
+        "executed_at": action.executed_at.isoformat() if action.executed_at else None,
         "execution_result": action.execution_result,
     }
 

@@ -146,3 +146,11 @@ Shipped: `suggest_repair_candidates` gains an optional `prior_choices: list[str]
 Before this slice: "none of these" → vague follow-up → model would often regenerate the exact same two choices. Now the model receives the rejected labels as grounding context and produces different, more specific alternatives.
 
 Tests: 4 new cases in `test_repair_suggest.py` — prior labels appear in the prompt; plain user message when no prior history; full TextSession round-trip (vague → none-of-these → vague again verifies rejected labels reach the model call); prior labels cleared after successful capture (no leakage into subsequent fresh offers). Total: 218 tests.
+
+## Post-milestone slice (2026-06-10, sixteenth): review-page history — "Recently done"
+
+Shipped: `GET /parker/review` gains `recent_history` — the last 10 (`RECENT_HISTORY_LIMIT`) executed actions, newest first (`executed_at` desc, id desc tiebreak); `_serialize_action` now includes `executed_at`. The review page gets a read-only "Recently done (stayed on this machine)" section at the bottom: reminders show their subject, messages show recipient + text + "queued to local outbox", each with done-time, who confirmed, and the execution result. No buttons — it's the trust surface ("what did Parker actually do"), not a decision surface. Pending/cancelled actions are excluded. Verified live against the seeded demo: both seeded executed items (pharmacy reminder, message to Sarah) render newest-first.
+
+Tests: 4 new cases in `backend/tests/test_review.py` — newest-first ordering with `executed_at` serialization, pending/cancelled exclusion, cap at the limit (newest kept), section present in the HTML page.
+
+Deferred: pagination/full history view beyond the last 10; including cancelled actions as a separate "changed my mind" audit list.
