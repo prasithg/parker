@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.db.models import OutboxMessage, StagedAction
+from app.parker.auth import require_dashboard_auth
 from app.escalation.candidates import CANDIDATE_REASON_PREFIX, flag_non_response_candidates
 from app.escalation.engine import get_open_escalations
 from app.escalation.router import serialize_escalation
@@ -75,7 +76,10 @@ def list_due_resurfaced_actions(
     return {"actions": [_serialize_action(action) for action in actions]}
 
 
-@router.post("/actions/{staged_action_id}/confirm")
+# Caregiver decision surface below: reads expose message content and the
+# mutations are human gates, so all of it sits behind the (opt-in) auth
+# seam. /tick and /resurface above stay open — assistant-loop surface.
+@router.post("/actions/{staged_action_id}/confirm", dependencies=[Depends(require_dashboard_auth)])
 def confirm_action(
     staged_action_id: int,
     payload: ConfirmRequest,
@@ -95,7 +99,7 @@ def confirm_action(
     return _serialize_action(action)
 
 
-@router.post("/actions/{staged_action_id}/execute")
+@router.post("/actions/{staged_action_id}/execute", dependencies=[Depends(require_dashboard_auth)])
 def execute_action(
     staged_action_id: int,
     payload: ExecuteRequest,
@@ -110,7 +114,7 @@ def execute_action(
     return _serialize_action(action)
 
 
-@router.post("/actions/{staged_action_id}/cancel")
+@router.post("/actions/{staged_action_id}/cancel", dependencies=[Depends(require_dashboard_auth)])
 def cancel_action(
     staged_action_id: int,
     payload: CancelRequest,
@@ -130,7 +134,7 @@ def cancel_action(
     return _serialize_action(action)
 
 
-@router.get("/review")
+@router.get("/review", dependencies=[Depends(require_dashboard_auth)])
 def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Aggregated caregiver review feed: everything awaiting a human decision."""
 
@@ -156,14 +160,19 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
     }
 
 
-@router.get("/review/ui", response_class=HTMLResponse, include_in_schema=False)
+@router.get(
+    "/review/ui",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+    dependencies=[Depends(require_dashboard_auth)],
+)
 def caregiver_review_ui() -> str:
     """Local, single-file caregiver review page over the /parker review APIs."""
 
     return REVIEW_PAGE_HTML
 
 
-@router.get("/outbox")
+@router.get("/outbox", dependencies=[Depends(require_dashboard_auth)])
 def list_outbox(
     status: str | None = None,
     db: Session = Depends(get_db),
@@ -179,7 +188,7 @@ class ApproveOutboxRequest(BaseModel):
     now: datetime | None = None
 
 
-@router.post("/outbox/{message_id}/approve")
+@router.post("/outbox/{message_id}/approve", dependencies=[Depends(require_dashboard_auth)])
 def approve_outbox(
     message_id: int,
     payload: ApproveOutboxRequest | None = None,
@@ -196,7 +205,7 @@ def approve_outbox(
     return _serialize_outbox_message(message)
 
 
-@router.post("/outbox/{message_id}/cancel")
+@router.post("/outbox/{message_id}/cancel", dependencies=[Depends(require_dashboard_auth)])
 def cancel_outbox(message_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
     """Cancel a queued or approved message before any (future, gated) delivery."""
 

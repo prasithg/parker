@@ -32,6 +32,16 @@ The review page opens populated: three actions awaiting confirmation (two remind
 
 Message lifecycle on the page: patient confirms → `queued_local` (awaiting your approval) → `approved_local` (reviewed, still on this machine) — or cancelled from either state. No send exists.
 
+### Review-page auth (opt-in)
+
+With no password configured (the default), everything above works credential-free on localhost. To lock the caregiver decision surface — review feed/page, outbox, and the confirm/execute/cancel/approve buttons — set credentials before `make run`:
+
+```bash
+DASHBOARD_USERNAME=family DASHBOARD_PASSWORD=choose-one make run
+```
+
+The browser prompts once for HTTP Basic sign-in; the page's buttons reuse the credentials automatically, and curl flows need `-u family:choose-one`. `/parker/tick` and `/parker/resurface` deliberately stay open — they're the assistant-loop surface, not the caregiver's.
+
 ## Voice path: `make demo-voice` (optional, local-only)
 
 The transcript seam accepts real speech. Install the optional on-device transcriber (faster-whisper; first run downloads model weights to the local Hugging Face cache, then inference is fully offline — no cloud speech APIs):
