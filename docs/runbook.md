@@ -71,6 +71,20 @@ make talk SECONDS=10
 
 macOS asks for microphone permission on first use. The recording is a temporary file that exists only for the seconds it takes to transcribe and is deleted unconditionally afterwards — transcripts are the only artifact. Try saying: *"Remind me to water the plants. Tell Sarah the visit went well."* — two utterances stage for the review page, same as `make demo-voice`.
 
+### Continuous loop: `make talk-loop`
+
+`make talk` is single-shot — a fresh session each time, which means a repair-choice offer in one run can't be answered in the next. `make talk-loop` keeps one session alive across all windows:
+
+```bash
+make talk-loop            # 6-second windows, Ctrl-C to stop
+make talk-loop SECONDS=8
+```
+
+Leave it running in a terminal while the caregiver review page is open in a browser. The flow:
+- Parker offers "1) reminder 2) message" → say "1" in the next window → captured.
+- Silence (background noise only) prints a cue and keeps listening.
+- Ctrl-C stops the loop and prints how many turns ran.
+
 ## Demo 0 — Talk to Parker (text loop) + caregiver review page
 
 For a live version of the same flow, use two terminals and no curl:

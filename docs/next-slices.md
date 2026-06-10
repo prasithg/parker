@@ -76,4 +76,10 @@ Deferred: smarter clause splitting (e.g. "and"-joined commands without a comma);
 
 Shipped: `backend/app/voice/record.py` (`load_local_recorder` — sounddevice/PortAudio, default input device, 16kHz mono int16 wav; lazy import with the `make voice-deps` hint; injectable `Recorder` for tests) and `backend/app/demo/talk.py` (`run_talk` — record into a `TemporaryDirectory`, transcribe through the existing `transcribe_audio` → `split_utterances` path, replay through `replay_transcript`, then tick from the CLI). `make talk SECONDS=n` (default 6). The no-audio-retention invariant now covers recordings: the temp wav is deleted unconditionally — success *and* transcriber-failure paths are regression-pinned. `sounddevice` added to the optional `backend/requirements-voice.txt`; the core suite injects fakes. Tests: `backend/tests/test_talk.py`.
 
-Deferred: push-to-talk / voice-activity end-pointing instead of a fixed window; a continuous listen loop; in-memory transcription (skip the temp file entirely by passing the array straight to faster-whisper).
+Deferred: push-to-talk / voice-activity end-pointing instead of a fixed window; a continuous listen loop (done in next slice); in-memory transcription (skip the temp file entirely by passing the array straight to faster-whisper).
+
+## Post-milestone slice (2026-06-10, eighth): continuous talk loop — `make talk-loop`
+
+Shipped: `run_talk_loop` in `backend/app/demo/talk.py` — one `TextSession` and one `CallLog` live for the whole conversation, so `_pending_choices` state carries across recording windows: a repair-choice offered in turn 1 is correctly selected by "1" in turn 2. Per-turn: record → transcribe → feed each utterance line to `session.handle()` → per-turn tick (intents stage promptly). Silence (empty transcript) prints a cue and continues without resetting session state. Exits cleanly on `KeyboardInterrupt`; returns all exchanges collected so far. `backend/app/demo/talk_loop.py` is the thin CLI for `make talk-loop SECONDS=n`. Tests: `backend/tests/test_talk_loop.py` — single turn, repair-choice spanning turns, multi-turn capture, silence-then-selection (silence must not reset `_pending_choices`), refusal, single-CallLog invariant, `KeyboardInterrupt` mid-loop, and recording-deletion across turns.
+
+Deferred: push-to-talk / voice-activity end-pointing; in-memory transcription.

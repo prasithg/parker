@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks reset-db repl demo voice-deps demo-voice talk
+.PHONY: backend-venv install run test eval-tasks reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -72,3 +72,9 @@ talk: backend-venv
 
 migrate:
 	@echo "v0 uses create_tables() — no Alembic yet (use make reset-db for a fresh local DB)"
+
+# Continuous talk loop: one persistent TextSession so repair-choice state
+# carries across turns. Leave this running in a terminal; open the review
+# page in a browser as the caregiver view. Ctrl-C to stop.
+talk-loop: backend-venv
+	cd backend && ./.venv/bin/python -m app.demo.talk_loop $(or $(SECONDS),6)
