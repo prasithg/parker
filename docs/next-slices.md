@@ -154,3 +154,11 @@ Shipped: `GET /parker/review` gains `recent_history` — the last 10 (`RECENT_HI
 Tests: 4 new cases in `backend/tests/test_review.py` — newest-first ordering with `executed_at` serialization, pending/cancelled exclusion, cap at the limit (newest kept), section present in the HTML page.
 
 Deferred: pagination/full history view beyond the last 10; including cancelled actions as a separate "changed my mind" audit list.
+
+## Post-milestone slice (2026-06-10, seventeenth): "Changed my mind" — cancelled-items audit list
+
+Shipped: cancellations no longer vanish from the review page. `GET /parker/review` gains two read-only buckets, both capped at `RECENT_HISTORY_LIMIT`: `recent_cancelled` (cancelled staged actions, id-desc — there is deliberately no `cancelled_at` column in v0; who/when lives in the `execution_result` text, which the card shows verbatim) and `outbox_cancelled` (cancelled outbox messages, `cancelled_at` desc). The page renders both under one "Changed my mind (cancelled)" section with a combined count — no buttons, pure audit. Verified live on the seeded demo: a cancelled pending reminder and a cancelled queued message to Sarah both appear instead of disappearing.
+
+Tests: 3 new cases in `backend/tests/test_review.py` — cancelled actions newest-first with canceller visible and excluded from pending/history; cancelled outbox message moves from `outbox_queued` to `outbox_cancelled` with its timestamp; section present in the HTML page.
+
+Deferred: a real `cancelled_at`/`cancelled_by` column pair on `StagedAction` if audit ordering ever needs to be time-true across restarts (schema change → reset-db).

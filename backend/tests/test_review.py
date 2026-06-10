@@ -244,3 +244,51 @@ def test_review_ui_includes_history_section(db):
     page = client.get("/parker/review/ui").text
     assert "Recently done" in page
     assert "recent_history" in page
+
+
+def test_review_cancelled_actions_appear_in_audit_list(db):
+    client = TestClient(app)
+    call = _call(db, sid="CA_CANCELLED")
+    first = _staged(db, call, subject="first thought")
+    second = _staged(db, call, subject="second thought")
+    cancel_staged_action(db, first.id, cancelled_by="caregiver", now=NOW)
+    cancel_staged_action(db, second.id, cancelled_by="patient", now=NOW)
+
+    data = client.get("/parker/review").json()
+
+    cancelled = data["recent_cancelled"]
+    assert [item["subject"] for item in cancelled] == ["second thought", "first thought"]
+    assert all(item["status"] == "cancelled" for item in cancelled)
+    assert "cancelled by patient" in cancelled[0]["execution_result"]
+    # Cancelled items never appear among pending decisions or done history.
+    assert all(a["status"] != "cancelled" for a in data["pending_actions"])
+    assert all(a["status"] != "cancelled" for a in data["recent_history"])
+
+
+def test_review_cancelled_outbox_message_moves_to_audit_list(db):
+    call = _call(db, sid="CA_CANCELLED_MSG")
+    message = _staged(
+        db, call, requested_action="message", subject="msg", recipient="Sarah", text="Dinner?"
+    )
+    confirm_staged_action(db, message.id, now=NOW)
+    execute_staged_action(db, message.id, now=NOW)
+    client = TestClient(app)
+    outbox_id = db.query(OutboxMessage).one().id
+
+    client.post(f"/parker/outbox/{outbox_id}/cancel")
+    review = client.get("/parker/review").json()
+
+    assert review["outbox_queued"] == []
+    cancelled = review["outbox_cancelled"]
+    assert len(cancelled) == 1
+    assert cancelled[0]["recipient"] == "Sarah"
+    assert cancelled[0]["status"] == "cancelled"
+    assert cancelled[0]["cancelled_at"] is not None
+
+
+def test_review_ui_includes_cancelled_section(db):
+    client = TestClient(app)
+    page = client.get("/parker/review/ui").text
+    assert "Changed my mind" in page
+    assert "recent_cancelled" in page
+    assert "outbox_cancelled" in page

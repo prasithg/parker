@@ -26,6 +26,7 @@ REVIEW_PAGE_HTML = """<!doctype html>
   .badge.staged, .badge.queued_local { background: #fff3cd; }
   .badge.confirmed, .badge.approved_local { background: #d4edda; }
   .badge.executed { background: #e2e3e5; }
+  .badge.cancelled { background: #f0e6e6; color: #844; }
   .badge.info { background: #d6e4f0; }
   .badge.warning, .badge.urgent { background: #f8d7da; }
   .note { background: #f4f7f4; border-radius: 8px; padding: .6rem 1rem; font-size: .85rem; }
@@ -55,6 +56,10 @@ approving marks it reviewed; nothing is ever sent externally from this page.</p>
 
 <h2 id="h-history">Recently done (stayed on this machine)</h2>
 <div id="history"></div>
+
+<h2 id="h-cancelled">Changed my mind (cancelled)</h2>
+<div id="cancelled"></div>
+<div id="cancelled-messages"></div>
 
 <script>
 async function post(url, body) {
@@ -124,6 +129,19 @@ function historyCard(a) {
     <div class="meta">done ${a.executed_at ?? '—'} · confirmed by ${a.confirmed_by ?? '—'} · ${a.execution_result ?? ''}</div></div>`);
 }
 
+function cancelledActionCard(a) {
+  const what = a.action_type === 'family_message'
+    ? `Message to <b>${a.recipient ?? '(no recipient)'}</b>: “${a.message_text ?? ''}”`
+    : `Reminder: <b>${a.subject ?? ''}</b>`;
+  return el(`<div class="card">${what}<span class="badge cancelled">cancelled</span>
+    <div class="meta">${a.execution_result ?? ''}</div></div>`);
+}
+
+function cancelledMessageCard(m) {
+  return el(`<div class="card">To <b>${m.recipient}</b>: “${m.body}”<span class="badge cancelled">message cancelled</span>
+    <div class="meta">queued ${m.created_at} · cancelled ${m.cancelled_at ?? '—'}</div></div>`);
+}
+
 function fill(id, items, builder, emptyText, headerBase) {
   const root = document.getElementById(id);
   root.innerHTML = '';
@@ -141,6 +159,10 @@ async function load() {
   fill('candidates', data.escalation_candidates, escalationCard, 'No non-response candidates.', 'Non-response escalation candidates');
   fill('escalations', data.open_escalations, escalationCard, 'No open escalations.', 'Other open escalations');
   fill('history', data.recent_history, historyCard, 'Nothing executed yet.', 'Recently done (stayed on this machine)');
+  const cancelledTotal = data.recent_cancelled.length + data.outbox_cancelled.length;
+  fill('cancelled', data.recent_cancelled, cancelledActionCard, cancelledTotal ? '' : 'Nothing cancelled.', null);
+  fill('cancelled-messages', data.outbox_cancelled, cancelledMessageCard, '', null);
+  document.getElementById('h-cancelled').textContent = `Changed my mind (cancelled) (${cancelledTotal})`;
   document.getElementById('updated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
 }
 load();

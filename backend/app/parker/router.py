@@ -161,6 +161,23 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
         .limit(RECENT_HISTORY_LIMIT)
         .all()
     )
+    # The "changed my mind" audit: cancellations stay visible, not vanished.
+    # Cancelled actions have no timestamp column (who/when lives in
+    # execution_result text), so id desc is the v0 recency proxy.
+    cancelled_actions = (
+        db.query(StagedAction)
+        .filter(StagedAction.status == "cancelled")
+        .order_by(StagedAction.id.desc())
+        .limit(RECENT_HISTORY_LIMIT)
+        .all()
+    )
+    cancelled_messages = (
+        db.query(OutboxMessage)
+        .filter(OutboxMessage.status == "cancelled")
+        .order_by(OutboxMessage.cancelled_at.desc(), OutboxMessage.id.desc())
+        .limit(RECENT_HISTORY_LIMIT)
+        .all()
+    )
     return {
         "pending_actions": [_serialize_action(action) for action in pending],
         "outbox_queued": [_serialize_outbox_message(message) for message in queued],
@@ -168,6 +185,8 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
         "escalation_candidates": candidates,
         "open_escalations": others,
         "recent_history": [_serialize_action(action) for action in history],
+        "recent_cancelled": [_serialize_action(action) for action in cancelled_actions],
+        "outbox_cancelled": [_serialize_outbox_message(message) for message in cancelled_messages],
     }
 
 
