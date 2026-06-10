@@ -19,9 +19,20 @@ curl -s localhost:8000/health
 
 `make run` and all seeding/REPL commands below share `backend/parkinsclaw.db`. All `/parker` endpoints accept an optional `now` so the demo is deterministic; omit it to use real time.
 
+## Fastest path: `make demo`
+
+One command resets the DB, seeds a believable family day through the real pipeline, and replays a synthetic effortful-speech transcript through the text loop:
+
+```bash
+make demo
+make run    # then open http://localhost:8000/parker/review/ui
+```
+
+The review page opens populated: three actions awaiting confirmation (two reminders, one drafted message to Rohan with its text restated), one message to Sarah queued in the local outbox (cancel it!), and one non-response escalation candidate from a reminder that was resurfaced three times without an answer. The printed replay dialogue shows repair choices, a refused medication question, and a purchase routed to human approval.
+
 ## Demo 0 — Talk to Parker (text loop) + caregiver review page
 
-The fastest end-to-end demo needs two terminals and no curl:
+For a live version of the same flow, use two terminals and no curl:
 
 ```bash
 make repl    # terminal 1 — type utterances as the user

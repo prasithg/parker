@@ -1,6 +1,6 @@
-# ParkinsClaw Voice Benchmark
+# Parker Voice Benchmark
 
-Local-only benchmark scaffold for PRA-43.
+Local-only benchmark scaffold for PRA-43. (Earlier drafts used the legacy name ParkinsClaw.)
 
 ## Run evaluator
 

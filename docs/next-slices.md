@@ -43,3 +43,9 @@ Shipped toward the family-pilot blocker list:
 - **Text loop** — `make repl` (`backend/app/conversation/textloop.py`): a deterministic transcript-capture seam routing typed utterances through the real tool layer (`offer_repair_choices`, `capture_intent`), with refusal/human-approval guards mirroring the policy. No model, no audio, no confirmation/execution from the loop itself. Tests: `backend/tests/test_textloop.py`.
 
 Deferred: real microphone/ASR input (the seam is `TextSession.handle(text)` — an ASR transcript drops straight in); dashboard auth (page is localhost-only v0); model-driven candidate generation for repair choices.
+
+## Post-milestone slice (2026-06-10, second): one-command demo — seed + transcript replay
+
+Shipped: `make demo` = `reset-db` → `app/demo/seed.py` (a believable family day driven through the *real* capture→resolve→stage→confirm→execute functions: 3 actions awaiting confirmation incl. a drafted message, 1 outbox-queued message, 1 non-response candidate, 2 executed history items; double-seed guarded) → `app/demo/replay.py` (synthetic effortful-speech transcript through `TextSession`: repair choices + selection, med-change refusal, purchase→human approval) → tick. Tests assert the seeded state through `GET /parker/review` — the surface a caregiver actually sees. Benchmark README/card titles reframed to Parker. Tests: `backend/tests/test_demo.py`.
+
+The replay script doubles as the ASR drop-in point: a real transcript replaces `DEMO_SCRIPT` line-for-line.

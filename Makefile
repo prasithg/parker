@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks reset-db repl
+.PHONY: backend-venv install run test eval-tasks reset-db repl demo
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -38,6 +38,16 @@ reset-db: backend-venv
 
 repl: backend-venv
 	cd backend && ./.venv/bin/python -m app.conversation.textloop
+
+# One-command demo: fresh DB, a believable seeded family day, and a synthetic
+# effortful-speech transcript replayed through the text loop. Then `make run`
+# and open http://localhost:8000/parker/review/ui as the caregiver.
+demo: reset-db
+	cd backend && ./.venv/bin/python -m app.demo.seed
+	cd backend && ./.venv/bin/python -m app.demo.replay
+	@echo ""
+	@echo "Demo ready. Start the server with 'make run' and open:"
+	@echo "  http://localhost:8000/parker/review/ui"
 
 migrate:
 	@echo "v0 uses create_tables() — no Alembic yet (use make reset-db for a fresh local DB)"
