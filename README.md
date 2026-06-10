@@ -144,13 +144,11 @@ Working product name:
 Parker
 ```
 
-Legacy/internal name that may still appear in older files:
+Legacy/internal name, now fully retired from the codebase (only historical docs mention it):
 
 ```text
 ParkinsClaw
 ```
-
-Use “Parker” in user-facing docs unless referring to historical code/files.
 
 Useful related project areas:
 
@@ -159,56 +157,59 @@ Useful related project areas:
 - research and pitch notes: `~/Knowledge/parker` or `~/Knowledge/research/personal-brand/parker`;
 - run logs/manifests/reviews: `~/Operations`.
 
-## Current repo state
+## Current repo state (v0, pilot-ready)
 
-This repo currently contains a Python/FastAPI backend scaffold with:
+The local v0 loop works end to end with no external services and no real sends:
 
-- call scheduling/handling modules;
-- conversational agent prompts/tools;
-- medication/routine tracking;
-- memory/capture storage;
-- escalation modules;
-- exercise modules;
-- Parker capture -> resolve -> stage -> resurface pipeline;
-- synthetic benchmark scaffold for transcript -> structured intent/safety JSON;
-- tests around the current backend behavior.
+- **Input ladder** — typed (`make repl`), scripted demo (`make demo`), audio file (`make demo-voice AUDIO=…`), live microphone (`make talk`), continuous voice conversation (`make talk-loop`). Voice transcription is fully on-device (faster-whisper); no audio is retained beyond the input file.
+- **Capture → resolve → stage → confirm → execute pipeline** — every action confirmed before execution; v0's executable surface is reminders and *local-only* family messages.
+- **Repair under uncertainty** — ambiguous effortful speech gets 2 numbered choices plus "none of these". With `ANTHROPIC_API_KEY` set, choices are model-generated and grounded in the utterance (claude-haiku); without it, a deterministic fallback keeps everything working.
+- **Family message outbox with two human gates** — patient confirms → `queued_local` → caregiver approves → `approved_local`. There is **no send path in the codebase at all**; cancel works from either state.
+- **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with confirm/execute/cancel/approve buttons and opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
+- **Non-response escalation candidates** — review-only, never auto-dispatched.
+- **Eval harness** — task-taxonomy eval (`make eval-tasks`, 0 safety-critical misses) and repair-choice quality spot-check (`make eval-repair`).
+- 214 backend tests.
 
-The existing code still reflects an earlier phone-call/voice-clone framing in some modules and docs. Treat that as historical context, not the product north star.
+Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
 ## Stack
 
-| Layer | Current/possible tech |
-| --- | --- |
-| Backend | Python / FastAPI |
-| Storage | SQLite for v0 |
-| Voice/calls | Twilio and/or local voice interface |
-| Realtime model | OpenAI Realtime or comparable realtime multimodal model |
-| TTS/voice | Optional; consent required for any cloned voice |
-| Family/operator view | Dashboard/API, currently scaffolded |
-| Eval harness | Synthetic transcript/task-card benchmark |
-| Action layer | OpenClaw/Hermes-style tools and agent handoff protocols |
+| Layer | v0 (shipped) | Possible later |
+| --- | --- | --- |
+| Backend | Python 3.11 / FastAPI | — |
+| Storage | SQLite (`backend/parker.db`) | — |
+| Speech-to-text | faster-whisper, fully on-device, optional dep | voice-activity end-pointing |
+| Repair choices | claude-haiku (opt-in via `ANTHROPIC_API_KEY`), deterministic fallback | multi-turn grounding |
+| Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer dashboard |
+| Eval harness | task-taxonomy eval + repair-quality spot-check | human-graded repair content |
+| Voice/calls | none in v0 (no send path exists) | Twilio, realtime models |
+| TTS/voice clone | none in v0 | optional, consent-gated only |
 
 ## Setup
 
 The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
-# Backend
-make backend-venv
-make test
-make run
+make backend-venv    # venv + deps
+make test            # 214 tests should pass
 ```
 
-Manual backend flow:
+**Fastest demo** (three commands, zero config):
 
 ```bash
-cd backend
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn app.main:app --reload
+make demo            # fresh DB + seeded family day + effortful-speech replay
+make run             # uvicorn on http://localhost:8000
+# open http://localhost:8000/parker/review/ui as the caregiver
 ```
 
-Do not commit real `.env` files or secrets.
+**Talk to it** (optional on-device voice):
+
+```bash
+make voice-deps      # faster-whisper + sounddevice, local only
+make talk-loop       # continuous voice conversation, Ctrl-C to stop
+```
+
+For a real pilot — env file, model-enhanced repair choices, review-page password — follow **"Pilot setup"** in [docs/runbook.md](docs/runbook.md). Copy `backend/.env.example` to `backend/.env`; never commit real `.env` files or secrets.
 
 ## Safety boundaries
 
@@ -256,22 +257,11 @@ Important eval categories:
 
 Synthetic data first. No real patient audio or private family data in public artifacts without explicit approval.
 
-## Near-term Fable 5 task
+## Where to start reading
 
-The best next long-horizon coding-agent task is not to build all of Parker.
-
-It is to produce a repo-grounded system architecture and eval/action protocol that reconciles:
-
-- current code;
-- updated Parker vision;
-- OpenClaw/Hermes action layer;
-- family escalation;
-- voice-first interface;
-- future room/TV context;
-- safety boundaries;
-- a concrete implementation plan.
-
-See `AGENTS.md` and `CLAUDE.md` before running Claude Code.
+- [docs/runbook.md](docs/runbook.md) — scripted walkthrough of everything v0 does, plus pilot setup.
+- [docs/next-slices.md](docs/next-slices.md) — the implementation log: every shipped slice with rationale and what was deliberately deferred.
+- `AGENTS.md` and `CLAUDE.md` — read before running coding agents in this repo.
 
 ## License
 
