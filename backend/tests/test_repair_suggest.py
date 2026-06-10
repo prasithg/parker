@@ -194,3 +194,47 @@ def test_text_session_model_then_selection_captures_intent(db):
 
     intent = db.query(CapturedIntent).one()
     assert intent.requested_action == "reminder"
+
+
+# ---------------------------------------------------------------------------
+# _build_model_client auto-wiring
+# ---------------------------------------------------------------------------
+
+
+def test_build_model_client_returns_none_when_no_key(monkeypatch):
+    from app.config import settings
+    from app.conversation.textloop import _build_model_client
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    assert _build_model_client() is None
+
+
+def test_build_model_client_instantiates_client_when_key_set(monkeypatch):
+    import sys
+
+    from app.config import settings
+    from app.conversation.textloop import _build_model_client
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-key")
+
+    class _FakeAnthropicModule:
+        class Anthropic:
+            def __init__(self, api_key):
+                self.api_key = api_key
+
+    monkeypatch.setitem(sys.modules, "anthropic", _FakeAnthropicModule)
+    client = _build_model_client()
+    assert client is not None
+    assert client.api_key == "sk-ant-test-key"
+
+
+def test_build_model_client_returns_none_on_import_error(monkeypatch):
+    import sys
+
+    from app.config import settings
+    from app.conversation.textloop import _build_model_client
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-key")
+    monkeypatch.setitem(sys.modules, "anthropic", None)  # simulate missing package
+    # Should not raise — graceful None return
+    assert _build_model_client() is None

@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterator, Optional
 
 from sqlalchemy.orm import Session
 
-from app.conversation.textloop import TextSession
+from app.conversation.textloop import TextSession, _build_model_client
 from app.db.models import CallLog
 from app.demo.replay import replay_transcript
 from app.voice.record import Recorder, load_local_recorder
@@ -96,7 +96,7 @@ def run_talk_loop(
         db.commit()
         db.refresh(call)
 
-    session = TextSession(db, call.id)
+    session = TextSession(db, call.id, model_client=_build_model_client())
     all_exchanges: list[dict[str, Any]] = []
     turn = 0
 

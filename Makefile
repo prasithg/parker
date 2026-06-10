@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -29,6 +29,12 @@ test: backend-venv
 
 eval-tasks:
 	python3 benchmark/evaluate_tasks_v0.py
+
+# Repair-choice quality eval: runs effortful-speech fixtures through the real
+# Claude haiku model and prints candidates for human review. Requires
+# ANTHROPIC_API_KEY; skips gracefully when unset.
+eval-repair:
+	python3 benchmark/evaluate_repair_v0.py
 
 # Deterministic local reset: v0 uses create_tables(), which never ALTERs,
 # so schema changes require a fresh DB. Removes both historical locations.

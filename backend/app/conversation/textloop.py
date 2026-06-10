@@ -31,6 +31,23 @@ SEND_PATTERN = re.compile(r"^send\s+([A-Za-z]+)\s+(?:a\s+message\s+)?(?:that\s+|
 REMIND_PATTERN = re.compile(r"^remind\s+(?:me|us|him|her|dad|mom)?\s*(?:to\s+)?(.+)$", re.IGNORECASE)
 
 
+def _build_model_client() -> "Any | None":
+    """Instantiate an Anthropic client from settings if a key is configured.
+
+    Returns None when the key is empty so callers fall through to the
+    hardcoded repair-choice fallback without any import cost.
+    """
+    from app.config import settings
+
+    if not settings.anthropic_api_key:
+        return None
+    try:
+        import anthropic
+        return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class TextSession:
     """One conversational text session bound to a call log."""
 
@@ -175,7 +192,7 @@ def main() -> None:  # pragma: no cover — interactive entry point
     db.add(call)
     db.commit()
     db.refresh(call)
-    session = TextSession(db, call.id)
+    session = TextSession(db, call.id, model_client=_build_model_client())
     print("Parker text loop — type an utterance, or 'quit' to exit.")
     print("Captured intents stage via POST /parker/tick and confirm at /parker/review/ui.\n")
     while True:

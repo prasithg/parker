@@ -112,3 +112,13 @@ Previously ambiguous utterances always got the same generic "set a reminder / se
 Tests: `backend/tests/test_repair_suggest.py` — model candidates returned, no-key fallback, API-error fallback, malformed-JSON fallback, wrong-count fallback, unsafe-action-type fallback, over-length fallback, utterance present in prompt, TextSession wired end-to-end, fallback-only session still produces valid choices, model→selection→capture round-trip.
 
 Deferred: more than 2 candidates (current prompt locks to 2 for simplicity); multi-turn repair (feeding the conversation history to the model for better grounding).
+
+## Post-milestone slice (2026-06-10, twelfth): auto-wire model client + eval-repair
+
+Shipped: `_build_model_client()` in `backend/app/conversation/textloop.py` — reads `settings.anthropic_api_key`, instantiates `anthropic.Anthropic` when set, returns `None` otherwise (no import, no error). Called in both interactive entry points: `textloop.main()` (`make repl`) and `talk.run_talk_loop()` (`make talk-loop`). `replay_transcript` / `make demo` intentionally left without a client — the demo uses a scripted fixture and must work zero-config. `_build_model_client` is re-exported from `talk.py` for the loop; `talk_loop.py` CLI picks it up transitively.
+
+Previously, setting `ANTHROPIC_API_KEY` had no effect on the interactive tools — `TextSession` always got `None`. Now `make repl` and `make talk-loop` automatically use model-driven candidates when the key is present. Tests: 3 new cases in `test_repair_suggest.py` (no-key returns None, key instantiates client, import-error returns None).
+
+Also shipped: `benchmark/evaluate_repair_v0.py` + `make eval-repair` — 8 effortful-speech fixtures through the real model, prints candidates + action_type hint-match for human review, optionally writes a JSON report. Skips gracefully when `ANTHROPIC_API_KEY` is unset. Not part of the core test suite (quality is subjective; pilot family grades it).
+
+Deferred: feeding conversation history to the model for better grounding; more than 2 candidates.
