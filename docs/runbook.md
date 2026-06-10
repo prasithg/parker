@@ -1,6 +1,49 @@
 # Parker local v0 — demo runbook
 
-A scripted walkthrough of everything Parker v0 can do locally, end to end, with no external services, no API keys, and no real sends. Written 2026-06-09; updated 2026-06-10 (reset-db, review UI, text loop).
+A scripted walkthrough of everything Parker v0 can do locally, end to end, with no real sends. Written 2026-06-09; updated through 2026-06-10 (voice, auth, repair choices, continuous loop).
+
+## Pilot setup: what to configure
+
+Parker works zero-config for a local demo. For a real LAN pilot, do the following before starting.
+
+**1. Copy and edit the env file:**
+
+```bash
+cp backend/.env.example backend/.env
+# Edit backend/.env — at minimum set PATIENT_NAME
+```
+
+**2. Model-enhanced repair choices (strongly recommended):**
+
+When Parker hears ambiguous effortful speech, it offers numbered repair choices. Without an API key the choices are generic ("set a reminder about this"). With one they are specific to what was actually said ("remind you to call your neighbour"):
+
+```bash
+# in backend/.env:
+ANTHROPIC_API_KEY=sk-ant-...   # get at console.anthropic.com
+```
+
+Then spot-check quality before the pilot session:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... make eval-repair
+```
+
+**3. Lock the caregiver review page (recommended):**
+
+```bash
+# in backend/.env:
+DASHBOARD_PASSWORD=choose-a-passphrase
+```
+
+The browser prompts once; buttons on the page reuse the credentials automatically. `/parker/tick` and `/parker/resurface` remain open — they are the assistant-loop surface.
+
+**4. Optional voice transcription:**
+
+```bash
+make voice-deps    # installs faster-whisper + sounddevice (local, no cloud)
+```
+
+Required for `make demo-voice`, `make talk`, and `make talk-loop`. macOS prompts for microphone permission on first use of `make talk` / `make talk-loop`.
 
 ## Prerequisites
 
@@ -222,7 +265,13 @@ Offer an unsafe candidate (`action_type: medication_change`) to see the typed re
 make eval-tasks                                    # task-taxonomy eval, rule-based baseline
 python3 benchmark/evaluate_tasks_v0.py --write-report   # benchmark/reports/
 cd backend && ./.venv/bin/pytest -q                # full suite
+
+# Repair-choice quality check (requires ANTHROPIC_API_KEY):
+ANTHROPIC_API_KEY=sk-ant-... make eval-repair
+ANTHROPIC_API_KEY=sk-ant-... python3 benchmark/evaluate_repair_v0.py --write-report
 ```
+
+`make eval-repair` runs 8 effortful-speech fixtures through the real model and prints the generated candidates for human review. Run this before the first pilot session to verify the choices are grounded and specific.
 
 ## What this demo deliberately cannot show
 
@@ -231,4 +280,5 @@ cd backend && ./.venv/bin/pytest -q                # full suite
 - No medical advice or medication changes — policy-refused, never confirmable.
 - No voice cloning — optional, consent-gated, not part of v0.
 - No cloud speech recognition — `make demo-voice` transcribes on-device only, and no audio is retained beyond the input file.
+- Generic repair choices without `ANTHROPIC_API_KEY` — set the key for contextually grounded candidates; without it Parker always offers the same two options.
 - Family-wide escalation notifications — candidates are review-only (`info`, undispatched).

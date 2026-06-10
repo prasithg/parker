@@ -122,3 +122,11 @@ Previously, setting `ANTHROPIC_API_KEY` had no effect on the interactive tools �
 Also shipped: `benchmark/evaluate_repair_v0.py` + `make eval-repair` — 8 effortful-speech fixtures through the real model, prints candidates + action_type hint-match for human review, optionally writes a JSON report. Skips gracefully when `ANTHROPIC_API_KEY` is unset. Not part of the core test suite (quality is subjective; pilot family grades it).
 
 Deferred: feeding conversation history to the model for better grounding; more than 2 candidates.
+
+## Post-milestone slice (2026-06-10, thirteenth): pilot setup docs + .env.example rewrite
+
+Shipped: `backend/.env.example` rewritten from the stale "ParkinsClaw" stub into a well-annotated pilot guide — every setting grouped, marked [REQUIRED FOR X] or [NOT USED], `ANTHROPIC_API_KEY` section explains the repair-choice upgrade, `DASHBOARD_PASSWORD` section explains the LAN pilot recommendation, legacy settings (Twilio, OpenAI, ElevenLabs) explicitly labelled as unused in v0. `docs/runbook.md` updated: stale header fixed, new "Pilot setup: what to configure" section added (env file copy, model key, dashboard password, voice deps), `make eval-repair` added to Demo 5, "what this demo cannot show" extended with the generic-repair-without-key note.
+
+No code changes. This closes the last gap between a working local demo and a real pilot hand-off: a family member can now pick up the repo, read the runbook, and know exactly what to configure.
+
+Deferred: a `SETUP.md` or `README.md` at the repo root (currently no top-level readme); multi-turn repair grounding.
