@@ -57,6 +57,10 @@ class TextSession:
         self._model_client = model_client  # anthropic.Anthropic or None; None → hardcoded fallback
         self._pending_choices: Optional[list[dict[str, Any]]] = None
         self._pending_utterance: Optional[str] = None
+        # Labels from the most recently offered (and user-rejected) repair choices.
+        # Passed to suggest_repair_candidates on the next offer so the model can
+        # generate genuinely different alternatives instead of repeating itself.
+        self._prior_offered_labels: Optional[list[str]] = None
 
     def handle(self, text: str) -> dict[str, Any]:
         """Route one utterance and return {kind, speech, ...}."""
@@ -119,7 +123,11 @@ class TextSession:
         return self._offer_choices(utterance)
 
     def _offer_choices(self, utterance: str) -> dict[str, Any]:
-        raw = suggest_repair_candidates(utterance, client=self._model_client)
+        raw = suggest_repair_candidates(
+            utterance,
+            client=self._model_client,
+            prior_choices=self._prior_offered_labels,
+        )
         candidates = [{"label": lbl, "action_type": at} for lbl, at in raw]
         result = execute_tool(
             self.db,
@@ -143,6 +151,10 @@ class TextSession:
         self._pending_choices = None
         self._pending_utterance = None
         if choice["action_type"] is None:
+            # Save the rejected labels so the next offer can generate different alternatives.
+            self._prior_offered_labels = [
+                c["label"] for c in choices if c["action_type"] is not None
+            ]
             return {"kind": "retry", "speech": "Okay, none of those. Tell me again in your own words."}
         return self._capture(
             intent_text=source,
@@ -174,6 +186,7 @@ class TextSession:
         )
         if result.get("status") != "captured":
             return {"kind": "error", "speech": "Something went wrong saving that.", "detail": result}
+        self._prior_offered_labels = None  # successful capture; prior history no longer relevant
         return {
             "kind": "captured",
             "speech": speech,

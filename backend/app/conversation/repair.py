@@ -124,6 +124,12 @@ Rules:
 
 _SUGGEST_USER = "Utterance: {utterance}"
 
+_SUGGEST_USER_WITH_HISTORY = (
+    "Utterance: {utterance}\n\n"
+    "Previously offered choices that the user rejected (do not repeat any of these): {prior_labels}\n"
+    "Offer 2 different, more specific alternatives."
+)
+
 _FALLBACK_CANDIDATES: list[tuple[str, str]] = [
     ("set a reminder about this", "reminder"),
     ("send a family message about this", "family_message"),
@@ -135,6 +141,7 @@ def suggest_repair_candidates(
     *,
     client: "Any | None" = None,
     model: str = "claude-haiku-4-5-20251001",
+    prior_choices: "list[str] | None" = None,
 ) -> list[tuple[str, "str | None"]]:
     """Ask Claude for 2 contextually specific repair candidates.
 
@@ -145,6 +152,10 @@ def suggest_repair_candidates(
     ``client`` must be an ``anthropic.Anthropic`` instance. When *None*, one
     is constructed from ``settings.anthropic_api_key``; if that is also empty
     the fallback candidates are returned immediately (no import attempted).
+
+    ``prior_choices`` is an optional list of labels previously offered to the
+    user (and rejected via "none of these"). When set, they are included in
+    the prompt so the model can offer genuinely different alternatives.
     """
     import json as _json
     import logging
@@ -167,11 +178,18 @@ def suggest_repair_candidates(
             return _fallback(f"client init: {exc}")
 
     try:
+        if prior_choices:
+            prior_labels = "; ".join(prior_choices)
+            user_content = _SUGGEST_USER_WITH_HISTORY.format(
+                utterance=utterance, prior_labels=prior_labels
+            )
+        else:
+            user_content = _SUGGEST_USER.format(utterance=utterance)
         response = client.messages.create(
             model=model,
             max_tokens=256,
             system=_SUGGEST_SYSTEM,
-            messages=[{"role": "user", "content": _SUGGEST_USER.format(utterance=utterance)}],
+            messages=[{"role": "user", "content": user_content}],
         )
         raw = response.content[0].text.strip()
         data = _json.loads(raw)

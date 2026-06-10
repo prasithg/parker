@@ -238,3 +238,99 @@ def test_build_model_client_returns_none_on_import_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "anthropic", None)  # simulate missing package
     # Should not raise — graceful None return
     assert _build_model_client() is None
+
+
+# ---------------------------------------------------------------------------
+# Multi-turn repair grounding: prior_choices propagation
+# ---------------------------------------------------------------------------
+
+
+def test_prior_choices_included_in_prompt():
+    """When prior_choices are provided, they appear in the user message."""
+    client = _good_client()
+    suggest_repair_candidates(
+        "the one with the thing",
+        client=client,
+        prior_choices=["remind you to call the doctor", "send a family message about this"],
+    )
+    call = client.calls[0]
+    user_content = call["messages"][0]["content"]
+    assert "remind you to call the doctor" in user_content
+    assert "send a family message about this" in user_content
+
+
+def test_no_prior_choices_uses_plain_user_message():
+    """Without prior_choices the user message is the simple utterance-only form."""
+    client = _good_client()
+    suggest_repair_candidates("something vague", client=client, prior_choices=None)
+    call = client.calls[0]
+    user_content = call["messages"][0]["content"]
+    assert "Previously offered" not in user_content
+
+
+def test_text_session_passes_prior_labels_after_none_of_these(db):
+    """After 'none of these', the next offer passes the rejected labels to the model."""
+    call_log = __import__("app.db.models", fromlist=["CallLog"]).CallLog(
+        call_sid="TEST-PRIOR-LABELS", call_type="text_loop"
+    )
+    db.add(call_log)
+    db.commit()
+    db.refresh(call_log)
+
+    client = _good_client("remind you to call your neighbour", "message your neighbour")
+    session = TextSession(db, call_log.id, model_client=client)
+
+    # First vague utterance → choices offered; no prior history
+    r1 = session.handle("Call... the... you know... the one with the garden...")
+    assert r1["kind"] == "choices"
+    assert len(client.calls) == 1
+    first_call_content = client.calls[0]["messages"][0]["content"]
+    assert "Previously offered" not in first_call_content
+
+    # User rejects → "none of these" is position 3 (2 candidates + 1 none-of-these)
+    none_position = str(len(r1["choices"]))
+    r2 = session.handle(none_position)
+    assert r2["kind"] == "retry"
+
+    # Second vague utterance → prior labels should be in the model call
+    client2 = _good_client("remind you about the garden appointment", "message your garden neighbour")
+    session._model_client = client2
+    r3 = session.handle("you know... the other one...")
+    assert r3["kind"] == "choices"
+    second_call_content = client2.calls[0]["messages"][0]["content"]
+    assert "remind you to call your neighbour" in second_call_content
+    assert "message your neighbour" in second_call_content
+
+
+def test_text_session_prior_labels_cleared_after_capture(db):
+    """Successful capture clears prior labels so they don't leak into unrelated offers."""
+    call_log = __import__("app.db.models", fromlist=["CallLog"]).CallLog(
+        call_sid="TEST-CLEAR-PRIOR", call_type="text_loop"
+    )
+    db.add(call_log)
+    db.commit()
+    db.refresh(call_log)
+
+    client = _good_client("remind you to call Dr Smith", "send your family a message")
+    session = TextSession(db, call_log.id, model_client=client)
+
+    # Offer → reject → capture via a second offer selection
+    r1 = session.handle("you know... the doctor...")
+    none_position = str(len(r1["choices"]))
+    session.handle(none_position)  # none of these — sets _prior_offered_labels
+
+    # Now pick choice 1 from the re-offer (captures successfully)
+    client2 = _good_client("remind you to call Dr Smith", "send your family a message")
+    session._model_client = client2
+    session.handle("you know... doctor thing again...")
+    session.handle("1")  # successful capture
+
+    # _prior_offered_labels must be None now
+    assert session._prior_offered_labels is None
+
+    # Next offer should NOT include "Previously offered" in the prompt
+    client3 = _good_client("remind you about the appointment", "message your daughter")
+    session._model_client = client3
+    session.handle("the... you know... the other thing...")
+    third_call_content = client3.calls[0]["messages"][0]["content"]
+    assert "Previously offered" not in third_call_content

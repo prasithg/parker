@@ -138,3 +138,11 @@ Shipped: the stale bottom half of `README.md` brought up to v0 reality; the visi
 No code changes; 214 tests and evals unchanged.
 
 Deferred: nothing README-related. Open quality items: voice-activity end-pointing, multi-turn repair grounding, human-graded repair-content evals.
+
+## Post-milestone slice (2026-06-10, fifteenth): multi-turn repair grounding
+
+Shipped: `suggest_repair_candidates` gains an optional `prior_choices: list[str] | None` parameter. When provided, the previously rejected labels are injected into the user message (`_SUGGEST_USER_WITH_HISTORY`) so the model generates genuinely different alternatives instead of repeating itself. `TextSession` now tracks `_prior_offered_labels`: set to the candidate labels when the user picks "none of these", passed to `_offer_choices` on the next vague utterance, and cleared to `None` after any successful capture so the history does not leak into unrelated conversations.
+
+Before this slice: "none of these" → vague follow-up → model would often regenerate the exact same two choices. Now the model receives the rejected labels as grounding context and produces different, more specific alternatives.
+
+Tests: 4 new cases in `test_repair_suggest.py` — prior labels appear in the prompt; plain user message when no prior history; full TextSession round-trip (vague → none-of-these → vague again verifies rejected labels reach the model call); prior labels cleared after successful capture (no leakage into subsequent fresh offers). Total: 218 tests.
