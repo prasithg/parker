@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks reset-db repl demo
+.PHONY: backend-venv install run test eval-tasks reset-db repl demo voice-deps demo-voice
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -48,6 +48,21 @@ demo: reset-db
 	@echo ""
 	@echo "Demo ready. Start the server with 'make run' and open:"
 	@echo "  http://localhost:8000/parker/review/ui"
+
+# Optional, local-only transcription deps (faster-whisper). Not part of the
+# core suite — tests inject a fake transcriber. First run downloads model
+# weights to the local Hugging Face cache; inference is fully on-device.
+voice-deps: backend-venv
+	$(BACKEND_PIP) install -r backend/requirements-voice.txt
+
+# Local voice demo: transcribe AUDIO on this machine and feed the transcript
+# through the same text-loop routing as `make demo`. The audio file is only
+# read — never copied or stored; transcripts are the only artifact.
+demo-voice: backend-venv
+ifndef AUDIO
+	$(error usage: make demo-voice AUDIO=path/to/audio.wav)
+endif
+	cd backend && ./.venv/bin/python -m app.demo.voice "$(abspath $(AUDIO))"
 
 migrate:
 	@echo "v0 uses create_tables() — no Alembic yet (use make reset-db for a fresh local DB)"

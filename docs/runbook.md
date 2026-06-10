@@ -32,6 +32,23 @@ The review page opens populated: three actions awaiting confirmation (two remind
 
 Message lifecycle on the page: patient confirms → `queued_local` (awaiting your approval) → `approved_local` (reviewed, still on this machine) — or cancelled from either state. No send exists.
 
+## Voice path: `make demo-voice` (optional, local-only)
+
+The transcript seam accepts real speech. Install the optional on-device transcriber (faster-whisper; first run downloads model weights to the local Hugging Face cache, then inference is fully offline — no cloud speech APIs):
+
+```bash
+make voice-deps
+make demo-voice AUDIO=path/to/recording.wav
+```
+
+The audio is transcribed on this machine and each recognized segment is routed through the same `TextSession` rules as `make demo` — capture, repair choices, refusals, human-approval routing — then ticked so intents stage for `/parker/review/ui`. The audio file is only read, never copied or stored; transcripts are the only artifact. To try it without a recording, synthesize one:
+
+```bash
+say -o /tmp/parker.aiff "Remind me to water the tomato plants this evening."
+afconvert -f WAVE -d LEI16@16000 /tmp/parker.aiff /tmp/parker.wav
+make demo-voice AUDIO=/tmp/parker.wav
+```
+
 ## Demo 0 — Talk to Parker (text loop) + caregiver review page
 
 For a live version of the same flow, use two terminals and no curl:
@@ -177,4 +194,5 @@ cd backend && ./.venv/bin/pytest -q                # full suite
 - No purchases, smart-home, or calendar writes — policy-blocked (`human_operator`).
 - No medical advice or medication changes — policy-refused, never confirmable.
 - No voice cloning — optional, consent-gated, not part of v0.
+- No cloud speech recognition — `make demo-voice` transcribes on-device only, and no audio is retained beyond the input file.
 - Family-wide escalation notifications — candidates are review-only (`info`, undispatched).
