@@ -33,7 +33,7 @@ eval-tasks:
 # Deterministic local reset: v0 uses create_tables(), which never ALTERs,
 # so schema changes require a fresh DB. Removes both historical locations.
 reset-db: backend-venv
-	rm -f parkinsclaw.db backend/parkinsclaw.db
+	rm -f parkinsclaw.db backend/parkinsclaw.db parker.db backend/parker.db
 	cd backend && ./.venv/bin/python -c "from app.db.database import create_tables; create_tables(); print('Fresh local DB created at backend/parkinsclaw.db')"
 
 repl: backend-venv

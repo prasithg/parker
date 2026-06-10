@@ -32,7 +32,7 @@ Deferred to a future, explicitly approved slice: an actual sender (per-message h
 
 Shipped: prompt identity is now Parker (`BASE_IDENTITY` rewritten around effortful speech, repair choices, confirm-before-acting); cloned-voice framing only appears when **both** `VOICE_CLONE_CONSENTED=true` and a voice ID are configured, and instructs the agent to never claim to be the family member. App title/description, `app/__init__` docstring, escalation notification prefix, and the tools logger renamed to Parker. Prompt tests cover the consent gate.
 
-Left as inert legacy (rename when those modules are next touched): logger names in `calls/`, `voice/`, `meds/`, the `parkinsclaw.db` filename, and `db/models.py`'s docstring.
+Stale-naming cleanup completed in slice 9 (see below): logger names in `calls/`, `voice/`, `meds/`, `conversation/agent.py`, DB filename, and `db/models.py` docstring all renamed to Parker.
 
 ## Post-milestone slice (2026-06-10): pilot-readiness — reset path, caregiver review UI, text loop
 
@@ -83,3 +83,16 @@ Deferred: push-to-talk / voice-activity end-pointing instead of a fixed window; 
 Shipped: `run_talk_loop` in `backend/app/demo/talk.py` — one `TextSession` and one `CallLog` live for the whole conversation, so `_pending_choices` state carries across recording windows: a repair-choice offered in turn 1 is correctly selected by "1" in turn 2. Per-turn: record → transcribe → feed each utterance line to `session.handle()` → per-turn tick (intents stage promptly). Silence (empty transcript) prints a cue and continues without resetting session state. Exits cleanly on `KeyboardInterrupt`; returns all exchanges collected so far. `backend/app/demo/talk_loop.py` is the thin CLI for `make talk-loop SECONDS=n`. Tests: `backend/tests/test_talk_loop.py` — single turn, repair-choice spanning turns, multi-turn capture, silence-then-selection (silence must not reset `_pending_choices`), refusal, single-CallLog invariant, `KeyboardInterrupt` mid-loop, and recording-deletion across turns.
 
 Deferred: push-to-talk / voice-activity end-pointing; in-memory transcription.
+
+## Post-milestone slice (2026-06-10, ninth): stale-naming cleanup — Parker throughout
+
+Shipped: all remaining `parkinsclaw` identifiers renamed to `parker` across the codebase.
+- `config.py` default `database_url`: `parkinsclaw.db` → `parker.db`
+- `Makefile` reset-db: removes both `parker.db` and `parkinsclaw.db` so upgrades are smooth
+- `db/models.py` module docstring: "ParkinsClaw" → "Parker"
+- Loggers: `parkinsclaw.calls` → `parker.calls`, `parkinsclaw.scheduler` → `parker.scheduler`, `parkinsclaw.voice.stream` → `parker.voice.stream`, `parkinsclaw.voice.clone` → `parker.voice.clone`, `parkinsclaw.meds` → `parker.meds`, `parkinsclaw.agent` → `parker.agent`
+- `docs/runbook.md`: `parkinsclaw.db` → `parker.db`
+
+No schema change — existing local DBs named `parkinsclaw.db` are unaffected until `make reset-db`. `make reset-db` now cleans up both names so both old and new installs start clean.
+
+Deferred: nothing. The project now reads as Parker end to end.

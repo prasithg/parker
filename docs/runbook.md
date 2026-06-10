@@ -13,11 +13,11 @@ make reset-db        # deterministic fresh local DB (v0 schema changes need this
 Start the server:
 
 ```bash
-make run    # uvicorn on http://localhost:8000, DB at backend/parkinsclaw.db
+make run    # uvicorn on http://localhost:8000, DB at backend/parker.db
 curl -s localhost:8000/health
 ```
 
-`make run` and all seeding/REPL commands below share `backend/parkinsclaw.db`. All `/parker` endpoints accept an optional `now` so the demo is deterministic; omit it to use real time.
+`make run` and all seeding/REPL commands below share `backend/parker.db`. All `/parker` endpoints accept an optional `now` so the demo is deterministic; omit it to use real time.
 
 ## Fastest path: `make demo`
 

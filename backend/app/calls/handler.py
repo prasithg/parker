@@ -16,7 +16,7 @@ from app.conversation.agent import ConversationAgent
 from app.db.database import SessionLocal
 from app.db.models import CallLog
 
-logger = logging.getLogger("parkinsclaw.calls")
+logger = logging.getLogger("parker.calls")
 
 _agent = ConversationAgent(SessionLocal)
 

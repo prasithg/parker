@@ -15,7 +15,7 @@ from app.db.models import CallLog, DoseLog
 from app.meds.models import CallSummary
 from app.meds.tracker import get_due_medications
 
-logger = logging.getLogger("parkinsclaw.agent")
+logger = logging.getLogger("parker.agent")
 
 Message = dict[str, Any]
 

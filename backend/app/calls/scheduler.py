@@ -15,7 +15,7 @@ from app.config import settings
 from app.db.database import SessionLocal
 from app.db.models import Medication
 
-logger = logging.getLogger("parkinsclaw.scheduler")
+logger = logging.getLogger("parker.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
 _db_session_factory: Callable[[], Session] = SessionLocal

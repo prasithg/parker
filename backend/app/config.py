@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     patient_name: str = "Dad"
     
     # Database
-    database_url: str = "sqlite:///./parkinsclaw.db"
+    database_url: str = "sqlite:///./parker.db"
     dose_verification_window_minutes: int = 30
 
     # Parker non-response escalation candidates

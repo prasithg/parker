@@ -1,4 +1,4 @@
-"""SQLAlchemy models for ParkinsClaw."""
+"""SQLAlchemy models for Parker."""
 
 from __future__ import annotations
 
