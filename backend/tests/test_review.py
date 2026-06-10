@@ -251,15 +251,19 @@ def test_review_cancelled_actions_appear_in_audit_list(db):
     call = _call(db, sid="CA_CANCELLED")
     first = _staged(db, call, subject="first thought")
     second = _staged(db, call, subject="second thought")
-    cancel_staged_action(db, first.id, cancelled_by="caregiver", now=NOW)
+    # first is cancelled LATER than second: ordering must follow cancelled_at,
+    # not insertion id.
     cancel_staged_action(db, second.id, cancelled_by="patient", now=NOW)
+    cancel_staged_action(db, first.id, cancelled_by="caregiver", now=NOW + timedelta(hours=1))
 
     data = client.get("/parker/review").json()
 
     cancelled = data["recent_cancelled"]
-    assert [item["subject"] for item in cancelled] == ["second thought", "first thought"]
+    assert [item["subject"] for item in cancelled] == ["first thought", "second thought"]
     assert all(item["status"] == "cancelled" for item in cancelled)
-    assert "cancelled by patient" in cancelled[0]["execution_result"]
+    assert cancelled[0]["cancelled_by"] == "caregiver"
+    assert cancelled[0]["cancelled_at"] == (NOW + timedelta(hours=1)).isoformat()
+    assert "cancelled by patient" in cancelled[1]["execution_result"]
     # Cancelled items never appear among pending decisions or done history.
     assert all(a["status"] != "cancelled" for a in data["pending_actions"])
     assert all(a["status"] != "cancelled" for a in data["recent_history"])

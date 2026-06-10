@@ -162,12 +162,10 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
         .all()
     )
     # The "changed my mind" audit: cancellations stay visible, not vanished.
-    # Cancelled actions have no timestamp column (who/when lives in
-    # execution_result text), so id desc is the v0 recency proxy.
     cancelled_actions = (
         db.query(StagedAction)
         .filter(StagedAction.status == "cancelled")
-        .order_by(StagedAction.id.desc())
+        .order_by(StagedAction.cancelled_at.desc(), StagedAction.id.desc())
         .limit(RECENT_HISTORY_LIMIT)
         .all()
     )
@@ -273,6 +271,8 @@ def _serialize_action(action: StagedAction) -> dict[str, Any]:
         "last_resurfaced_at": action.last_resurfaced_at.isoformat() if action.last_resurfaced_at else None,
         "confirmed_by": action.confirmed_by,
         "executed_at": action.executed_at.isoformat() if action.executed_at else None,
+        "cancelled_at": action.cancelled_at.isoformat() if action.cancelled_at else None,
+        "cancelled_by": action.cancelled_by,
         "execution_result": action.execution_result,
     }
 

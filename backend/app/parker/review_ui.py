@@ -134,7 +134,7 @@ function cancelledActionCard(a) {
     ? `Message to <b>${a.recipient ?? '(no recipient)'}</b>: “${a.message_text ?? ''}”`
     : `Reminder: <b>${a.subject ?? ''}</b>`;
   return el(`<div class="card">${what}<span class="badge cancelled">cancelled</span>
-    <div class="meta">${a.execution_result ?? ''}</div></div>`);
+    <div class="meta">cancelled ${a.cancelled_at ?? '—'} by ${a.cancelled_by ?? '—'}</div></div>`);
 }
 
 function cancelledMessageCard(m) {

@@ -10,7 +10,8 @@ Resulting review-page state:
 - a reminder and a drafted family message awaiting confirmation;
 - one stale reminder that became a non-response escalation candidate;
 - one confirmed message queued to the local outbox (cancellable);
-- one executed reminder for history.
+- one executed reminder for history;
+- one cancelled reminder for the "Changed my mind" audit list.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.db.models import CallLog
 from app.escalation.candidates import flag_non_response_candidates
 from app.parker.pipeline import (
+    cancel_staged_action,
     capture_intent,
     confirm_staged_action,
     execute_staged_action,
@@ -93,7 +95,20 @@ def seed_demo_data(db: Session, now: datetime | None = None) -> dict[str, Any]:
     confirm_staged_action(db, queued.id, confirmed_by="patient", now=hours_ago(0.1))
     execute_staged_action(db, queued.id, now=hours_ago(0.1))
 
-    # 4. Reminder awaiting confirmation right now.
+    # 4. A reminder the patient changed their mind about ("Changed my mind" audit).
+    capture_intent(
+        db,
+        call_log_id=call.id,
+        intent_text="Remind me to set up the card table for bridge tonight.",
+        requested_action="remind",
+        subject="set up the card table",
+        due_at=hours_ago(6),
+    )
+    resolve_captured_intents(db, now=hours_ago(6))
+    cancelled = stage_resolved_actions(db, now=hours_ago(6))[0]
+    cancel_staged_action(db, cancelled.id, cancelled_by="patient", now=hours_ago(5.5))
+
+    # 5. Reminder awaiting confirmation right now.
     capture_intent(
         db,
         call_log_id=call.id,
@@ -102,7 +117,7 @@ def seed_demo_data(db: Session, now: datetime | None = None) -> dict[str, Any]:
         subject="water the tomato plants",
         due_at=current - timedelta(minutes=5),
     )
-    # 5. Drafted family message awaiting confirmation right now.
+    # 6. Drafted family message awaiting confirmation right now.
     capture_intent(
         db,
         call_log_id=call.id,
@@ -124,6 +139,7 @@ def seed_demo_data(db: Session, now: datetime | None = None) -> dict[str, Any]:
         "outbox_queued": 1,
         "escalation_candidates": len(candidates),
         "executed_history": 2,  # pharmacy reminder + Sarah message
+        "cancelled": 1,  # the bridge card table, changed mind
     }
 
 
@@ -141,7 +157,8 @@ def main() -> None:  # pragma: no cover — CLI entry point
             "Demo data seeded: "
             f"{summary['pending_confirmation']} actions awaiting confirmation, "
             f"{summary['outbox_queued']} message queued locally, "
-            f"{summary['escalation_candidates']} non-response candidate(s)."
+            f"{summary['escalation_candidates']} non-response candidate(s), "
+            f"{summary['cancelled']} cancelled item in the audit list."
         )
 
 

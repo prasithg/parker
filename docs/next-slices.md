@@ -162,3 +162,13 @@ Shipped: cancellations no longer vanish from the review page. `GET /parker/revie
 Tests: 3 new cases in `backend/tests/test_review.py` — cancelled actions newest-first with canceller visible and excluded from pending/history; cancelled outbox message moves from `outbox_queued` to `outbox_cancelled` with its timestamp; section present in the HTML page.
 
 Deferred: a real `cancelled_at`/`cancelled_by` column pair on `StagedAction` if audit ordering ever needs to be time-true across restarts (schema change → reset-db).
+
+## Post-milestone slice (2026-06-10, eighteenth): time-true cancellation columns + seeded audit item
+
+Shipped: `StagedAction` gains `cancelled_at`/`cancelled_by` columns; `cancel_staged_action` records both (the human-readable `execution_result` text is kept for back-compat display), `_serialize_action` exposes them, and the "Changed my mind" audit ordering switched from the id-desc proxy to `cancelled_at` desc — the review test now proves time ordering beats insertion order. The cancelled card's meta line shows "cancelled <when> by <who>" from the structured fields. The demo seed adds a sixth scenario item: a bridge-night card-table reminder the patient cancelled, so the "Changed my mind" section is populated out of the box (`make demo` summary now reports it; deterministic-summary test updated).
+
+Schema note: two new nullable columns on `staged_actions` → pre-existing local DBs need `make reset-db` (`create_tables()` does not ALTER); `make demo` resets anyway.
+
+Tests: review audit test rewritten time-true (later cancellation listed first despite earlier id) + `cancelled_at`/`cancelled_by` serialization; demo tests assert the seeded cancelled item and the new summary key. 225 total.
+
+Deferred: nothing from the original slice menu remains.

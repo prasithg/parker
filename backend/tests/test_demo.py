@@ -33,6 +33,9 @@ def test_seed_produces_the_documented_review_state(db):
     assert len(review["escalation_candidates"]) == 1
     assert "afternoon stretches" in review["escalation_candidates"][0]["reason"]
     assert review["open_escalations"] == []
+    cancelled = review["recent_cancelled"]
+    assert [item["subject"] for item in cancelled] == ["set up the card table"]
+    assert cancelled[0]["cancelled_by"] == "patient"
 
 
 def test_seed_is_deterministic_for_a_fixed_now(db):
@@ -45,6 +48,7 @@ def test_seed_is_deterministic_for_a_fixed_now(db):
         "outbox_queued": 1,
         "escalation_candidates": 1,
         "executed_history": 2,
+        "cancelled": 1,
     }
 
 

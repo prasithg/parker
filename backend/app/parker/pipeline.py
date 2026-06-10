@@ -166,7 +166,10 @@ def cancel_staged_action(
     if action.status not in {"staged", "confirmed"}:
         return action
     action.status = "cancelled"
-    when = (now or datetime.utcnow()).isoformat(timespec="seconds")
+    moment = now or datetime.utcnow()
+    action.cancelled_at = moment
+    action.cancelled_by = cancelled_by
+    when = moment.isoformat(timespec="seconds")
     action.execution_result = f"cancelled by {cancelled_by} before execution at {when}"
     db.commit()
     db.refresh(action)

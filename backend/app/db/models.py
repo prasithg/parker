@@ -170,6 +170,8 @@ class StagedAction(Base):
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     confirmed_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cancelled_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     execution_result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Set when a non-response escalation candidate was raised for this action
     # (at most one per staged action).
