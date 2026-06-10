@@ -8,12 +8,20 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db.models import CapturedIntent, ResolutionResult, StagedAction
+from app.db.models import CapturedIntent, OutboxMessage, ResolutionResult, StagedAction
+from app.parker.policy import executable_v0_action_types
 
-REVERSIBLE_ACTION_TYPES = {"reminder"}
+# Action types v0 may execute after confirmation. Every entry's execution
+# artifact is local and reversible (reminders resurface locally; family
+# messages queue to the cancellable local outbox — no send path exists).
+EXECUTABLE_V0_ACTION_TYPES = executable_v0_action_types()
+# Backwards-compatible alias for earlier naming.
+REVERSIBLE_ACTION_TYPES = EXECUTABLE_V0_ACTION_TYPES
 REQUESTED_ACTION_TO_ACTION_TYPE = {
     "remind": "reminder",
     "reminder": "reminder",
+    "message": "family_message",
+    "family_message": "family_message",
 }
 
 
@@ -25,6 +33,7 @@ def capture_intent(
     requested_action: str = "remind",
     due_at: datetime | str | None = None,
     subject: str | None = None,
+    recipient: str | None = None,
 ) -> CapturedIntent:
     """Persist a patient/caregiver intent for later resolution."""
 
@@ -33,6 +42,7 @@ def capture_intent(
         intent_text=intent_text,
         requested_action=requested_action,
         subject=subject,
+        recipient=recipient,
         due_at=_coerce_datetime(due_at),
         status="pending",
     )
@@ -56,7 +66,7 @@ def resolve_captured_intents(db: Session, now: datetime | None = None) -> list[R
     results: list[ResolutionResult] = []
     for intent in due_intents:
         action_type = REQUESTED_ACTION_TO_ACTION_TYPE.get(intent.requested_action, intent.requested_action)
-        reversible = action_type in REVERSIBLE_ACTION_TYPES
+        reversible = action_type in EXECUTABLE_V0_ACTION_TYPES
         subject = intent.subject or intent.intent_text
         result = ResolutionResult(
             captured_intent_id=intent.id,
@@ -93,7 +103,7 @@ def stage_resolved_actions(db: Session, now: datetime | None = None) -> list[Sta
     )
     staged: list[StagedAction] = []
     for resolution in resolutions:
-        if not resolution.reversible or resolution.action_type not in REVERSIBLE_ACTION_TYPES:
+        if not resolution.reversible or resolution.action_type not in EXECUTABLE_V0_ACTION_TYPES:
             resolution.status = "rejected"
             resolution.summary = _append_reversible_rejection(resolution.summary)
             continue
@@ -110,6 +120,7 @@ def stage_resolved_actions(db: Session, now: datetime | None = None) -> list[Sta
                     "captured_intent_id": captured.id,
                     "subject": captured.subject or captured.intent_text,
                     "intent_text": captured.intent_text,
+                    "recipient": captured.recipient,
                 }
             ),
         )
@@ -142,6 +153,26 @@ def get_due_resurfaced_actions(db: Session, now: datetime | None = None) -> list
     return actions
 
 
+def cancel_staged_action(
+    db: Session,
+    staged_action_id: int,
+    *,
+    cancelled_by: str = "caregiver",
+    now: datetime | None = None,
+) -> StagedAction:
+    """Cancel a staged or confirmed action before execution."""
+
+    action = _get_action(db, staged_action_id)
+    if action.status not in {"staged", "confirmed"}:
+        return action
+    action.status = "cancelled"
+    when = (now or datetime.utcnow()).isoformat(timespec="seconds")
+    action.execution_result = f"cancelled by {cancelled_by} before execution at {when}"
+    db.commit()
+    db.refresh(action)
+    return action
+
+
 def confirm_staged_action(
     db: Session,
     staged_action_id: int,
@@ -163,15 +194,21 @@ def confirm_staged_action(
 
 
 def execute_staged_action(db: Session, staged_action_id: int, now: datetime | None = None) -> StagedAction:
-    """Execute only confirmed, reversible v0 actions."""
+    """Execute only confirmed, reversible v0 actions.
+
+    Reminders execute by resurfacing locally. Family messages execute by
+    queueing to the local outbox — nothing is sent anywhere in v0.
+    """
 
     action = _get_action(db, staged_action_id)
-    if not action.reversible or action.action_type not in REVERSIBLE_ACTION_TYPES:
+    if not action.reversible or action.action_type not in EXECUTABLE_V0_ACTION_TYPES:
         action.status = "blocked"
         action.execution_result = "Only reversible actions can be executed in Parker v0."
     elif action.status != "confirmed":
         action.status = "blocked"
         action.execution_result = "Action requires confirmation before execution."
+    elif action.action_type == "family_message":
+        _execute_family_message(db, action, now=now)
     else:
         payload = _json_payload(action.action_payload)
         subject = payload.get("subject") or action.resolution_result.summary
@@ -181,6 +218,47 @@ def execute_staged_action(db: Session, staged_action_id: int, now: datetime | No
     db.commit()
     db.refresh(action)
     return action
+
+
+def _execute_family_message(db: Session, action: StagedAction, now: datetime | None = None) -> None:
+    """Queue a confirmed family message to the local outbox (never sends)."""
+
+    payload = _json_payload(action.action_payload)
+    recipient = (payload.get("recipient") or "").strip()
+    body = (payload.get("intent_text") or payload.get("subject") or "").strip()
+    if not recipient or not body:
+        action.status = "blocked"
+        action.execution_result = "Family message requires a recipient and message text."
+        return
+    message = OutboxMessage(staged_action_id=action.id, recipient=recipient, body=body)
+    db.add(message)
+    db.flush()
+    action.status = "executed"
+    action.executed_at = now or datetime.utcnow()
+    action.execution_result = f"family message queued locally for {recipient} (outbox {message.id})"
+
+
+def list_outbox_messages(db: Session, status: str | None = None) -> list[OutboxMessage]:
+    """List outbox messages, optionally filtered by status."""
+
+    query = db.query(OutboxMessage)
+    if status:
+        query = query.filter(OutboxMessage.status == status)
+    return query.order_by(OutboxMessage.created_at, OutboxMessage.id).all()
+
+
+def cancel_outbox_message(db: Session, message_id: int, now: datetime | None = None) -> OutboxMessage | None:
+    """Cancel a locally queued message; the reversibility story for v0 messages."""
+
+    message = db.get(OutboxMessage, message_id)
+    if message is None:
+        return None
+    if message.status == "queued_local":
+        message.status = "cancelled"
+        message.cancelled_at = now or datetime.utcnow()
+        db.commit()
+        db.refresh(message)
+    return message
 
 
 def _get_action(db: Session, staged_action_id: int) -> StagedAction:

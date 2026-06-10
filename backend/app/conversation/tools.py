@@ -7,13 +7,14 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
+from app.conversation.repair import DEFAULT_QUESTION, build_repair_prompt
 from app.db.models import CallLog, Medication, MoodEntry
 from app.parker.pipeline import capture_intent
 from app.escalation.engine import create_escalation
 from app.exercises.session import complete_exercise, start_exercise
 from app.meds.tracker import log_dose
 
-logger = logging.getLogger("parkinsclaw.tools")
+logger = logging.getLogger("parker.tools")
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
@@ -116,11 +117,58 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "offer_repair_choices",
+            "description": (
+                "When the user's intent is unclear, offer 2-3 concrete interpretation "
+                "choices plus an automatic 'none of these' instead of asking them to "
+                "repeat themselves. Read the returned spoken_prompt aloud. After the "
+                "user picks a choice that has an action_type, call capture_intent with "
+                "that interpretation. Never act on a choice the user did not pick."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "candidates": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {
+                                    "type": "string",
+                                    "description": "Short spoken description of this interpretation.",
+                                },
+                                "action_type": {
+                                    "type": ["string", "null"],
+                                    "description": (
+                                        "Parker action type this choice maps to "
+                                        "(e.g. reminder, family_message), or null if "
+                                        "the interpretation carries no action."
+                                    ),
+                                },
+                            },
+                            "required": ["label"],
+                        },
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "Optional question stem to read before the choices.",
+                    },
+                },
+                "required": ["candidates"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "capture_intent",
             "description": (
                 "Capture a patient or caregiver's future intent for Parker to resolve, "
-                "stage, and resurface later. Use only for reversible follow-up intents "
-                "such as reminders, not purchases or medical changes."
+                "stage, and resurface later. Use for reversible follow-up intents such "
+                "as reminders, or family messages (queued to the local outbox after "
+                "confirmation; never auto-sent). Not for purchases or medical changes."
             ),
             "parameters": {
                 "type": "object",
@@ -128,7 +176,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "intent_text": {"type": "string"},
                     "requested_action": {
                         "type": "string",
-                        "description": "Requested action, e.g. remind/reminder.",
+                        "description": "Requested action, e.g. remind/reminder or message/family_message.",
                     },
                     "due_at": {
                         "type": "string",
@@ -138,12 +186,47 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "Short human-readable subject to resurface.",
                     },
+                    "recipient": {
+                        "type": "string",
+                        "description": "Family/caregiver contact name for message intents.",
+                    },
                 },
                 "required": ["intent_text"],
             },
         },
     },
 ]
+
+def handle_offer_repair_choices(
+    db: Session,
+    call_log_id: int,
+    candidates: list[dict[str, Any]],
+    question: str = DEFAULT_QUESTION,
+) -> dict[str, Any]:
+    """Validate and format repair choices for the agent to read aloud.
+
+    Conversation-level only: persists nothing and commits to nothing. A
+    rejected candidate set returns status "rejected" with the reason so the
+    model can propose a corrected set.
+    """
+
+    del db, call_log_id
+    try:
+        prompt = build_repair_prompt(
+            [(item.get("label", ""), item.get("action_type")) for item in candidates],
+            question=question,
+        )
+    except ValueError as exc:
+        return {"status": "rejected", "message": str(exc)}
+    return {
+        "status": "offered",
+        "spoken_prompt": prompt.as_spoken_text(),
+        "choices": [
+            {"position": index, "label": choice.label, "action_type": choice.action_type}
+            for index, choice in enumerate(prompt.choices, start=1)
+        ],
+    }
+
 
 def handle_capture_intent(
     db: Session,
@@ -152,6 +235,7 @@ def handle_capture_intent(
     requested_action: str = "remind",
     due_at: str | None = None,
     subject: str | None = None,
+    recipient: str | None = None,
 ) -> dict[str, Any]:
     """Persist a future intent for Parker's resolve/stage/resurface loop."""
 
@@ -162,6 +246,7 @@ def handle_capture_intent(
         requested_action=requested_action,
         due_at=due_at,
         subject=subject,
+        recipient=recipient,
     )
     return {
         "status": "captured",
@@ -283,6 +368,7 @@ def handle_escalate_to_family(
 
 
 TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
+    "offer_repair_choices": handle_offer_repair_choices,
     "capture_intent": handle_capture_intent,
     "log_medication": handle_log_medication,
     "record_mood": handle_record_mood,

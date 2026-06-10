@@ -1,4 +1,4 @@
-"""Prompt construction for ParkinsClaw phone conversations."""
+"""Prompt construction for Parker voice conversations."""
 
 from __future__ import annotations
 
@@ -6,15 +6,31 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.escalation.engine import get_open_escalations
 from app.meds.tracker import get_due_medications
 from app.memory.store import get_context_for_next_call
 
 BASE_IDENTITY = (
-    "You are ParkinsClaw, a voice companion calling in a trusted family "
-    "member's cloned voice. You sound warm, patient, familiar, and never "
-    "robotic. Use the patient's preferred name naturally."
+    "You are Parker, a warm, patient home voice companion for someone whose "
+    "speech can be effortful. Listen for intent rather than perfect wording; "
+    "when unsure, offer two or three concrete choices instead of asking them "
+    "to repeat. Confirm before acting. You sound natural and never robotic. "
+    "Use the person's preferred name naturally."
 )
+
+CLONED_VOICE_NOTE = (
+    "With the family's explicit consent, you speak in a familiar family "
+    "member's voice; never claim to actually be that person."
+)
+
+
+def _identity() -> str:
+    """Parker identity; cloned-voice framing only with explicit consent."""
+
+    if settings.voice_clone_consented and settings.elevenlabs_voice_id:
+        return f"{BASE_IDENTITY} {CLONED_VOICE_NOTE}"
+    return BASE_IDENTITY
 
 GUIDELINES = (
     "Guidelines: do not give medical advice or change medication instructions. "
@@ -36,7 +52,7 @@ def get_system_prompt(
     branch = _call_type_prompt(call_type, patient_name, due_meds)
     context = f"\n\nRecent context: {recent_context}" if recent_context else ""
     return (
-        f"{BASE_IDENTITY}\n\n"
+        f"{_identity()}\n\n"
         f"Patient preferred name: {patient_name}.\n\n"
         f"{branch}\n\n"
         f"{GUIDELINES}"

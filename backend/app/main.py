@@ -31,8 +31,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ParkinsClaw",
-    description="Voice-first Parkinson's companion",
+    title="Parker",
+    description="Family-aware home assistant for effortful speech (local v0)",
     version="0.2.0",
     lifespan=lifespan,
 )

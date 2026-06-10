@@ -9,9 +9,10 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
     
-    # ElevenLabs
+    # ElevenLabs (voice cloning is optional and consent-gated; not the product)
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""  # cloned voice ID
+    voice_clone_consented: bool = False  # explicit family consent recorded
     
     # OpenAI
     openai_api_key: str = ""
@@ -25,6 +26,10 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./parkinsclaw.db"
     dose_verification_window_minutes: int = 30
+
+    # Parker non-response escalation candidates
+    parker_non_response_resurface_threshold: int = 3
+    parker_non_response_quiet_minutes: int = 30
     
     # Dashboard auth
     dashboard_username: str = "family"

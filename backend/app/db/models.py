@@ -106,6 +106,9 @@ class CapturedIntent(Base):
     intent_text: Mapped[str] = mapped_column(Text)
     requested_action: Mapped[str] = mapped_column(String(64), default="remind", index=True)
     subject: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    # Family/caregiver contact name for message intents; resolved against
+    # configured contacts at execution time, never a raw phone number.
+    recipient: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     status: Mapped[str] = mapped_column(
         Enum("pending", "resolved", "rejected", name="captured_intent_status", native_enum=False),
@@ -168,5 +171,47 @@ class StagedAction(Base):
     confirmed_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     execution_result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Set when a non-response escalation candidate was raised for this action
+    # (at most one per staged action).
+    escalation_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("escalations.id"), nullable=True
+    )
 
     resolution_result: Mapped["ResolutionResult"] = relationship(back_populates="staged_actions")
+    outbox_messages: Mapped[list["OutboxMessage"]] = relationship(back_populates="staged_action")
+
+
+class OutboxMessage(Base):
+    """A confirmed family message queued locally.
+
+    v0 has no send path: executing a confirmed family_message action creates
+    a row with status ``queued_local`` and stops there. Real delivery would
+    require a future, explicitly approved sender that flips status to
+    ``sent`` — that code intentionally does not exist yet. Rows are
+    cancellable, which is what makes the v0 execution artifact reversible.
+    """
+
+    __tablename__ = "outbox_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    staged_action_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("staged_actions.id"), index=True
+    )
+    recipient: Mapped[str] = mapped_column(String(128))
+    body: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "queued_local",
+            "cancelled",
+            "sent",
+            name="outbox_message_status",
+            native_enum=False,
+        ),
+        default="queued_local",
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    staged_action: Mapped["StagedAction"] = relationship(back_populates="outbox_messages")

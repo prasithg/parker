@@ -1,17 +1,43 @@
-.PHONY: install run test
+.PHONY: backend-venv install run test eval-tasks reset-db repl
 
-install:
-	cd backend && pip install -r requirements.txt
+BACKEND_PYTHON := backend/.venv/bin/python
+BACKEND_PIP := backend/.venv/bin/pip
+BACKEND_UVICORN := backend/.venv/bin/uvicorn
+BACKEND_PYTEST := backend/.venv/bin/pytest
+
+backend-venv:
+	@if [ -x "$(BACKEND_PYTHON)" ] && [ "$$($(BACKEND_PYTHON) -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')" != "3.11" ]; then \
+		echo "backend/.venv exists but is not Python 3.11; move it aside before recreating (for example: mv backend/.venv backend/.venv-python3.9-backup)"; \
+		exit 1; \
+	fi
+	@if [ ! -x "$(BACKEND_PYTHON)" ]; then python3.11 -m venv backend/.venv; fi
+	$(BACKEND_PIP) install -r backend/requirements.txt
+
+install: backend-venv
 	cd dashboard && npm install
 
-run:
-	cd backend && uvicorn app.main:app --reload --port 8000
+# Run from backend/ so the SQLite file lands in backend/, matching the
+# seeding/REPL commands in docs/runbook.md (one DB, deterministic demos).
+run: backend-venv
+	cd backend && ./.venv/bin/uvicorn app.main:app --reload --port 8000
 
 run-dashboard:
 	cd dashboard && npm run dev
 
-test:
-	cd backend && pytest -v
+test: backend-venv
+	cd backend && ./.venv/bin/pytest -v
+
+eval-tasks:
+	python3 benchmark/evaluate_tasks_v0.py
+
+# Deterministic local reset: v0 uses create_tables(), which never ALTERs,
+# so schema changes require a fresh DB. Removes both historical locations.
+reset-db: backend-venv
+	rm -f parkinsclaw.db backend/parkinsclaw.db
+	cd backend && ./.venv/bin/python -c "from app.db.database import create_tables; create_tables(); print('Fresh local DB created at backend/parkinsclaw.db')"
+
+repl: backend-venv
+	cd backend && ./.venv/bin/python -m app.conversation.textloop
 
 migrate:
-	@echo "v0 uses create_tables() — no Alembic yet"
+	@echo "v0 uses create_tables() — no Alembic yet (use make reset-db for a fresh local DB)"

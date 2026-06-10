@@ -1,2 +1,2 @@
-"""ParkinsClaw - Voice-first Parkinson's companion. Built for one person."""
+"""Parker — family-aware home assistant for effortful speech. Built for one family first."""
 
