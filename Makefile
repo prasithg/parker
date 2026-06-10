@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks reset-db repl demo voice-deps demo-voice
+.PHONY: backend-venv install run test eval-tasks reset-db repl demo voice-deps demo-voice talk
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -63,6 +63,12 @@ ifndef AUDIO
 	$(error usage: make demo-voice AUDIO=path/to/audio.wav)
 endif
 	cd backend && ./.venv/bin/python -m app.demo.voice "$(abspath $(AUDIO))"
+
+# Talk to Parker: record SECONDS (default 6) from the default microphone,
+# transcribe on this machine, route through the text loop. The recording
+# is a temp file deleted right after transcription — transcripts only.
+talk: backend-venv
+	cd backend && ./.venv/bin/python -m app.demo.talk $(or $(SECONDS),6)
 
 migrate:
 	@echo "v0 uses create_tables() — no Alembic yet (use make reset-db for a fresh local DB)"

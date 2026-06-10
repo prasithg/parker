@@ -70,4 +70,10 @@ Deferred: a machine credential for the assistant loop (tick/resurface) when it l
 
 Shipped: `split_utterances` in `backend/app/voice/transcribe.py`, applied inside `transcribe_audio` so its contract is now genuinely "one line per utterance". Two boundary rules: sentence punctuation (`./!/?` + whitespace) and comma-joined capture commands (`, [and] tell|remind|message|send …` — the exact merge Whisper produces for pause-free speech, observed verbatim from the synthesized wav). The critical non-rule: ellipsis disfluencies are never split — "Call... the... you know..." is the text loop's repair-choice cue and must arrive intact (regression-pinned). Verified on real audio: the same wav that previously captured one garbled reminder now stages a reminder + a drafted message to Sarah. Tests: 7 new cases in `backend/tests/test_voice_transcribe.py`.
 
-Deferred: smarter clause splitting (e.g. "and"-joined commands without a comma); live microphone capture.
+Deferred: smarter clause splitting (e.g. "and"-joined commands without a comma); live microphone capture (done in the next slice).
+
+## Post-milestone slice (2026-06-10, seventh): live microphone capture — `make talk`
+
+Shipped: `backend/app/voice/record.py` (`load_local_recorder` — sounddevice/PortAudio, default input device, 16kHz mono int16 wav; lazy import with the `make voice-deps` hint; injectable `Recorder` for tests) and `backend/app/demo/talk.py` (`run_talk` — record into a `TemporaryDirectory`, transcribe through the existing `transcribe_audio` → `split_utterances` path, replay through `replay_transcript`, then tick from the CLI). `make talk SECONDS=n` (default 6). The no-audio-retention invariant now covers recordings: the temp wav is deleted unconditionally — success *and* transcriber-failure paths are regression-pinned. `sounddevice` added to the optional `backend/requirements-voice.txt`; the core suite injects fakes. Tests: `backend/tests/test_talk.py`.
+
+Deferred: push-to-talk / voice-activity end-pointing instead of a fixed window; a continuous listen loop; in-memory transcription (skip the temp file entirely by passing the array straight to faster-whisper).

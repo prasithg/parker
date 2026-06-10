@@ -3,3 +3,4 @@
 # imports these (tests inject a fake transcriber), and the model runs
 # entirely on this machine — no cloud speech APIs.
 faster-whisper>=1.0
+sounddevice>=0.4.6

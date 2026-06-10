@@ -60,6 +60,17 @@ make demo-voice AUDIO=/tmp/parker.wav
 # → two utterances: a pending reminder + a drafted message to Sarah
 ```
 
+### Live microphone: `make talk`
+
+With the same optional deps installed (`make voice-deps`), speak to Parker directly:
+
+```bash
+make talk            # records 6 seconds from the default mic
+make talk SECONDS=10
+```
+
+macOS asks for microphone permission on first use. The recording is a temporary file that exists only for the seconds it takes to transcribe and is deleted unconditionally afterwards — transcripts are the only artifact. Try saying: *"Remind me to water the plants. Tell Sarah the visit went well."* — two utterances stage for the review page, same as `make demo-voice`.
+
 ## Demo 0 — Talk to Parker (text loop) + caregiver review page
 
 For a live version of the same flow, use two terminals and no curl:
