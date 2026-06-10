@@ -12,11 +12,22 @@ except the transcript text that flows into the normal capture pipeline.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable
 
 # A transcriber maps an audio file path to raw utterance lines.
 Transcriber = Callable[[Path], list[str]]
+
+# Sentence boundary within one Whisper segment: split after ./!/? followed
+# by whitespace — but never after an ellipsis, which is effortful-speech
+# disfluency the text loop routes to repair choices and must stay intact.
+_SENTENCE_BOUNDARY = re.compile(r"(?<!\.\.)(?<=[.!?])\s+")
+
+# Pause-free speech makes Whisper join two commands with a comma
+# ("…this evening, tell Sarah…"). Split before the text loop's capture
+# verbs, consuming a joining "and" so the fragment matches its patterns.
+_COMMAND_BOUNDARY = re.compile(r",\s+(?:and\s+)?(?=(?:tell|remind|message|send)\b)", re.IGNORECASE)
 
 VOICE_DEPS_HINT = (
     "faster-whisper is not installed. It is an optional, local-only "
@@ -43,15 +54,32 @@ def load_local_transcriber(model_size: str = "tiny", language: str | None = "en"
     return _transcribe
 
 
+def split_utterances(lines: list[str]) -> list[str]:
+    """Split raw transcript lines into one utterance per command/sentence.
+
+    Whisper merges back-to-back commands spoken without a pause into a
+    single segment; ``TextSession.handle`` routes one utterance at a
+    time, so boundaries are restored here. Ellipsis disfluencies are
+    preserved verbatim — they are signal, not noise.
+    """
+
+    utterances: list[str] = []
+    for line in lines:
+        for sentence in _SENTENCE_BOUNDARY.split(line):
+            utterances.extend(_COMMAND_BOUNDARY.split(sentence))
+    return [clean for clean in (part.strip(" ,") for part in utterances) if clean]
+
+
 def transcribe_audio(
     audio_path: str | Path,
     *,
     transcriber: Transcriber | None = None,
     model_size: str = "tiny",
 ) -> list[str]:
-    """Transcribe a local audio file into stripped, non-empty utterance lines.
+    """Transcribe a local audio file into one utterance line per command.
 
-    One line per recognized segment; each line is one utterance for
+    Raw segment lines from the transcriber are split on sentence and
+    command boundaries so each returned line is one utterance for
     ``TextSession.handle``.
     """
 
@@ -59,4 +87,4 @@ def transcribe_audio(
     if not path.is_file():
         raise FileNotFoundError(f"audio file not found: {path}")
     transcribe = transcriber or load_local_transcriber(model_size=model_size)
-    return [line for line in (raw.strip() for raw in transcribe(path)) if line]
+    return split_utterances(transcribe(path))

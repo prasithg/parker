@@ -13,7 +13,7 @@ import pytest
 
 from app.db.models import CapturedIntent
 from app.demo.voice import run_voice_demo
-from app.voice.transcribe import transcribe_audio
+from app.voice.transcribe import split_utterances, transcribe_audio
 
 
 @pytest.fixture
@@ -50,6 +50,68 @@ def test_transcribe_audio_without_dependency_explains_install(audio_file, monkey
     monkeypatch.setitem(sys.modules, "faster_whisper", None)
     with pytest.raises(RuntimeError, match="make voice-deps"):
         transcribe_audio(audio_file)
+
+
+def test_split_utterances_on_sentence_boundaries():
+    assert split_utterances(
+        ["Remind me to water the plants. Tell Sarah the visit went well today."]
+    ) == [
+        "Remind me to water the plants.",
+        "Tell Sarah the visit went well today.",
+    ]
+
+
+def test_split_utterances_on_question_boundary():
+    assert split_utterances(["Should I take half my pills? Remind me to stretch"]) == [
+        "Should I take half my pills?",
+        "Remind me to stretch",
+    ]
+
+
+def test_split_utterances_preserves_ellipsis_disfluency():
+    # Effortful-speech disfluency is the text loop's repair-choice cue —
+    # it must arrive as one utterance, not shredded fragments.
+    line = "Call... the... you know... the one with the garden..."
+    assert split_utterances([line]) == [line]
+
+
+def test_split_utterances_on_comma_joined_commands():
+    # Pause-free speech: Whisper joins commands with a comma (observed
+    # verbatim from a say-synthesized wav).
+    assert split_utterances(
+        ["Remind me to water the tomato plants this evening, tell Sarah the physio visit went really well today."]
+    ) == [
+        "Remind me to water the tomato plants this evening",
+        "tell Sarah the physio visit went really well today.",
+    ]
+
+
+def test_split_utterances_consumes_joining_and():
+    assert split_utterances(["Remind me to stretch, and send Rohan a note saying hi"]) == [
+        "Remind me to stretch",
+        "send Rohan a note saying hi",
+    ]
+
+
+def test_split_utterances_leaves_plain_commas_alone():
+    line = "Remind me to buy apples, oranges, and bread"
+    assert split_utterances([line]) == [line]
+
+
+def test_merged_segment_yields_two_captured_intents(db, audio_file):
+    exchanges = run_voice_demo(
+        db,
+        audio_file,
+        transcriber=fake_transcriber(
+            ["Remind me to water the plants this evening, tell Sarah the physio visit went well."]
+        ),
+    )
+
+    assert [e["kind"] for e in exchanges] == ["captured", "captured"]
+    intents = db.query(CapturedIntent).order_by(CapturedIntent.id).all()
+    assert intents[0].requested_action == "remind"
+    assert intents[1].requested_action == "message"
+    assert intents[1].recipient == "Sarah"
 
 
 def test_voice_demo_feeds_transcript_into_text_loop(db, audio_file):

@@ -51,12 +51,13 @@ make voice-deps
 make demo-voice AUDIO=path/to/recording.wav
 ```
 
-The audio is transcribed on this machine and each recognized segment is routed through the same `TextSession` rules as `make demo` — capture, repair choices, refusals, human-approval routing — then ticked so intents stage for `/parker/review/ui`. The audio file is only read, never copied or stored; transcripts are the only artifact. To try it without a recording, synthesize one:
+The audio is transcribed on this machine, split into one utterance per command (sentence boundaries plus comma-joined commands; effortful-speech ellipses are never split — they're the repair-choice cue), and routed through the same `TextSession` rules as `make demo` — capture, repair choices, refusals, human-approval routing — then ticked so intents stage for `/parker/review/ui`. The audio file is only read, never copied or stored; transcripts are the only artifact. To try it without a recording, synthesize one:
 
 ```bash
-say -o /tmp/parker.aiff "Remind me to water the tomato plants this evening."
+say -o /tmp/parker.aiff "Remind me to water the tomato plants this evening. Tell Sarah the physio visit went really well today."
 afconvert -f WAVE -d LEI16@16000 /tmp/parker.aiff /tmp/parker.wav
 make demo-voice AUDIO=/tmp/parker.wav
+# → two utterances: a pending reminder + a drafted message to Sarah
 ```
 
 ## Demo 0 — Talk to Parker (text loop) + caregiver review page
