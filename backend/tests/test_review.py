@@ -123,6 +123,7 @@ def test_review_feed_aggregates_everything_awaiting_a_decision(db):
     assert message.id not in pending_ids  # executed actions need no decision
     assert len(review["outbox_queued"]) == 1
     assert review["outbox_queued"][0]["recipient"] == "Sarah"
+    assert review["outbox_approved"] == []
     assert len(review["escalation_candidates"]) == 1
     assert "Non-response candidate" in review["escalation_candidates"][0]["reason"]
     assert review["open_escalations"] == []
@@ -140,6 +141,34 @@ def test_review_ui_serves_local_html_page(db):
     # The page only talks to local endpoints.
     assert "http://" not in response.text.replace("http://localhost", "")
     assert "https://" not in response.text
+
+
+def test_approved_message_moves_between_review_buckets(db):
+    call = _call(db)
+    message = _staged(
+        db, call, requested_action="message", subject="msg", recipient="Sarah", text="Hi"
+    )
+    confirm_staged_action(db, message.id, now=NOW)
+    execute_staged_action(db, message.id, now=NOW)
+    client = TestClient(app)
+    outbox_id = db.query(OutboxMessage).one().id
+
+    client.post(f"/parker/outbox/{outbox_id}/approve", json={"approved_by": "caregiver"})
+    review = client.get("/parker/review").json()
+
+    assert review["outbox_queued"] == []
+    assert len(review["outbox_approved"]) == 1
+    assert review["outbox_approved"][0]["approved_by"] == "caregiver"
+
+
+def test_review_ui_includes_approve_control(db):
+    client = TestClient(app)
+
+    page = client.get("/parker/review/ui").text
+
+    assert "Approve (stays local)" in page
+    assert "/approve" in page
+    assert "still local only" in page
 
 
 def test_cancelled_outbox_message_leaves_review_feed(db):

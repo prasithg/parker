@@ -23,24 +23,33 @@ REVIEW_PAGE_HTML = """<!doctype html>
   button.primary { background: #2e6b2e; color: white; border-color: #2e6b2e; }
   button.danger { background: #fff; color: #a33; border-color: #a33; }
   .badge { display: inline-block; font-size: .75rem; padding: .1rem .5rem; border-radius: 10px; background: #eee; margin-left: .5rem; }
+  .badge.staged, .badge.queued_local { background: #fff3cd; }
+  .badge.confirmed, .badge.approved_local { background: #d4edda; }
+  .badge.info { background: #d6e4f0; }
+  .badge.warning, .badge.urgent { background: #f8d7da; }
   .note { background: #f4f7f4; border-radius: 8px; padding: .6rem 1rem; font-size: .85rem; }
+  .updated { color: #888; font-size: .8rem; }
 </style>
 </head>
 <body>
 <h1>Parker — caregiver review</h1>
-<p class="note">Everything here is local. Confirming a message queues it to the local outbox only;
-nothing is ever sent externally from this page.</p>
+<p class="note">Everything here is local. Confirming queues a message to the local outbox and
+approving marks it reviewed; nothing is ever sent externally from this page.</p>
+<p class="updated" id="updated"></p>
 
-<h2>Pending actions (awaiting confirmation or execution)</h2>
+<h2 id="h-pending">Pending actions (awaiting confirmation or execution)</h2>
 <div id="pending"></div>
 
-<h2>Outbox — queued locally, never sent</h2>
+<h2 id="h-outbox">Outbox — awaiting your approval, never sent</h2>
 <div id="outbox"></div>
 
-<h2>Non-response escalation candidates</h2>
+<h2 id="h-approved">Approved — reviewed by you, still local only</h2>
+<div id="approved"></div>
+
+<h2 id="h-candidates">Non-response escalation candidates</h2>
 <div id="candidates"></div>
 
-<h2>Other open escalations</h2>
+<h2 id="h-escalations">Other open escalations</h2>
 <div id="escalations"></div>
 
 <script>
@@ -56,7 +65,7 @@ function actionCard(a) {
   const what = a.action_type === 'family_message'
     ? `Message to <b>${a.recipient ?? '(no recipient)'}</b>: “${a.message_text ?? ''}”`
     : `Reminder: <b>${a.subject ?? ''}</b>`;
-  const card = el(`<div class="card">${what}<span class="badge">${a.status}</span>
+  const card = el(`<div class="card">${what}<span class="badge ${a.status}">${a.status}</span>
     <div class="meta">resurfaced ${a.resurface_count}x · due ${a.execute_after ?? 'now'} · confirmed by ${a.confirmed_by ?? '—'}</div></div>`);
   if (a.status === 'staged') {
     const b = el('<button class="primary">Confirm (caregiver)</button>');
@@ -75,8 +84,14 @@ function actionCard(a) {
 }
 
 function outboxCard(m) {
-  const card = el(`<div class="card">To <b>${m.recipient}</b>: “${m.body}”<span class="badge">${m.status}</span>
-    <div class="meta">queued ${m.created_at}</div></div>`);
+  const approvedMeta = m.approved_at ? ` · approved by ${m.approved_by} at ${m.approved_at}` : '';
+  const card = el(`<div class="card">To <b>${m.recipient}</b>: “${m.body}”<span class="badge ${m.status}">${m.status}</span>
+    <div class="meta">queued ${m.created_at}${approvedMeta}</div></div>`);
+  if (m.status === 'queued_local') {
+    const a = el('<button class="primary">Approve (stays local)</button>');
+    a.onclick = () => post(`/parker/outbox/${m.id}/approve`, {approved_by: 'caregiver'});
+    card.appendChild(a);
+  }
   const c = el('<button class="danger">Cancel message</button>');
   c.onclick = () => post(`/parker/outbox/${m.id}/cancel`);
   card.appendChild(c);
@@ -84,7 +99,7 @@ function outboxCard(m) {
 }
 
 function escalationCard(e) {
-  const card = el(`<div class="card">${e.reason}<span class="badge">${e.severity}</span>
+  const card = el(`<div class="card">${e.reason}<span class="badge ${e.severity}">${e.severity}</span>
     <div class="meta">status ${e.status} · created ${e.created_at}</div></div>`);
   if (!e.acknowledged_at) {
     const a = el('<button>Acknowledge</button>');
@@ -97,19 +112,23 @@ function escalationCard(e) {
   return card;
 }
 
-function fill(id, items, builder, emptyText) {
+function fill(id, items, builder, emptyText, headerBase) {
   const root = document.getElementById(id);
   root.innerHTML = '';
+  const header = document.getElementById('h-' + id);
+  if (header && headerBase) header.textContent = `${headerBase} (${items.length})`;
   if (!items.length) { root.appendChild(el(`<p class="empty">${emptyText}</p>`)); return; }
   items.forEach(item => root.appendChild(builder(item)));
 }
 
 async function load() {
   const data = await (await fetch('/parker/review')).json();
-  fill('pending', data.pending_actions, actionCard, 'Nothing waiting.');
-  fill('outbox', data.outbox_queued, outboxCard, 'Outbox is empty.');
-  fill('candidates', data.escalation_candidates, escalationCard, 'No non-response candidates.');
-  fill('escalations', data.open_escalations, escalationCard, 'No open escalations.');
+  fill('pending', data.pending_actions, actionCard, 'Nothing waiting.', 'Pending actions');
+  fill('outbox', data.outbox_queued, outboxCard, 'Outbox is empty.', 'Outbox — awaiting your approval, never sent');
+  fill('approved', data.outbox_approved, outboxCard, 'Nothing approved yet.', 'Approved — reviewed by you, still local only');
+  fill('candidates', data.escalation_candidates, escalationCard, 'No non-response candidates.', 'Non-response escalation candidates');
+  fill('escalations', data.open_escalations, escalationCard, 'No open escalations.', 'Other open escalations');
+  document.getElementById('updated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
 }
 load();
 setInterval(load, 15000);

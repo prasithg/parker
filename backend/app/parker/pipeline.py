@@ -247,13 +247,38 @@ def list_outbox_messages(db: Session, status: str | None = None) -> list[OutboxM
     return query.order_by(OutboxMessage.created_at, OutboxMessage.id).all()
 
 
-def cancel_outbox_message(db: Session, message_id: int, now: datetime | None = None) -> OutboxMessage | None:
-    """Cancel a locally queued message; the reversibility story for v0 messages."""
+def approve_outbox_message(
+    db: Session,
+    message_id: int,
+    *,
+    approved_by: str = "caregiver",
+    now: datetime | None = None,
+) -> OutboxMessage | None:
+    """Caregiver-approve a queued message; it still never leaves the machine.
+
+    Second human gate after the patient's confirmation. A future sender
+    (which does not exist in v0) must only ever consider approved rows.
+    """
 
     message = db.get(OutboxMessage, message_id)
     if message is None:
         return None
     if message.status == "queued_local":
+        message.status = "approved_local"
+        message.approved_by = approved_by
+        message.approved_at = now or datetime.utcnow()
+        db.commit()
+        db.refresh(message)
+    return message
+
+
+def cancel_outbox_message(db: Session, message_id: int, now: datetime | None = None) -> OutboxMessage | None:
+    """Cancel a queued or approved message; the reversibility story for v0 messages."""
+
+    message = db.get(OutboxMessage, message_id)
+    if message is None:
+        return None
+    if message.status in {"queued_local", "approved_local"}:
         message.status = "cancelled"
         message.cancelled_at = now or datetime.utcnow()
         db.commit()

@@ -184,11 +184,12 @@ class StagedAction(Base):
 class OutboxMessage(Base):
     """A confirmed family message queued locally.
 
-    v0 has no send path: executing a confirmed family_message action creates
-    a row with status ``queued_local`` and stops there. Real delivery would
-    require a future, explicitly approved sender that flips status to
-    ``sent`` — that code intentionally does not exist yet. Rows are
-    cancellable, which is what makes the v0 execution artifact reversible.
+    Status chain encodes the two-human gate: ``queued_local`` (patient
+    confirmed; awaiting caregiver) → ``approved_local`` (caregiver approved;
+    still on this machine) → ``sent`` (reserved — no sender exists in v0 and
+    a future one must only ever consider ``approved_local`` rows behind an
+    explicit config flag). Rows are cancellable from either live state,
+    which is what makes the v0 execution artifact reversible.
     """
 
     __tablename__ = "outbox_messages"
@@ -202,6 +203,7 @@ class OutboxMessage(Base):
     status: Mapped[str] = mapped_column(
         Enum(
             "queued_local",
+            "approved_local",
             "cancelled",
             "sent",
             name="outbox_message_status",
@@ -211,6 +213,8 @@ class OutboxMessage(Base):
         index=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

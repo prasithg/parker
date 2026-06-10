@@ -17,6 +17,7 @@ from app.escalation.candidates import CANDIDATE_REASON_PREFIX, flag_non_response
 from app.escalation.engine import get_open_escalations
 from app.escalation.router import serialize_escalation
 from app.parker.pipeline import (
+    approve_outbox_message,
     cancel_outbox_message,
     cancel_staged_action,
     confirm_staged_action,
@@ -140,6 +141,7 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
         .all()
     )
     queued = list_outbox_messages(db, status="queued_local")
+    approved = list_outbox_messages(db, status="approved_local")
     escalations = [serialize_escalation(item) for item in get_open_escalations(db)]
     candidates = [
         item for item in escalations if item["reason"].startswith(CANDIDATE_REASON_PREFIX)
@@ -148,6 +150,7 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
     return {
         "pending_actions": [_serialize_action(action) for action in pending],
         "outbox_queued": [_serialize_outbox_message(message) for message in queued],
+        "outbox_approved": [_serialize_outbox_message(message) for message in approved],
         "escalation_candidates": candidates,
         "open_escalations": others,
     }
@@ -171,9 +174,31 @@ def list_outbox(
     return {"messages": [_serialize_outbox_message(message) for message in messages]}
 
 
+class ApproveOutboxRequest(BaseModel):
+    approved_by: str = "caregiver"
+    now: datetime | None = None
+
+
+@router.post("/outbox/{message_id}/approve")
+def approve_outbox(
+    message_id: int,
+    payload: ApproveOutboxRequest | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Caregiver approval for a queued message (second human gate; stays local)."""
+
+    payload = payload or ApproveOutboxRequest()
+    message = approve_outbox_message(
+        db, message_id, approved_by=payload.approved_by, now=payload.now
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail=f"Outbox message not found: {message_id}")
+    return _serialize_outbox_message(message)
+
+
 @router.post("/outbox/{message_id}/cancel")
 def cancel_outbox(message_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Cancel a queued message before any (future, approval-gated) delivery."""
+    """Cancel a queued or approved message before any (future, gated) delivery."""
 
     message = cancel_outbox_message(db, message_id)
     if message is None:
@@ -189,6 +214,8 @@ def _serialize_outbox_message(message: OutboxMessage) -> dict[str, Any]:
         "body": message.body,
         "status": message.status,
         "created_at": message.created_at.isoformat() if message.created_at else None,
+        "approved_by": message.approved_by,
+        "approved_at": message.approved_at.isoformat() if message.approved_at else None,
         "cancelled_at": message.cancelled_at.isoformat() if message.cancelled_at else None,
     }
 

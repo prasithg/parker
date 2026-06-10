@@ -12,6 +12,7 @@ from app.conversation.tools import execute_tool
 from app.db.models import CallLog, CapturedIntent, OutboxMessage
 from app.main import app
 from app.parker.pipeline import (
+    approve_outbox_message,
     cancel_outbox_message,
     confirm_staged_action,
     execute_staged_action,
@@ -120,6 +121,68 @@ def test_cancel_queued_message(db):
     assert cancelled.cancelled_at == NOW
     # Cancelling twice is a no-op, not an error.
     assert cancel_outbox_message(db, message.id, now=NOW).status == "cancelled"
+
+
+def test_caregiver_approval_is_a_second_gate_that_stays_local(db):
+    call = _call(db)
+    staged = _staged_message(db, call)
+    confirm_staged_action(db, staged.id, now=NOW)
+    execute_staged_action(db, staged.id, now=NOW)
+    message = db.query(OutboxMessage).one()
+    assert message.status == "queued_local"
+
+    approved = approve_outbox_message(db, message.id, approved_by="caregiver", now=NOW)
+
+    assert approved.status == "approved_local"
+    assert approved.approved_by == "caregiver"
+    assert approved.approved_at == NOW
+    assert approved.sent_at is None  # approval never implies sending
+
+
+def test_approval_only_transitions_from_queued(db):
+    call = _call(db)
+    staged = _staged_message(db, call)
+    confirm_staged_action(db, staged.id, now=NOW)
+    execute_staged_action(db, staged.id, now=NOW)
+    message = db.query(OutboxMessage).one()
+    cancel_outbox_message(db, message.id, now=NOW)
+
+    result = approve_outbox_message(db, message.id, now=NOW)
+
+    assert result.status == "cancelled"  # no resurrection via approve
+    assert result.approved_at is None
+
+
+def test_approved_message_can_still_be_cancelled(db):
+    call = _call(db)
+    staged = _staged_message(db, call)
+    confirm_staged_action(db, staged.id, now=NOW)
+    execute_staged_action(db, staged.id, now=NOW)
+    message = db.query(OutboxMessage).one()
+    approve_outbox_message(db, message.id, now=NOW)
+
+    cancelled = cancel_outbox_message(db, message.id, now=NOW)
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.cancelled_at == NOW
+
+
+def test_approve_endpoint_and_404(db):
+    call = _call(db)
+    staged = _staged_message(db, call)
+    confirm_staged_action(db, staged.id, now=NOW)
+    execute_staged_action(db, staged.id, now=NOW)
+    message_id = db.query(OutboxMessage).one().id
+    client = TestClient(app)
+
+    response = client.post(f"/parker/outbox/{message_id}/approve", json={"approved_by": "caregiver"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved_local"
+    assert response.json()["approved_by"] == "caregiver"
+
+    missing = client.post("/parker/outbox/9999/approve", json={})
+    assert missing.status_code == 404
 
 
 def test_capture_intent_tool_accepts_recipient(db):
