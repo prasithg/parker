@@ -2,6 +2,7 @@
 
 from app.conversation.textloop import TextSession
 from app.db.models import CallLog, CapturedIntent
+from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
 
 
 def _session(db):
@@ -54,6 +55,42 @@ def test_message_utterance_captures_recipient(db):
     assert saved.requested_action == "message"
     assert saved.recipient == "Sarah"
     assert saved.intent_text == "dinner on Sunday would be lovely"
+
+
+def test_changed_mind_interruption_cancels_staged_draft_and_captures_revised_reminder(db):
+    session = _session(db)
+    first = session.handle("Remind me to start stretches now.")
+    resolve_captured_intents(db)
+    staged = stage_resolved_actions(db)
+
+    response = session.handle("Wait, no, after lunch instead.")
+
+    assert first["kind"] == "captured"
+    assert len(staged) == 1
+    db.refresh(staged[0])
+    assert staged[0].status == "cancelled"
+    assert staged[0].cancelled_by == "patient"
+    assert response["kind"] == "revised"
+    assert "cancel" in response["speech"].lower()
+    saved = db.get(CapturedIntent, response["captured_intent_id"])
+    assert saved.requested_action == "remind"
+    assert saved.subject == "start stretches after lunch"
+    assert db.query(CapturedIntent).count() == 2
+
+
+def test_changed_mind_to_medication_change_refuses_without_new_capture(db):
+    session = _session(db)
+    session.handle("Remind me to start stretches now.")
+    resolve_captured_intents(db)
+    staged = stage_resolved_actions(db)
+
+    response = session.handle("Wait, no, should I take half my pills instead?")
+
+    db.refresh(staged[0])
+    assert staged[0].status == "cancelled"
+    assert response["kind"] == "refused"
+    assert response["flag_for_family"] is True
+    assert db.query(CapturedIntent).count() == 1
 
 
 def test_ambiguous_utterance_offers_choices_then_selection_captures(db):

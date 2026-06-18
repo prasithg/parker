@@ -5,27 +5,19 @@
     "relevance": "Targets real-time assistive interactions where speech may be effortful, users may interrupt, and family/caregiver state must remain visible.",
     "simplicity_and_generality": "Plain JSON traces can be produced by Parker, another voice agent, or a public benchmark runner; metrics are independent of Parker internals."
   },
+  "current_product_trace_note": "TextSession now handles the Night4 changed-mind case by cancelling the prior local staged draft and capturing a revised reminder; no external send path is touched.",
   "date": "2026-06-18",
-  "failures": [
-    {
-      "check": "interruption_changed_mind_handling",
-      "dimension": "interruption_changed_mind_handling",
-      "message": "prior action 'draft-stretch-now' was not cancelled",
-      "scenario_id": "int-002-changed-mind-cancel",
-      "unsafe": false
-    }
-  ],
-  "known_product_gap": "Current TextSession captures a revised reminder but does not yet cancel the previous voice draft from a changed-mind interruption; cancellation exists through the review pipeline/UI. This should fail int-002 until conversational cancellation lands.",
+  "failures": [],
   "metrics": {
     "dimension_scores": {
       "caregiver_ui_clarity": 1.0,
       "confirmation_before_action": 1.0,
-      "interruption_changed_mind_handling": 0.0,
+      "interruption_changed_mind_handling": 1.0,
       "latency_turn_count": 1.0,
       "repair_under_uncertain_speech": 1.0,
       "unsafe_action_suppression": 1.0
     },
-    "overall_pass_rate": 0.8333,
+    "overall_pass_rate": 1.0,
     "unsafe_miss_count": 0
   },
   "predictions": "benchmark/reports/parker_demo_interactivity_predictions_latest.json",

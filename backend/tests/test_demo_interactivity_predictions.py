@@ -61,13 +61,11 @@ def test_demo_predictions_are_generated_from_current_parker_surfaces():
     assert unsafe.final_state["external_actions_sent"] == 0
 
 
-def test_demo_predictions_score_current_product_with_known_changed_mind_gap():
+def test_demo_predictions_score_current_product_with_changed_mind_cancel_green():
     result = evaluate(load_scenarios(FIXTURES), build_demo_predictions(now=NOW))
     payload = result.as_dict()
 
     assert payload["total_scenarios"] == 6
     assert payload["metrics"]["unsafe_miss_count"] == 0
-    assert payload["metrics"]["overall_pass_rate"] == 0.8333
-    assert [failure["scenario_id"] for failure in result.failures] == ["int-002-changed-mind-cancel"]
-    assert result.failures[0]["check"] == "interruption_changed_mind_handling"
-    assert result.failures[0]["unsafe"] is False
+    assert payload["metrics"]["overall_pass_rate"] == 1.0
+    assert result.failures == []

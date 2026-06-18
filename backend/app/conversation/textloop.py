@@ -26,9 +26,25 @@ MED_WORDS = ("pill", "pills", "medication", "meds", "dose")
 MED_CHANGE_PHRASES = ("should i", "take half", "skip", "double", "stop taking")
 PURCHASE_PHRASES = ("order", "buy", "purchase", "card on file")
 VAGUE_PHRASES = ("you know", "the thing", "the one with", "no the other")
+CHANGED_MIND_PREFIXES = (
+    "wait",
+    "no",
+    "nope",
+    "actually",
+    "change that",
+    "make it",
+    "make that",
+    "scratch that",
+    "cancel that",
+    "hold on",
+)
 MESSAGE_PATTERN = re.compile(r"^(?:tell|message)\s+([A-Za-z]+)\s+(.+)$", re.IGNORECASE)
 SEND_PATTERN = re.compile(r"^send\s+([A-Za-z]+)\s+(?:a\s+message\s+)?(?:that\s+|saying\s+)?(.+)$", re.IGNORECASE)
 REMIND_PATTERN = re.compile(r"^remind\s+(?:me|us|him|her|dad|mom)?\s*(?:to\s+)?(.+)$", re.IGNORECASE)
+TRAILING_TIMING_PATTERN = re.compile(
+    r"\s+(?:now|today|tomorrow|tonight|this\s+(?:morning|afternoon|evening)|after\s+.+|before\s+.+|in\s+.+|at\s+.+)$",
+    re.IGNORECASE,
+)
 
 
 def _build_model_client() -> "Any | None":
@@ -46,6 +62,62 @@ def _build_model_client() -> "Any | None":
         return anthropic.Anthropic(api_key=settings.anthropic_api_key)
     except Exception:  # noqa: BLE001
         return None
+
+
+def _looks_like_changed_mind(lowered: str) -> bool:
+    stripped = re.sub(r"[,.!?]+", " ", lowered).strip()
+    stripped = re.sub(r"\s+", " ", stripped)
+    return any(stripped == prefix or stripped.startswith(f"{prefix} ") for prefix in CHANGED_MIND_PREFIXES)
+
+
+def _extract_revision_fragment(utterance: str) -> str:
+    fragment = utterance.strip().strip(" .!?")
+    fragment = re.sub(r"^(?:wait|hold on)[\s,]+", "", fragment, flags=re.IGNORECASE)
+    fragment = re.sub(r"^(?:no|nope)[\s,]+", "", fragment, flags=re.IGNORECASE)
+    fragment = re.sub(r"^(?:actually|change that|make it|make that|scratch that|cancel that)[\s,]*", "", fragment, flags=re.IGNORECASE)
+    fragment = re.sub(r"\s+instead$", "", fragment, flags=re.IGNORECASE)
+    fragment = fragment.strip(" .!?,")
+    return fragment
+
+
+def _revised_subject(prior_subject: str, utterance: str) -> str:
+    fragment = _extract_revision_fragment(utterance)
+    if not fragment:
+        return prior_subject
+    if _looks_like_timing_fragment(fragment):
+        base = TRAILING_TIMING_PATTERN.sub("", prior_subject).strip(" .!?,")
+        return f"{base} {fragment}".strip()
+    return fragment
+
+
+def _looks_like_timing_fragment(fragment: str) -> bool:
+    return fragment.lower().startswith((
+        "after ",
+        "before ",
+        "at ",
+        "around ",
+        "in ",
+        "tomorrow",
+        "tonight",
+        "today",
+        "this ",
+        "next ",
+        "later",
+    ))
+
+
+def _requested_action_for_revision(requested_action: str) -> str:
+    if requested_action in {"reminder", "remind"}:
+        return "remind"
+    if requested_action in {"family_message", "message"}:
+        return "message"
+    return requested_action
+
+
+def _intent_text_for_revision(requested_action: str, subject: str) -> str:
+    if requested_action in {"remind", "reminder"}:
+        return f"Remind me to {subject}"
+    return subject
 
 
 class TextSession:
@@ -72,6 +144,10 @@ class TextSession:
             return self._handle_selection(utterance)
 
         lowered = utterance.lower()
+        revision = self._handle_changed_mind(utterance, lowered)
+        if revision is not None:
+            return revision
+
         if any(w in lowered for w in MED_WORDS) and any(p in lowered for p in MED_CHANGE_PHRASES):
             return {
                 "kind": "refused",
@@ -121,6 +197,96 @@ class TextSession:
                 "speech": "I'd look that up and summarize it for you. (Research answers are stubbed in the local text loop.)",
             }
         return self._offer_choices(utterance)
+
+    def _handle_changed_mind(self, utterance: str, lowered: str) -> dict[str, Any] | None:
+        """Cancel the latest local draft and capture a revised one.
+
+        This is deliberately narrow v0 steering: it only rewrites the most
+        recent reminder/message draft from the same text/voice session, keeps
+        the old staged action cancelled locally, and still requires the normal
+        later confirmation/execution path for the revised draft.
+        """
+
+        if not _looks_like_changed_mind(lowered):
+            return None
+
+        draft = self._latest_active_staged_action()
+        captured = draft.resolution_result.captured_intent if draft is not None else self._latest_open_captured_intent()
+        if captured is None:
+            return None
+
+        from app.parker.pipeline import cancel_staged_action
+
+        cancelled_id: int | None = None
+        if draft is not None:
+            cancel_staged_action(self.db, draft.id, cancelled_by="patient")
+            cancelled_id = draft.id
+        elif captured.status in {"pending", "resolved"}:
+            captured.status = "rejected"
+            self.db.commit()
+
+        prior_subject = (captured.subject or captured.intent_text).strip()
+        revision_fragment = _extract_revision_fragment(utterance)
+        revision_lower = revision_fragment.lower()
+        if any(w in revision_lower for w in MED_WORDS) and any(p in revision_lower for p in MED_CHANGE_PHRASES):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "Cancelled the earlier draft. I can't help change medication — "
+                    "that's one for your doctor. I can note how you're feeling so the family can follow up."
+                ),
+                "flag_for_family": True,
+            }
+        if any(p in revision_lower for p in PURCHASE_PHRASES):
+            return {
+                "kind": "needs_human_approval",
+                "speech": (
+                    "Cancelled the earlier draft. I don't buy things myself. I can look options up "
+                    "and ask the family to approve a purchase."
+                ),
+            }
+        revised_subject = _revised_subject(prior_subject, utterance)
+        requested_action = _requested_action_for_revision(captured.requested_action)
+        speech = (
+            "Cancelled the earlier draft. Updated it to: "
+            f"“{revised_subject}”. I'll confirm before anything runs."
+        )
+        response = self._capture(
+            intent_text=_intent_text_for_revision(requested_action, revised_subject),
+            requested_action=requested_action,
+            subject=revised_subject,
+            recipient=captured.recipient,
+            speech=speech,
+        )
+        if response["kind"] == "captured":
+            response["kind"] = "revised"
+            if cancelled_id is not None:
+                response["cancelled_staged_action_id"] = cancelled_id
+        return response
+
+    def _latest_active_staged_action(self):
+        from app.db.models import CapturedIntent, ResolutionResult, StagedAction
+
+        return (
+            self.db.query(StagedAction)
+            .join(StagedAction.resolution_result)
+            .join(ResolutionResult.captured_intent)
+            .filter(CapturedIntent.call_log_id == self.call_log_id)
+            .filter(StagedAction.status.in_(["staged", "confirmed"]))
+            .order_by(StagedAction.created_at.desc(), StagedAction.id.desc())
+            .first()
+        )
+
+    def _latest_open_captured_intent(self):
+        from app.db.models import CapturedIntent
+
+        return (
+            self.db.query(CapturedIntent)
+            .filter(CapturedIntent.call_log_id == self.call_log_id)
+            .filter(CapturedIntent.status.in_(["pending", "resolved"]))
+            .order_by(CapturedIntent.created_at.desc(), CapturedIntent.id.desc())
+            .first()
+        )
 
     def _offer_choices(self, utterance: str) -> dict[str, Any]:
         raw = suggest_repair_candidates(

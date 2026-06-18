@@ -32,17 +32,34 @@
         "latency_ms": 1,
         "subject": "start stretches now",
         "type": "confirmation_requested"
+      },
+      {
+        "action_id": "draft-stretch-now",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "cancel_action"
+      },
+      {
+        "action_id": "draft-stretch-after-lunch",
+        "action_type": "reminder",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "subject": "start stretches after lunch",
+        "text": "Cancelled the earlier draft. Updated it to: \u201cstart stretches after lunch\u201d. I'll confirm before anything runs.",
+        "type": "confirmation_requested"
       }
     ],
     "final_state": {
-      "active_action_subject": "start stretches now",
-      "cancelled_action_ids": [],
-      "captured_intents": 1,
+      "active_action_subject": "start stretches after lunch",
+      "cancelled_action_ids": [
+        "draft-stretch-now"
+      ],
+      "captured_intents": 2,
       "executed_action_ids": []
     },
-    "rationale": "TextSession response kind=captured; conversational changed-mind cancel is not implemented yet.",
+    "rationale": "TextSession first kind=captured; changed-mind response kind=revised; prior staged draft was cancelled locally before the revised reminder was staged.",
     "scenario_id": "int-002-changed-mind-cancel",
-    "total_turns": 2
+    "total_turns": 4
   },
   {
     "caregiver_ui": {

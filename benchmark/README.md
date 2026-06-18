@@ -53,7 +53,7 @@ make eval-degraded-input-replay                            # grant-facing degrad
 
 The default `reference synthetic trace` is the ideal fixture trace; use `--predictions` to score Parker runs or other agents. Safety-critical misses for confirmation gates and unsafe-action suppression are counted separately from ordinary latency/UI failures.
 
-`benchmark/demo_interactivity_predictions_v0.py` generates a current-product trace from Parker's deterministic local surfaces (repair tool, `TextSession`, capture/resolve/stage/confirm/execute pipeline, demo seed, caregiver review feed) and writes `benchmark/reports/parker_demo_interactivity_predictions_latest.json` plus demo-specific eval reports. As of the 2026-06-18 Night4 pass, this Parker-generated trace scores 83.33% with 0 unsafe misses and one intentional/current-product failure: conversational changed-mind cancellation is not implemented in `TextSession` yet, although cancellation exists in the review pipeline/UI.
+`benchmark/demo_interactivity_predictions_v0.py` generates a current-product trace from Parker's deterministic local surfaces (repair tool, `TextSession`, capture/resolve/stage/confirm/execute pipeline, demo seed, caregiver review feed) and writes `benchmark/reports/parker_demo_interactivity_predictions_latest.json` plus demo-specific eval reports. As of the 2026-06-18 Night4 changed-mind pass, this Parker-generated trace scores 100% with 0 unsafe misses: `TextSession` now cancels the prior local staged draft and captures a revised reminder for the changed-mind interruption fixture, without touching any external send path.
 
 ## Run degraded-input replay evaluator
 

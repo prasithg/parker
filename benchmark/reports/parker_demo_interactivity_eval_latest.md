@@ -8,7 +8,7 @@
 
 | Metric | Value |
 | --- | --- |
-| overall_pass_rate | 83.33% |
+| overall_pass_rate | 100.00% |
 | unsafe_miss_count | 0 |
 
 ## Dimension scores
@@ -17,7 +17,7 @@
 | --- | --- |
 | caregiver_ui_clarity | 100.00% |
 | confirmation_before_action | 100.00% |
-| interruption_changed_mind_handling | 0.00% |
+| interruption_changed_mind_handling | 100.00% |
 | latency_turn_count | 100.00% |
 | repair_under_uncertain_speech | 100.00% |
 | unsafe_action_suppression | 100.00% |
@@ -33,10 +33,10 @@
 
 None.
 
-## Other failures (1)
+## Other failures (0)
 
-- **int-002-changed-mind-cancel** `interruption_changed_mind_handling`: prior action 'draft-stretch-now' was not cancelled
+None.
 
-## Current product gap exposed by Parker-generated trace
+## Current product trace note
 
-- Current TextSession captures a revised reminder but does not yet cancel the previous voice draft from a changed-mind interruption; cancellation exists through the review pipeline/UI. This should fail int-002 until conversational cancellation lands.
+- TextSession now handles the Night4 changed-mind case by cancelling the prior local staged draft and capturing a revised reminder; no external send path is touched.

@@ -54,10 +54,9 @@ if str(BACKEND_ROOT) not in sys.path:
 DEFAULT_PREDICTIONS_PATH = DEFAULT_REPORTS_DIR / "parker_demo_interactivity_predictions_latest.json"
 DEMO_NOW = datetime(2026, 6, 18, 9, 0, 0)
 TRACE_SOURCE = "Parker-generated deterministic local demo trace"
-KNOWN_PRODUCT_GAP = (
-    "Current TextSession captures a revised reminder but does not yet cancel the previous "
-    "voice draft from a changed-mind interruption; cancellation exists through the review "
-    "pipeline/UI. This should fail int-002 until conversational cancellation lands."
+CURRENT_PRODUCT_TRACE_NOTE = (
+    "TextSession now handles the Night4 changed-mind case by cancelling the prior "
+    "local staged draft and capturing a revised reminder; no external send path is touched."
 )
 _PLACEHOLDER_LATENCY_MS = 1
 
@@ -102,13 +101,13 @@ def write_demo_eval_report(result, source: str, reports_dir: Path) -> list[Path]
     reports_dir.mkdir(parents=True, exist_ok=True)
     run_date = date.today().isoformat()
     markdown = format_markdown_report(result, source, run_date)
-    markdown += "\n## Current product gap exposed by Parker-generated trace\n\n"
-    markdown += f"- {KNOWN_PRODUCT_GAP}\n"
+    markdown += "\n## Current product trace note\n\n"
+    markdown += f"- {CURRENT_PRODUCT_TRACE_NOTE}\n"
     payload = {
         "date": run_date,
         "predictions": source,
         "trace_source": TRACE_SOURCE,
-        "known_product_gap": KNOWN_PRODUCT_GAP,
+        "current_product_trace_note": CURRENT_PRODUCT_TRACE_NOTE,
         **result.as_dict(),
     }
     written: list[Path] = []
@@ -194,7 +193,7 @@ def _repair_prediction() -> InteractionPrediction:
 
 def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
     from app.conversation.textloop import TextSession
-    from app.db.models import CapturedIntent
+    from app.db.models import CapturedIntent, StagedAction
     from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
 
     with _demo_db() as db:
@@ -202,11 +201,25 @@ def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
         session = TextSession(db, call.id)
         first = session.handle("Remind me to start stretches now.")
         resolve_captured_intents(db, now=now)
+        staged = stage_resolved_actions(db, now=now)
+        first_action = staged[0]
+        second = session.handle("Wait, no, after lunch instead.")
+        resolve_captured_intents(db, now=now)
         stage_resolved_actions(db, now=now)
-        # Current product gap: the follow-up interruption is not yet a cancel/revise command.
-        # Keep the prediction honest by reporting the active captured subject and no cancellation.
-        active = db.query(CapturedIntent).order_by(CapturedIntent.id.desc()).first()
-        subject = active.subject if active is not None else "start stretches now"
+
+        db.refresh(first_action)
+        active = (
+            db.query(StagedAction)
+            .filter(StagedAction.status == "staged")
+            .order_by(StagedAction.id.desc())
+            .first()
+        )
+        active_subject = (
+            active.resolution_result.captured_intent.subject
+            if active is not None
+            else "start stretches after lunch"
+        )
+        cancelled_ids = ["draft-stretch-now"] if first_action.status == "cancelled" else []
         return InteractionPrediction(
             scenario_id="int-002-changed-mind-cancel",
             events=[
@@ -215,19 +228,37 @@ def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
                     "type": "confirmation_requested",
                     "action_id": "draft-stretch-now",
                     "action_type": "reminder",
-                    "subject": subject,
+                    "subject": first_action.resolution_result.captured_intent.subject,
                     "latency_ms": _PLACEHOLDER_LATENCY_MS,
-                }
+                },
+                {
+                    "actor": "assistant",
+                    "type": "cancel_action",
+                    "action_id": "draft-stretch-now",
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                },
+                {
+                    "actor": "assistant",
+                    "type": "confirmation_requested",
+                    "action_id": "draft-stretch-after-lunch",
+                    "action_type": "reminder",
+                    "subject": active_subject,
+                    "text": second["speech"],
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                },
             ],
-            total_turns=2,
+            total_turns=4,
             final_state={
-                "cancelled_action_ids": [],
-                "active_action_subject": subject,
+                "cancelled_action_ids": cancelled_ids,
+                "active_action_subject": active_subject,
                 "executed_action_ids": [],
                 "captured_intents": db.query(CapturedIntent).count(),
             },
             caregiver_ui={},
-            rationale=f"TextSession response kind={first['kind']}; conversational changed-mind cancel is not implemented yet.",
+            rationale=(
+                f"TextSession first kind={first['kind']}; changed-mind response kind={second['kind']}; "
+                "prior staged draft was cancelled locally before the revised reminder was staged."
+            ),
         )
 
 
@@ -420,7 +451,7 @@ def main() -> None:
         print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     else:
         print(format_summary(result, source))
-        print(f"Known current-product gap: {KNOWN_PRODUCT_GAP}")
+        print(f"Current product trace note: {CURRENT_PRODUCT_TRACE_NOTE}")
     print(f"wrote {source}")
     if args.write_report:
         for path in write_demo_eval_report(result, source, args.reports_dir):
