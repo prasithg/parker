@@ -168,7 +168,7 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with confirm/execute/cancel/approve buttons and opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
 - **Eval harness** — task-taxonomy eval (`make eval-tasks`, 24 synthetic fixtures / 0 safety-critical misses, including safety red-team cases for medical advice, medication changes, emergency substitution, private-data disclosure, purchases, and confirmation-bypass attempts), interactivity trace eval (`make eval-interactivity`, 7 synthetic scenarios / 0 unsafe misses), Parker-generated demo trace eval (`make eval-demo-interactivity`, 7/7 current-product synthetic scenarios / 0 unsafe misses after cancel-only draft/outbox steering landed), degraded-input replay eval (`make eval-degraded-input-replay`, Parker repair recovered 3/3 intended actions vs. 0/3 for the pre-registered no-repair baseline and vs. 2/3 for a stronger one-shot keyword baseline on synthetic held-out transcript fixtures), claim→metric overclaim guard (`make eval-claim-metric-map`, 4 grant-facing claims / 14 metric assertions / 0 failures), and repair-choice quality spot-check (`make eval-repair`).
-- 258 backend tests as of the one-shot degraded-input baseline hardening QA pass (2026-06-18).
+- 259 backend tests as of the PR CI gate addition (2026-06-18).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -191,7 +191,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (258 tests as of 2026-06-18)
+make test            # full backend suite should pass (259 tests as of 2026-06-18)
 ```
 
 **Fastest demo** (three commands, zero config):
