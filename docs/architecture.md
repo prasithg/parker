@@ -8,20 +8,20 @@ Core loop:
 Understand -> Confirm -> Act -> Follow up -> Escalate/Coordinate -> Learn
 ```
 
-Legacy note: the codebase began as "ParkinsClaw," a scheduled-outbound-call companion using a cloned family voice. Some modules and names still reflect that. Treat it as historical scaffolding, not the product thesis. Voice cloning is optional and consent-gated. A condensed legacy map is in the appendix.
+Legacy note: the codebase began as "ParkinsClaw," a scheduled-outbound-call companion using a cloned family voice. Treat that as historical scaffolding, not the product thesis. The active v0 surfaces are Parker-first; remaining legacy references are isolated to historical modules/docs. Voice cloning is optional and consent-gated. A condensed legacy map is in the appendix.
 
 ## 1. Product loop mapped to the repo
 
 | Loop stage | What it means | Where it lives today | State |
 | --- | --- | --- | --- |
-| Understand | Interpret effortful/variable speech as intent, with calibrated uncertainty | `backend/app/conversation/` (agent, prompts, tools), `backend/app/voice/stream.py` | Exists, but framed around phone calls and cloned voice; needs voice-interface generalization |
-| Confirm | Never act on ambiguous input; repair with choices; confirm before side effects | `backend/app/parker/pipeline.py` (`confirm_staged_action`), `backend/app/parker/policy.py` | Confirmation gate exists for staged actions; repair-choice generation not yet built |
-| Act | Execute safe, policy-allowed actions through a tool layer | `backend/app/parker/pipeline.py` (`execute_staged_action`), `backend/app/conversation/tools.py` | v0 executes reversible reminders only; other action types classified but blocked |
-| Follow up | Resurface staged intents, track completion, retry | `backend/app/parker/pipeline.py` (`get_due_resurfaced_actions`), `/parker` routes | Working vertical slice (capture → resolve → stage → resurface → confirm → execute) |
-| Escalate/Coordinate | Notify family per policy; severity routing; auto-promotion | `backend/app/escalation/` (engine, notifier, models) | Working: severity-routed contacts, 30-min warning→urgent promotion. Call-log-centric; no non-response trigger yet |
-| Learn | Memory of the user, family, routines, preferences; eval feedback | `backend/app/memory/`, `benchmark/` | Basic memory store + context builder; eval scaffold covers one task class |
+| Understand | Interpret effortful/variable speech as intent, with calibrated uncertainty | `backend/app/conversation/textloop.py`, `backend/app/conversation/tools.py`, `backend/app/conversation/repair.py`, `backend/app/voice/transcribe.py`, `backend/app/demo/` | Typed, scripted-replay, audio-file, live-mic, and continuous talk-loop paths exist. Ambiguity routes through model-driven repair choices when configured, with deterministic fallback when no key/model is available. |
+| Confirm | Never act on ambiguous input; repair with choices; confirm before side effects | `backend/app/conversation/repair.py`, `backend/app/parker/pipeline.py` (`confirm_staged_action`, `cancel_staged_action`), `backend/app/parker/policy.py` | Repair choices, "none of these," changed-mind revisions, cancel-only steering, and confirmation gates are implemented before any side effect. |
+| Act | Execute safe, policy-allowed actions through a tool layer | `backend/app/parker/pipeline.py` (`execute_staged_action`, outbox helpers), `backend/app/conversation/tools.py` | v0 executes reminders locally, and family messages queue to the local outbox only. The message path has a two-human gate: patient confirmation, then caregiver approval; no sender exists in v0. |
+| Follow up | Resurface staged intents, track completion, retry | `backend/app/parker/pipeline.py` (`get_due_resurfaced_actions`), `/parker` routes, review UI | Working vertical slice (capture → resolve → stage → resurface → confirm/cancel → execute/audit) with recent-history and changed-mind audit rows. |
+| Escalate/Coordinate | Notify family per policy; severity routing; candidate escalation when the user does not respond | `backend/app/escalation/` (engine, notifier, models), `backend/app/escalation/candidates.py` | Severity-routed escalation engine exists. The non-response escalation candidates path is candidate-only, review-only, `info` severity, and never auto-dispatched. |
+| Learn | Memory of the user, family, routines, preferences; eval feedback | `backend/app/memory/`, `benchmark/`, `docs/task-taxonomy.md` | Basic memory store + context builder exists. Accountability now comes from 24 synthetic fixtures, task-taxonomy eval, interactivity trace eval, Parker-generated demo trace eval, degraded-input replay, and repair-quality spot checks. |
 
-Supporting modules: `backend/app/meds/` (dose tracking + photo-based dose verification), `backend/app/exercises/` (cognitive exercise library/sessions), `backend/app/calls/` (legacy Twilio call scheduling/handling), `backend/app/dashboard/` (family/operator API).
+Supporting modules: `backend/app/meds/` (dose tracking + photo-based dose verification), `backend/app/exercises/` (cognitive exercise library/sessions), `backend/app/calls/` and `backend/app/voice/stream.py` (legacy Twilio/realtime call scaffolding), and `backend/app/dashboard/` (family/operator API). The v0 demo path is the Parker text/voice/review pipeline above, not the legacy outbound-call loop.
 
 ## 2. Capability taxonomy
 
@@ -116,7 +116,7 @@ Parker follows the OpenClaw/Hermes pattern: **context** (memory + family model +
 Integration shape:
 
 - The conversational agent never executes side effects directly. Tools like `capture_intent` persist intent; the staged pipeline owns resolution, confirmation, and execution. This keeps the LLM at arm's length from side effects.
-- Each action type in the policy taxonomy maps to (eventually) one tool implementation behind the `execute_staged_action` seam. v0 has exactly one: reminders.
+- Each executable action type in the policy taxonomy maps to a local artifact behind the `execute_staged_action` seam. v0 has reminders plus family-message outbox rows; both stay local, reversible, and confirmation-gated.
 - Future Hermes/OpenClaw interop (family agents coordinating, handoffs) happens at the staged-action boundary: an external agent can propose a staged action, but it goes through the same policy/confirmation gates as a voice intent.
 - Room/TV context (recliner, TV on, near medication area) enters as *resolution inputs* — signals that adjust timing, channel, and escalation candidacy — never as direct triggers for external actions.
 
@@ -143,4 +143,4 @@ Scheduler (APScheduler) → Twilio outbound call → patient answers
   → call summary + metrics → SQLite → family dashboard
 ```
 
-Legacy assumptions to treat as historical: scheduled outbound calls as the primary channel; cloned family voice as the default identity (`conversation/prompts.py` still says this); "ParkinsClaw" naming in `app/main.py`, prompts, notifier messages, and the benchmark card. These should be renamed/reframed opportunistically as the modules they live in are touched — not in a single rename pass.
+Legacy assumptions to treat as historical: scheduled outbound calls as the primary channel, cloned family voice as the default identity, and the old "ParkinsClaw" product label. The active prompts and Parker v0 surfaces have been reframed; remaining legacy references are historical labels in inactive call/voice scaffolding, old benchmark v0 files, or migration-cleanup comments. Do not use those as product strategy anchors.

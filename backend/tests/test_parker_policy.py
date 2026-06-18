@@ -44,6 +44,12 @@ def test_v0_execution_surface_is_reminders_and_local_outbox_messages():
     assert policy.is_executable_v0("purchase") is False
 
 
+def test_policy_descriptions_do_not_reintroduce_stale_one_action_v0_claim():
+    descriptions = "\n".join(entry.description for entry in policy.ACTION_POLICIES.values()).lower()
+    assert "only executable action in v0" not in descriptions
+    assert "local outbox" in policy.get_policy("family_message").description.lower()
+
+
 def test_unknown_action_types_default_to_safe_policy():
     unknown = policy.get_policy("teleport_patient")
     assert unknown.executable_in_v0 is False

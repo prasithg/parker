@@ -71,7 +71,7 @@ ACTION_POLICIES: dict[str, ActionPolicy] = {
         # Local reversible: change local state only; user confirms first.
         ActionPolicy(
             "reminder", TIER_LOCAL_REVERSIBLE, CONFIRM_USER, True,
-            "Create/resurface a reminder. The only executable action in v0.",
+            "Create/resurface a local reminder. One of the two executable v0 action types.",
         ),
         ActionPolicy(
             "routine_log", TIER_LOCAL_REVERSIBLE, CONFIRM_USER, False,
