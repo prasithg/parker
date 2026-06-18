@@ -24,6 +24,36 @@ from app.conversation.tools import execute_tool
 
 MED_WORDS = ("pill", "pills", "medication", "meds", "dose")
 MED_CHANGE_PHRASES = ("should i", "take half", "skip", "double", "stop taking")
+MEDICAL_ADVICE_WORDS = (
+    "diagnose",
+    "diagnosis",
+    "treatment",
+    "treat",
+    "antibiotic",
+    "symptom",
+    "tremor",
+)
+MEDICAL_ADVICE_PHRASES = (
+    "what treatment",
+    "which treatment",
+    "should i try",
+    "do you think",
+    "is getting worse",
+    "does this mean",
+)
+EMERGENCY_WORDS = ("911", "emergency", "ambulance", "can't breathe", "cant breathe", "chest pain", "fell")
+EMERGENCY_SUBSTITUTION_PHRASES = ("instead of calling", "handle it instead", "can't get up", "cant get up")
+PRIVATE_DISCLOSURE_WORDS = (
+    "password",
+    "passcode",
+    "bank password",
+    "credit card",
+    "ssn",
+    "social security",
+    "private key",
+    "api key",
+    "token",
+)
 PURCHASE_PHRASES = ("order", "buy", "purchase", "card on file")
 VAGUE_PHRASES = ("you know", "the thing", "the one with", "no the other")
 CHANGED_MIND_PREFIXES = (
@@ -38,7 +68,7 @@ CHANGED_MIND_PREFIXES = (
     "cancel that",
     "hold on",
 )
-MESSAGE_PATTERN = re.compile(r"^(?:tell|message)\s+([A-Za-z]+)\s+(.+)$", re.IGNORECASE)
+MESSAGE_PATTERN = re.compile(r"^(?:tell|message|text)\s+([A-Za-z]+)\s+(.+)$", re.IGNORECASE)
 SEND_PATTERN = re.compile(r"^send\s+([A-Za-z]+)\s+(?:a\s+message\s+)?(?:that\s+|saying\s+)?(.+)$", re.IGNORECASE)
 REMIND_PATTERN = re.compile(r"^remind\s+(?:me|us|him|her|dad|mom)?\s*(?:to\s+)?(.+)$", re.IGNORECASE)
 TRAILING_TIMING_PATTERN = re.compile(
@@ -85,6 +115,22 @@ def _looks_like_changed_mind(lowered: str) -> bool:
     stripped = re.sub(r"[,.!?]+", " ", lowered).strip()
     stripped = re.sub(r"\s+", " ", stripped)
     return any(stripped == prefix or stripped.startswith(f"{prefix} ") for prefix in CHANGED_MIND_PREFIXES)
+
+
+def _looks_like_emergency_substitution(lowered: str) -> bool:
+    return any(word in lowered for word in EMERGENCY_WORDS) and any(
+        phrase in lowered for phrase in EMERGENCY_SUBSTITUTION_PHRASES
+    )
+
+
+def _looks_like_sensitive_private_disclosure(lowered: str) -> bool:
+    return any(word in lowered for word in PRIVATE_DISCLOSURE_WORDS)
+
+
+def _looks_like_medical_advice(lowered: str) -> bool:
+    return any(word in lowered for word in MEDICAL_ADVICE_WORDS) and any(
+        phrase in lowered for phrase in MEDICAL_ADVICE_PHRASES
+    )
 
 
 def _extract_revision_fragment(utterance: str) -> str:
@@ -171,6 +217,33 @@ class TextSession:
         if revision is not None:
             return revision
 
+        if _looks_like_emergency_substitution(lowered):
+            return {
+                "kind": "emergency_redirect",
+                "speech": (
+                    "I can't replace emergency services. If this may be urgent, "
+                    "call emergency services now or ask a nearby caregiver for help. "
+                    "I can flag this for family follow-up here, but I won't pretend to dispatch help."
+                ),
+                "flag_for_family": True,
+            }
+        if _looks_like_sensitive_private_disclosure(lowered):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "I can't read or share private credentials or sensitive notes. "
+                    "I can help write a safe message that leaves private details out."
+                ),
+            }
+        if _looks_like_medical_advice(lowered):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "I can't diagnose or recommend treatment — that's one for your doctor. "
+                    "I can note what you're noticing so the family can follow up."
+                ),
+                "flag_for_family": True,
+            }
         if any(w in lowered for w in MED_WORDS) and any(p in lowered for p in MED_CHANGE_PHRASES):
             return {
                 "kind": "refused",
@@ -278,6 +351,31 @@ class TextSession:
 
         prior_subject = (captured.subject or captured.intent_text).strip()
         revision_lower = revision_fragment.lower()
+        if _looks_like_emergency_substitution(revision_lower):
+            return {
+                "kind": "emergency_redirect",
+                "speech": (
+                    "Cancelled the earlier draft. I can't replace emergency services. "
+                    "If this may be urgent, call emergency services now or ask a nearby caregiver for help."
+                ),
+                "flag_for_family": True,
+            }
+        if _looks_like_sensitive_private_disclosure(revision_lower):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "Cancelled the earlier draft. I can't read or share private credentials or sensitive notes."
+                ),
+            }
+        if _looks_like_medical_advice(revision_lower):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "Cancelled the earlier draft. I can't diagnose or recommend treatment — "
+                    "that's one for your doctor. I can note what you're noticing so the family can follow up."
+                ),
+                "flag_for_family": True,
+            }
         if any(w in revision_lower for w in MED_WORDS) and any(p in revision_lower for p in MED_CHANGE_PHRASES):
             return {
                 "kind": "refused",

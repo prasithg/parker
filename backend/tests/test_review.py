@@ -306,4 +306,5 @@ def test_review_ui_surfaces_demo_safety_contract(db):
     assert "Demo safety contract" in page
     assert "Patient confirms → caregiver approves → still local" in page
     assert "No medical advice, medication changes, purchases, or emergency-service replacement." in page
+    assert "No private credentials or sensitive notes are displayed or sent." in page
     assert "No outbound sends exist in v0" in page

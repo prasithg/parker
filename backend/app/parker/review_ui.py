@@ -47,6 +47,7 @@ approving marks it reviewed; nothing is ever sent externally from this page.</p>
     <li>Patient confirms → caregiver approves → still local. This page is the second human gate.</li>
     <li>No outbound sends exist in v0; approved messages remain on this machine.</li>
     <li>No medical advice, medication changes, purchases, or emergency-service replacement.</li>
+    <li>No private credentials or sensitive notes are displayed or sent.</li>
     <li>Non-response items are candidates for review only — no notifications are dispatched here.</li>
   </ul>
 </section>

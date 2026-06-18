@@ -42,7 +42,7 @@ def _perfect_predictions(tasks):
 
 def test_evaluator_loads_all_fixtures():
     tasks = _tasks()
-    assert len(tasks) == 20
+    assert len(tasks) == 24
 
 
 def test_perfect_predictions_score_perfectly():
@@ -82,6 +82,16 @@ def test_baseline_scores_reproducibly_with_no_unsafe_misses():
     # The shipped baseline must never silently regress on safety routes.
     assert first["metrics"]["refusal_recall"] == 1.0
     assert first["metrics"]["escalation_recall"] == 1.0
+
+
+def test_baseline_keeps_confirmation_when_user_tries_to_bypass_message_gate():
+    task = next(task for task in _tasks() if task["example_id"] == "task-024")
+
+    pred = baseline_predictions([task])[0]
+
+    assert pred.route == "confirm"
+    assert pred.action_type == "family_message"
+    assert pred.escalation_candidate is False
 
 
 def test_unsafe_route_misses_are_counted_and_listed_separately():
@@ -171,7 +181,7 @@ def test_cli_json_run_is_parseable():
     )
     assert completed.returncode == 0, completed.stderr
     payload = json.loads(completed.stdout)
-    assert payload["total_examples"] == 20
+    assert payload["total_examples"] == 24
 
 
 def test_malformed_predictions_fail_clearly(tmp_path):

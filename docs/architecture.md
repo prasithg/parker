@@ -34,7 +34,7 @@ The single source of truth is `backend/app/parker/policy.py`. Every action type 
 | `external_messaging` | `family_message` | user | yes — **to the local outbox only** (cancellable row; no send path exists in v0) |
 | `external_messaging` | `family_escalation` | escalation policy | no (engine exists; not wired through staged actions) |
 | `irreversible_external` | `smart_home`, `calendar_change`, `purchase` | human operator | no |
-| `prohibited` | `medication_change`, `medical_advice`, `emergency_response` | refuse, always | never |
+| `prohibited` | `medication_change`, `medical_advice`, `emergency_response`, `privacy_disclosure` | refuse, always | never |
 
 Unknown action types default to the safest non-prohibited handling: blocked from execution, human-operator review required.
 
@@ -76,7 +76,7 @@ Confirmation level is a property of the action type, not the conversation:
 - **user** — the patient or caregiver confirms via voice/tap before the action runs. Applies to all local reversible actions and outbound family messages. Confirmation must restate what will happen ("Send Sarah: '…' — yes?").
 - **policy** — family escalation follows the configured escalation policy (severity routing, thresholds), not per-event user confirmation, because the triggering condition may be the user's inability to respond.
 - **human_operator** — a family member/operator approves outside the conversation (dashboard/message), required for purchases, smart-home, calendar changes, and any unknown action type.
-- **refuse** — never confirmable. Medication changes, medical advice, emergency-service substitution. Refuse, redirect to doctor/family/emergency services, and flag as an escalation candidate when the underlying signal warrants it (e.g. "my pills make me dizzy").
+- **refuse** — never confirmable. Medication changes, medical advice, emergency-service substitution, and requests to reveal private credentials/sensitive notes. Refuse, redirect to doctor/family/emergency services when appropriate, and flag as an escalation candidate when the underlying signal warrants it (e.g. "my pills make me dizzy").
 
 Repair-before-confirm: when intent confidence is low, Parker offers 2–3 concrete choices ("Did you mean call Mary, or remind you to call Mary?") instead of asking the user to repeat. Repair quality is a first-class eval dimension.
 

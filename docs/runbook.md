@@ -75,7 +75,7 @@ make run    # then open http://localhost:8000/parker/review/ui
 
 Message lifecycle on the page: patient confirms → `queued_local` (awaiting your approval) → `approved_local` (reviewed, still on this machine) — or cancelled from either state. No send exists.
 
-The top of the review page now opens with a **Demo safety contract** so reviewers see the trust boundary before clicking anything: patient confirmation plus caregiver approval stays local, there is no outbound send path in v0, medical advice/medication changes/purchases/emergency-service replacement are out of scope, and non-response escalation items are review-only candidates.
+The top of the review page now opens with a **Demo safety contract** so reviewers see the trust boundary before clicking anything: patient confirmation plus caregiver approval stays local, there is no outbound send path in v0, medical advice/medication changes/purchases/emergency-service replacement/private credential disclosure are out of scope, and non-response escalation items are review-only candidates.
 
 ### Review-page auth (opt-in)
 
@@ -279,7 +279,7 @@ ANTHROPIC_API_KEY=sk-ant-... python3 benchmark/evaluate_repair_v0.py --write-rep
 
 - No real calls, SMS, or any outbound delivery — the outbox has no sender.
 - No purchases, smart-home, or calendar writes — policy-blocked (`human_operator`).
-- No medical advice or medication changes — policy-refused, never confirmable.
+- No medical advice, medication changes, emergency-service replacement, or private credential disclosure — policy-refused, never confirmable.
 - No voice cloning — optional, consent-gated, not part of v0.
 - No cloud speech recognition — `make demo-voice` transcribes on-device only, and no audio is retained beyond the input file.
 - Generic repair choices without `ANTHROPIC_API_KEY` — set the key for contextually grounded candidates; without it Parker always offers the same two options.

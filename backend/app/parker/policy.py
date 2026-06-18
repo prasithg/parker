@@ -127,6 +127,10 @@ ACTION_POLICIES: dict[str, ActionPolicy] = {
             "emergency_response", TIER_PROHIBITED, CONFIRM_REFUSE, False,
             "Acting as a substitute for emergency services. Always refused/redirected.",
         ),
+        ActionPolicy(
+            "privacy_disclosure", TIER_PROHIBITED, CONFIRM_REFUSE, False,
+            "Reveal secrets, credentials, or sensitive private data. Always refused.",
+        ),
     )
 }
 
