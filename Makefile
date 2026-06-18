@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -32,6 +32,11 @@ eval-tasks:
 
 eval-interactivity:
 	python3 benchmark/evaluate_interactivity_v0.py
+
+# Parker-generated trace eval: builds predictions from the current local demo
+# and pipeline surfaces, then scores them without overwriting reference reports.
+eval-demo-interactivity: backend-venv
+	$(BACKEND_PYTHON) benchmark/demo_interactivity_predictions_v0.py --write-report
 
 # Repair-choice quality eval: runs effortful-speech fixtures through the real
 # Claude haiku model and prints candidates for human review. Requires

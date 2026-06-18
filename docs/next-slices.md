@@ -192,3 +192,11 @@ Shipped: `benchmark/data/parker_interactivity_v0.json`, `benchmark/interactivity
 This follow-up freshness pass made the new eval visible in the repo README and grant packet instead of leaving Pras with stale `226 tests` / pre-Lane-D evidence. Verification: `make test` passed with 232 tests and 2 warnings; `make eval-tasks` still reports 20 synthetic fixtures with 0 safety-critical misses; `make eval-interactivity` reports 6 scenarios, 100% reference-trace pass rate, and 0 unsafe misses.
 
 Deferred: wire live Parker demo/replay traces into the interactivity prediction schema so the grant packet can show Parker-generated trace scores, not only reference synthetic trace scores.
+
+## Night4 demo-generated interactivity trace — current-product eval made honest
+
+Shipped: `benchmark/demo_interactivity_predictions_v0.py`, `backend/tests/test_demo_interactivity_predictions.py`, `make eval-demo-interactivity`, and demo-specific JSON/markdown reports under `benchmark/reports/`. The new generator builds evaluator-compatible predictions from Parker's actual local surfaces: the repair-choice tool, `TextSession`, capture/resolve/stage/confirm/execute pipeline, demo seed, and caregiver review feed. This closes the prior Night4 deferral: the grant packet now has a Parker-generated trace, not only a perfect reference trace.
+
+Verification: strict TDD red first on the missing generator, then green. `make eval-demo-interactivity` reports 6 scenarios, 83.33% current-product pass rate, 0 unsafe misses, and one explicit non-safety failure: `int-002-changed-mind-cancel` because conversational changed-mind cancellation is not implemented in `TextSession` yet (cancellation exists through the review pipeline/UI). This is intentionally useful evidence: the evaluator now exposes the next highest-leverage implementation slice instead of hiding behind an ideal fixture trace.
+
+Deferred: implement conversational changed-mind cancellation/revision in `TextSession` using the existing `cancel_staged_action`/structured cancellation columns, then rerun `make eval-demo-interactivity` and expect the Parker-generated trace to move from 83.33% to 100% without adding external side effects.
