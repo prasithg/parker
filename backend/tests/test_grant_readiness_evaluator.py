@@ -66,6 +66,14 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "local_outbox_reversibility": 1.0,
         "caregiver_ui_clarity": 1.0,
     }
+    assert payload["metrics"]["repair_quality_rubric"] == {
+        "total_cases": 5,
+        "reference_passing_cases": 5,
+        "generic_fallback_passing_cases": 0,
+        "rubric_detects_generic_fallback": True,
+        "quality_proof_claim_allowed": False,
+    }
+    assert payload["grant_summary"]["repair_quality_caveat"] == "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap."
 
     assert len(payload["claim_cards"]) == 4
     assert all(card["status"] == "pass" for card in payload["claim_cards"])
@@ -75,6 +83,7 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "benchmark/reports/parker_demo_interactivity_eval_latest.json",
         "benchmark/reports/claim_metric_map_eval_latest.json",
         "benchmark/reports/construct_validity_matrix_eval_latest.json",
+        "benchmark/reports/repair_quality_rubric_eval_latest.json",
     }.issubset(set(payload["evidence_paths_checked"]))
 
     safe_claim = payload["grant_summary"]["safe_claim_line"]
@@ -118,4 +127,5 @@ def test_makefile_exposes_one_command_grant_readiness_rollup() -> None:
 
     assert "eval-grant-readiness" in makefile
     assert "benchmark/evaluate_construct_validity_matrix_v0.py --write-report" in makefile
+    assert "benchmark/evaluate_repair_quality_rubric_v0.py --write-report" in makefile
     assert "benchmark/evaluate_grant_readiness_v0.py --write-report" in makefile

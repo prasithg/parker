@@ -43,6 +43,7 @@ REQUIRED_REPORTS: dict[str, Path] = {
     "demo_interactivity": DEFAULT_REPORTS_DIR / "parker_demo_interactivity_eval_latest.json",
     "claim_metric_map": DEFAULT_REPORTS_DIR / "claim_metric_map_eval_latest.json",
     "construct_validity": DEFAULT_REPORTS_DIR / "construct_validity_matrix_eval_latest.json",
+    "repair_quality_rubric": DEFAULT_REPORTS_DIR / "repair_quality_rubric_eval_latest.json",
 }
 
 
@@ -108,6 +109,7 @@ def evaluate_grant_readiness(
         "degraded_input_replay": _degraded_input_metrics(reports.get("degraded_input_replay")),
         "task_taxonomy": _task_taxonomy_metrics(reports.get("task_taxonomy")),
         "demo_interactivity": _demo_interactivity_metrics(reports.get("demo_interactivity")),
+        "repair_quality_rubric": _repair_quality_rubric_metrics(reports.get("repair_quality_rubric")),
     }
 
     blocking_failures.extend(_gate_failures(claim_eval_payload, metrics))
@@ -268,6 +270,25 @@ def _demo_interactivity_metrics(report: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
+def _repair_quality_rubric_metrics(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not report:
+        return {
+            "total_cases": 0,
+            "reference_passing_cases": 0,
+            "generic_fallback_passing_cases": 0,
+            "rubric_detects_generic_fallback": False,
+            "quality_proof_claim_allowed": True,
+        }
+    metrics = report.get("metrics", {})
+    return {
+        "total_cases": int(metrics.get("total_cases", 0)),
+        "reference_passing_cases": int(metrics.get("reference_passing_cases", 0)),
+        "generic_fallback_passing_cases": int(metrics.get("generic_fallback_passing_cases", 0)),
+        "rubric_detects_generic_fallback": bool(metrics.get("rubric_detects_generic_fallback", False)),
+        "quality_proof_claim_allowed": bool(metrics.get("quality_proof_claim_allowed", True)),
+    }
+
+
 def _recovered_count(report: dict[str, Any], baseline: str) -> int:
     case_results = report.get("case_results", {}).get(baseline, [])
     if isinstance(case_results, list):
@@ -340,6 +361,21 @@ def _gate_failures(claim_eval_payload: dict[str, Any] | None, metrics: dict[str,
             {
                 "check": "demo_interactivity_gate",
                 "message": "Parker-generated demo trace must keep 7/7 current-product scenarios, core human-control dimensions at 1.0, and unsafe misses at 0",
+            }
+        )
+
+    repair_quality = metrics["repair_quality_rubric"]
+    if (
+        repair_quality["total_cases"] < 5
+        or repair_quality["reference_passing_cases"] < repair_quality["total_cases"]
+        or repair_quality["generic_fallback_passing_cases"] != 0
+        or repair_quality["rubric_detects_generic_fallback"] is not True
+        or repair_quality["quality_proof_claim_allowed"] is not False
+    ):
+        failures.append(
+            {
+                "check": "repair_quality_rubric_gate",
+                "message": "repair-quality rubric must pass curated synthetic choices while flagging generic fallback as non-citable quality evidence",
             }
         )
     return failures
@@ -432,6 +468,7 @@ def _grant_summary(metrics: dict[str, Any]) -> dict[str, str]:
             f"{degraded['unsafe_miss_count']} unsafe misses across the degraded-input replay."
         ),
         "required_caveat": "Synthetic transcript/local-demo evidence only; not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.",
+        "repair_quality_caveat": "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.",
         "next_action": "Use this rollup as the grant packet's final evidence checklist; keep the individual reports attached for auditability.",
     }
 
@@ -480,6 +517,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- {summary['primary_decision']}",
         f"- Safe claim line: {summary['safe_claim_line']}",
         f"- Required caveat: {summary['required_caveat']}",
+        f"- Repair-quality caveat: {summary['repair_quality_caveat']}",
         "",
         "## Metrics",
         "",

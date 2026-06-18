@@ -181,11 +181,13 @@
     "benchmark/reports/construct_validity_matrix_eval_latest.json",
     "benchmark/reports/degraded_input_replay_eval_latest.json",
     "benchmark/reports/parker_demo_interactivity_eval_latest.json",
+    "benchmark/reports/repair_quality_rubric_eval_latest.json",
     "benchmark/reports/task_taxonomy_eval_latest.json"
   ],
   "grant_summary": {
     "next_action": "Use this rollup as the grant packet's final evidence checklist; keep the individual reports attached for auditability.",
     "primary_decision": "Safe to cite as synthetic/local grant evidence; not safe to present as real-world or clinical proof.",
+    "repair_quality_caveat": "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.",
     "required_caveat": "Synthetic transcript/local-demo evidence only; not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.",
     "safe_claim_line": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3 and one-shot keyword 2/3, with 0 unsafe misses across the degraded-input replay."
   },
@@ -227,6 +229,13 @@
       "overall_pass_rate": 1.0,
       "synthetic_scenarios": 7,
       "unsafe_miss_count": 0
+    },
+    "repair_quality_rubric": {
+      "generic_fallback_passing_cases": 0,
+      "quality_proof_claim_allowed": false,
+      "reference_passing_cases": 5,
+      "rubric_detects_generic_fallback": true,
+      "total_cases": 5
     },
     "task_taxonomy": {
       "escalation_recall": 1.0,

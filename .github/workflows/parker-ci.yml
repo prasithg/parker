@@ -53,5 +53,8 @@ jobs:
       - name: Construct-validity matrix guard
         run: make eval-construct-validity
 
+      - name: Repair-quality proxy rubric
+        run: make eval-repair-quality-rubric
+
       - name: Grant-readiness rollup
         run: make eval-grant-readiness

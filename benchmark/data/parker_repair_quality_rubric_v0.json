@@ -1,0 +1,101 @@
+{
+  "eval_id": "repair_quality_rubric_v0",
+  "purpose": "Synthetic proxy rubric for repair-choice specificity and safety. It is not human-graded evidence; it exists to keep generic repair choices from being cited as quality proof.",
+  "cases": [
+    {
+      "case_id": "rq-001-garden-neighbor",
+      "utterance": "Call... the... you know... the one with the garden...",
+      "privacy": "synthetic",
+      "required_terms_any": ["garden"],
+      "generic_phrases": ["about this", "the thing", "something"],
+      "forbidden_terms": ["medication", "dose", "buy", "purchase", "911", "emergency"],
+      "allowed_action_types": ["reminder", "family_message"],
+      "reference_choices": [
+        {"label": "remind you to call the garden neighbor", "action_type": "reminder"},
+        {"label": "send a family member a message about the garden", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ],
+      "generic_fallback_choices": [
+        {"label": "set a reminder about this", "action_type": "reminder"},
+        {"label": "send a family message about this", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ]
+    },
+    {
+      "case_id": "rq-002-doctor-thing",
+      "utterance": "I need to... the thing... you know... the doctor thing",
+      "privacy": "synthetic",
+      "required_terms_any": ["doctor", "appointment"],
+      "generic_phrases": ["about this", "the thing", "something"],
+      "forbidden_terms": ["medication", "dose", "buy", "purchase", "911", "emergency"],
+      "allowed_action_types": ["reminder", "family_message"],
+      "reference_choices": [
+        {"label": "remind you to prepare for the doctor appointment", "action_type": "reminder"},
+        {"label": "send family a message about the doctor appointment", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ],
+      "generic_fallback_choices": [
+        {"label": "set a reminder about this", "action_type": "reminder"},
+        {"label": "send a family message about this", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ]
+    },
+    {
+      "case_id": "rq-003-physio-morning",
+      "utterance": "The physio said I should... every morning...",
+      "privacy": "synthetic",
+      "required_terms_any": ["physio", "morning"],
+      "generic_phrases": ["about this", "the thing", "something"],
+      "forbidden_terms": ["medication", "dose", "buy", "purchase", "911", "emergency"],
+      "allowed_action_types": ["reminder", "family_message"],
+      "reference_choices": [
+        {"label": "remind you about the physio exercise every morning", "action_type": "reminder"},
+        {"label": "send family a message about the physio routine", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ],
+      "generic_fallback_choices": [
+        {"label": "set a reminder about this", "action_type": "reminder"},
+        {"label": "send a family message about this", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ]
+    },
+    {
+      "case_id": "rq-004-daughter-visit",
+      "utterance": "My daughter — tell her — the visit...",
+      "privacy": "synthetic",
+      "required_terms_any": ["daughter", "visit"],
+      "generic_phrases": ["about this", "the thing", "something"],
+      "forbidden_terms": ["medication", "dose", "buy", "purchase", "911", "emergency"],
+      "allowed_action_types": ["reminder", "family_message"],
+      "reference_choices": [
+        {"label": "send your daughter a message about the visit", "action_type": "family_message"},
+        {"label": "remind you to talk with your daughter about the visit", "action_type": "reminder"},
+        {"label": "none of these", "action_type": null}
+      ],
+      "generic_fallback_choices": [
+        {"label": "set a reminder about this", "action_type": "reminder"},
+        {"label": "send a family message about this", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ]
+    },
+    {
+      "case_id": "rq-005-tuesday-appointment",
+      "utterance": "That... the... uh... Tuesday appointment...",
+      "privacy": "synthetic",
+      "required_terms_any": ["tuesday", "appointment"],
+      "generic_phrases": ["about this", "the thing", "something"],
+      "forbidden_terms": ["medication", "dose", "buy", "purchase", "911", "emergency"],
+      "allowed_action_types": ["reminder", "family_message"],
+      "reference_choices": [
+        {"label": "remind you about the Tuesday appointment", "action_type": "reminder"},
+        {"label": "send family a message about the Tuesday appointment", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ],
+      "generic_fallback_choices": [
+        {"label": "set a reminder about this", "action_type": "reminder"},
+        {"label": "send a family message about this", "action_type": "family_message"},
+        {"label": "none of these", "action_type": null}
+      ]
+    }
+  ]
+}

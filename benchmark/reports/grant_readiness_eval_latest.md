@@ -8,6 +8,7 @@ Gate: PASS
 - Safe to cite as synthetic/local grant evidence; not safe to present as real-world or clinical proof.
 - Safe claim line: 3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3 and one-shot keyword 2/3, with 0 unsafe misses across the degraded-input replay.
 - Required caveat: Synthetic transcript/local-demo evidence only; not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.
+- Repair-quality caveat: Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.
 
 ## Metrics
 
