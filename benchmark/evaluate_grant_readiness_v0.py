@@ -30,6 +30,11 @@ from benchmark.evaluate_claim_metric_map_v0 import (  # noqa: E402
     evaluate_claims,
     load_claims,
 )
+from benchmark.evaluate_construct_validity_matrix_v0 import (  # noqa: E402
+    DEFAULT_MATRIX_PATH,
+    evaluate_constructs,
+    load_matrix,
+)
 
 DEFAULT_REPORTS_DIR = REPO_ROOT / "benchmark" / "reports"
 REQUIRED_REPORTS: dict[str, Path] = {
@@ -37,6 +42,7 @@ REQUIRED_REPORTS: dict[str, Path] = {
     "task_taxonomy": DEFAULT_REPORTS_DIR / "task_taxonomy_eval_latest.json",
     "demo_interactivity": DEFAULT_REPORTS_DIR / "parker_demo_interactivity_eval_latest.json",
     "claim_metric_map": DEFAULT_REPORTS_DIR / "claim_metric_map_eval_latest.json",
+    "construct_validity": DEFAULT_REPORTS_DIR / "construct_validity_matrix_eval_latest.json",
 }
 
 
@@ -54,6 +60,7 @@ def evaluate_grant_readiness(
     *,
     report_paths: dict[str, Path] | None = None,
     claim_map_path: Path = DEFAULT_CLAIM_MAP_PATH,
+    construct_matrix_path: Path = DEFAULT_MATRIX_PATH,
 ) -> GrantReadinessEvalResult:
     """Evaluate whether current synthetic/local evidence is grant-citable.
 
@@ -84,8 +91,20 @@ def evaluate_grant_readiness(
             }
         )
 
+    construct_eval_payload: dict[str, Any] | None = None
+    try:
+        construct_eval_payload = evaluate_constructs(load_matrix(construct_matrix_path)).as_dict()
+    except Exception as exc:  # pragma: no cover - exercised via malformed local files/manual use
+        blocking_failures.append(
+            {
+                "check": "construct_validity_matrix_gate",
+                "message": f"construct-validity matrix could not be evaluated: {exc}",
+            }
+        )
+
     metrics = {
         "claim_metric_map": _claim_metric_metrics(claim_eval_payload),
+        "construct_validity": _construct_validity_metrics(construct_eval_payload),
         "degraded_input_replay": _degraded_input_metrics(reports.get("degraded_input_replay")),
         "task_taxonomy": _task_taxonomy_metrics(reports.get("task_taxonomy")),
         "demo_interactivity": _demo_interactivity_metrics(reports.get("demo_interactivity")),
@@ -93,7 +112,13 @@ def evaluate_grant_readiness(
 
     blocking_failures.extend(_gate_failures(claim_eval_payload, metrics))
 
-    evidence_paths = _evidence_paths(paths, claim_eval_payload, claim_map_path)
+    evidence_paths = _evidence_paths(
+        paths,
+        claim_eval_payload,
+        claim_map_path,
+        construct_eval_payload,
+        construct_matrix_path,
+    )
     payload = {
         "eval": "grant_readiness_v0",
         "date": date.today().isoformat(),
@@ -109,6 +134,7 @@ def evaluate_grant_readiness(
         "grant_summary": _grant_summary(metrics),
         "metrics": metrics,
         "claim_cards": _claim_cards(claim_eval_payload),
+        "construct_validity_cards": _construct_validity_cards(construct_eval_payload),
         "evidence_paths_checked": evidence_paths,
     }
     return GrantReadinessEvalResult(payload)
@@ -142,6 +168,29 @@ def _claim_metric_metrics(payload: dict[str, Any] | None) -> dict[str, Any]:
         "assertions_checked": int(metrics.get("assertions_checked", 0)),
         "assertions_failed": int(metrics.get("assertions_failed", 0)),
         "overclaim_gate_passed": bool(payload.get("overclaim_gate", {}).get("passed", False)),
+    }
+
+
+def _construct_validity_metrics(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if payload is None:
+        return {
+            "total_constructs": 0,
+            "citable_constructs": 0,
+            "research_gap_constructs": 0,
+            "passing_citable_constructs": 0,
+            "assertions_checked": 0,
+            "assertions_failed": 0,
+            "construct_validity_gate_passed": False,
+        }
+    metrics = payload.get("metrics", {})
+    return {
+        "total_constructs": int(metrics.get("total_constructs", 0)),
+        "citable_constructs": int(metrics.get("citable_constructs", 0)),
+        "research_gap_constructs": int(metrics.get("research_gap_constructs", 0)),
+        "passing_citable_constructs": int(metrics.get("passing_citable_constructs", 0)),
+        "assertions_checked": int(metrics.get("assertions_checked", 0)),
+        "assertions_failed": int(metrics.get("assertions_failed", 0)),
+        "construct_validity_gate_passed": bool(payload.get("construct_validity_gate", {}).get("passed", False)),
     }
 
 
@@ -232,6 +281,22 @@ def _gate_failures(claim_eval_payload: dict[str, Any] | None, metrics: dict[str,
     if not claim_eval_payload or not claim_metrics["overclaim_gate_passed"]:
         failures.append({"check": "claim_metric_map_gate", "message": "claim→metric overclaim gate is not passing"})
 
+    construct = metrics["construct_validity"]
+    if (
+        construct["total_constructs"] < 6
+        or construct["citable_constructs"] < 4
+        or construct["research_gap_constructs"] < 2
+        or construct["passing_citable_constructs"] < construct["citable_constructs"]
+        or construct["assertions_failed"] != 0
+        or construct["construct_validity_gate_passed"] is not True
+    ):
+        failures.append(
+            {
+                "check": "construct_validity_matrix_gate",
+                "message": "construct-validity matrix must keep four citable constructs passing, two explicit research gaps, and 0 failed assertions",
+            }
+        )
+
     degraded = metrics["degraded_input_replay"]
     if (
         degraded["synthetic_cases"] < 3
@@ -308,11 +373,50 @@ def _claim_cards(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
     return cards
 
 
-def _evidence_paths(paths: dict[str, Path], payload: dict[str, Any] | None, claim_map_path: Path) -> list[str]:
+def _construct_validity_cards(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if payload is None:
+        return []
+    passing = set(payload.get("passing_construct_ids", []))
+    failing = {row.get("construct_id") for row in payload.get("failing_assertions", [])}
+    failing.update(row.get("construct_id") for row in payload.get("report_load_errors", []))
+    cards: list[dict[str, Any]] = []
+    for row in payload.get("constructs", []):
+        construct_id = row.get("construct_id")
+        support = row.get("current_claim_support")
+        if support == "research_gap_not_citable_yet":
+            status = "research_gap"
+        else:
+            status = "pass" if construct_id in passing and construct_id not in failing else "fail"
+        cards.append(
+            {
+                "construct_id": construct_id,
+                "status": status,
+                "capability": row.get("capability"),
+                "grant_criterion": row.get("grant_criterion"),
+                "metric_ids": row.get("metric_ids", []),
+                "evidence_paths": row.get("evidence_paths", []),
+                "known_limitations": row.get("known_limitations"),
+                "upgrade_path": row.get("upgrade_path"),
+                "caveat": row.get("caveat"),
+            }
+        )
+    return cards
+
+
+def _evidence_paths(
+    paths: dict[str, Path],
+    claim_payload: dict[str, Any] | None,
+    claim_map_path: Path,
+    construct_payload: dict[str, Any] | None,
+    construct_matrix_path: Path,
+) -> list[str]:
     evidence = {_repo_relative(Path(path)) for path in paths.values()}
     evidence.add(_repo_relative(claim_map_path))
-    if payload is not None:
-        evidence.update(str(path) for path in payload.get("evidence_paths_checked", []))
+    evidence.add(_repo_relative(construct_matrix_path))
+    if claim_payload is not None:
+        evidence.update(str(path) for path in claim_payload.get("evidence_paths_checked", []))
+    if construct_payload is not None:
+        evidence.update(str(path) for path in construct_payload.get("evidence_paths_checked", []))
     return sorted(evidence)
 
 
@@ -380,6 +484,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         "## Metrics",
         "",
         f"- Claims: {metrics['claim_metric_map']['passing_claims']}/{metrics['claim_metric_map']['total_claims']} passing; {metrics['claim_metric_map']['assertions_checked']} assertions; overclaim gate {metrics['claim_metric_map']['overclaim_gate_passed']}",
+        f"- Construct validity: {metrics['construct_validity']['passing_citable_constructs']}/{metrics['construct_validity']['citable_constructs']} citable constructs passing; {metrics['construct_validity']['research_gap_constructs']} explicit research gaps; {metrics['construct_validity']['assertions_checked']} assertions; gate {metrics['construct_validity']['construct_validity_gate_passed']}",
         f"- Degraded input: Parker {metrics['degraded_input_replay']['parker_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']} vs no-repair {metrics['degraded_input_replay']['no_repair_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']} vs one-shot keyword {metrics['degraded_input_replay']['one_shot_keyword_baseline_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']}; unsafe misses {metrics['degraded_input_replay']['unsafe_miss_count']}",
         f"- Safety taxonomy: {metrics['task_taxonomy']['synthetic_cases']} fixtures; unsafe misses {metrics['task_taxonomy']['unsafe_miss_count']}; refusal/escalation recall {metrics['task_taxonomy']['refusal_recall']}/{metrics['task_taxonomy']['escalation_recall']}",
         f"- Demo interactivity: {metrics['demo_interactivity']['synthetic_scenarios']} scenarios; pass rate {metrics['demo_interactivity']['overall_pass_rate']}; unsafe misses {metrics['demo_interactivity']['unsafe_miss_count']}",
@@ -389,6 +494,11 @@ def render_markdown(payload: dict[str, Any]) -> str:
     ]
     for card in payload["claim_cards"]:
         lines.append(f"- **{card['claim_id']}** — {card['status']} — {card['capability']} ({card['grant_criterion']})")
+    lines.extend(["", "## Construct-validity cards", ""])
+    for card in payload["construct_validity_cards"]:
+        lines.append(
+            f"- **{card['construct_id']}** — {card['status']} — {card['capability']} ({card['grant_criterion']})"
+        )
     lines.extend(["", "## Blocking failures", ""])
     if gate["blocking_failures"]:
         for failure in gate["blocking_failures"]:

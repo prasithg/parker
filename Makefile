@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-claim-metric-map eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-claim-metric-map eval-construct-validity eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -49,10 +49,15 @@ eval-degraded-input-replay: backend-venv
 eval-claim-metric-map:
 	python3 benchmark/evaluate_claim_metric_map_v0.py --write-report
 
+# Construct-validity matrix guard: distinguishes current citable synthetic/local
+# evidence from grant-funded research gaps so the proposal does not overclaim.
+eval-construct-validity:
+	python3 benchmark/evaluate_construct_validity_matrix_v0.py --write-report
+
 # Grant readiness rollup: one mobile-friendly evidence gate above the individual
 # synthetic/local evals. This does not create new claims; it summarizes whether
 # current reports are safe to cite with caveats.
-eval-grant-readiness:
+eval-grant-readiness: eval-construct-validity
 	python3 benchmark/evaluate_grant_readiness_v0.py --write-report
 
 # Repair-choice quality eval: runs effortful-speech fixtures through the real

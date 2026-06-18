@@ -50,5 +50,8 @@ jobs:
       - name: Claim-metric overclaim guard
         run: make eval-claim-metric-map
 
+      - name: Construct-validity matrix guard
+        run: make eval-construct-validity
+
       - name: Grant-readiness rollup
         run: make eval-grant-readiness

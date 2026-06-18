@@ -38,6 +38,15 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "assertions_failed": 0,
         "overclaim_gate_passed": True,
     }
+    assert payload["metrics"]["construct_validity"] == {
+        "total_constructs": 6,
+        "citable_constructs": 4,
+        "research_gap_constructs": 2,
+        "passing_citable_constructs": 4,
+        "assertions_checked": 12,
+        "assertions_failed": 0,
+        "construct_validity_gate_passed": True,
+    }
     assert payload["metrics"]["degraded_input_replay"]["synthetic_cases"] == 3
     assert payload["metrics"]["degraded_input_replay"]["parker_recovered"] == 3
     assert payload["metrics"]["degraded_input_replay"]["no_repair_recovered"] == 0
@@ -65,6 +74,7 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "benchmark/reports/task_taxonomy_eval_latest.json",
         "benchmark/reports/parker_demo_interactivity_eval_latest.json",
         "benchmark/reports/claim_metric_map_eval_latest.json",
+        "benchmark/reports/construct_validity_matrix_eval_latest.json",
     }.issubset(set(payload["evidence_paths_checked"]))
 
     safe_claim = payload["grant_summary"]["safe_claim_line"]
@@ -107,4 +117,5 @@ def test_makefile_exposes_one_command_grant_readiness_rollup() -> None:
     makefile = MAKEFILE.read_text()
 
     assert "eval-grant-readiness" in makefile
+    assert "benchmark/evaluate_construct_validity_matrix_v0.py --write-report" in makefile
     assert "benchmark/evaluate_grant_readiness_v0.py --write-report" in makefile

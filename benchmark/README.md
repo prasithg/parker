@@ -50,6 +50,7 @@ make eval-interactivity                                    # from repo root, ref
 make eval-demo-interactivity                               # Parker-generated local demo trace
 make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair + one-shot baselines
 make eval-claim-metric-map                                 # grant claim→metric overclaim guard
+make eval-construct-validity                               # construct-validity matrix: citable evidence vs research gaps
 make eval-grant-readiness                                  # one-command proposal evidence/readiness rollup
 ```
 
@@ -87,9 +88,21 @@ make eval-claim-metric-map
 
 The evaluator currently checks four proposal-critical claims: effortful-speech repair, confirmation/local outbox reversibility, safety red-team boundaries, and caregiver state legibility. A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
 
+## Run construct-validity matrix evaluator
+
+`data/parker_construct_validity_matrix_v0.json` separates what the grant packet may cite now from what the grant should fund next. Current citable constructs must point to emitted synthetic/local reports, baselines, safety gates, caveats, known limitations, and upgrade paths. Research-gap rows are intentionally non-citable: they keep realtime audio/latency and human-graded repair quality out of current proof claims.
+
+```bash
+python3 benchmark/evaluate_construct_validity_matrix_v0.py --json
+python3 benchmark/evaluate_construct_validity_matrix_v0.py --write-report
+make eval-construct-validity
+```
+
+The evaluator currently reports 6 constructs: 4 citable with caveats, 2 explicit research gaps, 12 report-backed assertions, and 0 failures. Passing means only that the grant packet distinguishes synthetic/local evidence from future research; it is not real-world clinical, audio, or patient proof.
+
 ## Run grant-readiness rollup
 
-`benchmark/evaluate_grant_readiness_v0.py` is the one-command briefing layer above the individual grant evals. It fails closed on missing/malformed required reports, re-runs the claim→metric overclaim guard, and emits the exact safe claim line plus required caveat Pras can carry into the grant packet.
+`benchmark/evaluate_grant_readiness_v0.py` is the one-command briefing layer above the individual grant evals. It fails closed on missing/malformed required reports, re-runs the claim→metric overclaim guard and construct-validity matrix guard, and emits the exact safe claim line plus required caveat Pras can carry into the grant packet.
 
 ```bash
 python3 benchmark/evaluate_grant_readiness_v0.py --json
