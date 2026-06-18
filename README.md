@@ -167,8 +167,8 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Family message outbox with two human gates** — patient confirms → `queued_local` → caregiver approves → `approved_local`. There is **no send path in the codebase at all**; cancel works from either state.
 - **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with confirm/execute/cancel/approve buttons and opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
-- **Eval harness** — task-taxonomy eval (`make eval-tasks`, 24 synthetic fixtures / 0 safety-critical misses, including safety red-team cases for medical advice, medication changes, emergency substitution, private-data disclosure, purchases, and confirmation-bypass attempts), interactivity trace eval (`make eval-interactivity`, 7 synthetic scenarios / 0 unsafe misses), Parker-generated demo trace eval (`make eval-demo-interactivity`, 7/7 current-product synthetic scenarios / 0 unsafe misses after cancel-only draft/outbox steering landed), degraded-input replay eval (`make eval-degraded-input-replay`, Parker repair recovered 3/3 intended actions vs. 0/3 for the pre-registered no-repair baseline and vs. 2/3 for a stronger one-shot keyword baseline on synthetic held-out transcript fixtures), claim→metric overclaim guard (`make eval-claim-metric-map`, 4 grant-facing claims / 14 metric assertions / 0 failures), construct-validity matrix guard (`make eval-construct-validity`, 4 citable synthetic/local constructs / 2 explicitly non-citable research gaps / 12 assertions / 0 failures), grant-readiness rollup (`make eval-grant-readiness`, one-command safe-claim/caveat evidence checklist), and repair-choice quality spot-check (`make eval-repair`).
-- 268 backend tests as of the construct-validity matrix guard addition (2026-06-18).
+- **Eval harness** — task-taxonomy eval (`make eval-tasks`, 24 synthetic fixtures / 0 safety-critical misses, including safety red-team cases for medical advice, medication changes, emergency substitution, private-data disclosure, purchases, and confirmation-bypass attempts), interactivity trace eval (`make eval-interactivity`, 7 synthetic scenarios / 0 unsafe misses), Parker-generated demo trace eval (`make eval-demo-interactivity`, 7/7 current-product synthetic scenarios / 0 unsafe misses after cancel-only draft/outbox steering landed), degraded-input replay eval (`make eval-degraded-input-replay`, Parker repair recovered 3/3 intended actions vs. 0/3 for the pre-registered no-repair baseline and vs. 2/3 for a stronger one-shot keyword baseline on synthetic held-out transcript fixtures), caregiver-state legibility proxy (`make eval-caregiver-state-legibility`, Parker review UI 6/6 vs. raw chat-only 0/6 on synthetic state-identification tasks / 0 unsafe misses), claim→metric overclaim guard (`make eval-claim-metric-map`, 4 grant-facing claims / 16 metric assertions / 0 failures), construct-validity matrix guard (`make eval-construct-validity`, 4 citable synthetic/local constructs / 2 explicitly non-citable research gaps / 14 assertions / 0 failures), grant-readiness rollup (`make eval-grant-readiness`, one-command safe-claim/caveat evidence checklist), and repair-choice quality spot-check (`make eval-repair`).
+- 279 backend tests as of the caregiver-state legibility proxy addition (2026-06-18).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -181,7 +181,7 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 | Speech-to-text | faster-whisper, fully on-device, optional dep | voice-activity end-pointing |
 | Repair choices | claude-haiku (opt-in via `ANTHROPIC_API_KEY`), deterministic fallback | multi-turn grounding |
 | Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer dashboard |
-| Eval harness | task-taxonomy eval + reference/Parker-generated interactivity trace evals + degraded-input replay + claim→metric overclaim guard + construct-validity matrix guard + repair-quality spot-check | human-graded repair content |
+| Eval harness | task-taxonomy eval + reference/Parker-generated interactivity trace evals + degraded-input replay + caregiver-state legibility proxy + claim→metric overclaim guard + construct-validity matrix guard + repair-quality spot-check | human-graded repair content + caregiver state-legibility study |
 | Voice/calls | none in v0 (no send path exists) | Twilio, realtime models |
 | TTS/voice clone | none in v0 | optional, consent-gated only |
 
@@ -191,7 +191,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (268 tests as of 2026-06-18)
+make test            # full backend suite should pass (279 tests as of 2026-06-18)
 ```
 
 **Fastest demo** (three commands, zero config):

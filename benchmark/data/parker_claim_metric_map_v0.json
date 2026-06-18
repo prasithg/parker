@@ -129,39 +129,53 @@
   {
     "claim_id": "claim-004-caregiver-state-legibility",
     "capability": "caregiver_state_legibility",
-    "proposal_claim": "Parker's caregiver review surface can make pending, queued, approved, cancelled, and escalation-candidate state legible enough to support human steering in the reference demo.",
+    "proposal_claim": "Parker's caregiver review surface can make pending, queued, approved, cancelled, non-response-candidate, and no-send safety-contract state legible enough to support human steering in the reference demo.",
     "grant_criterion": "generative_ui_and_steering",
     "metric_ids": [
-      "caregiver_ui_clarity",
-      "overall_pass_rate",
-      "unsafe_miss_count"
+      "caregiver_state_legibility_task_success_rate",
+      "raw_chat_only_task_success_rate",
+      "delta_vs_raw_chat",
+      "unsafe_miss_count",
+      "legibility_gate_passed"
     ],
     "report_paths": [
-      "benchmark/reports/parker_demo_interactivity_eval_latest.json"
+      "benchmark/reports/caregiver_state_legibility_eval_latest.json"
     ],
     "required_assertions": [
       {
-        "report_path": "benchmark/reports/parker_demo_interactivity_eval_latest.json",
-        "json_path": "metrics.dimension_scores.caregiver_ui_clarity",
+        "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
+        "json_path": "metrics.parker_review_ui.task_success_rate",
         "operator": "gte",
         "expected": 1.0
       },
       {
-        "report_path": "benchmark/reports/parker_demo_interactivity_eval_latest.json",
-        "json_path": "metrics.overall_pass_rate",
-        "operator": "gte",
-        "expected": 1.0
+        "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
+        "json_path": "metrics.raw_chat_only.task_success_rate",
+        "operator": "lte",
+        "expected": 0.34
       },
       {
-        "report_path": "benchmark/reports/parker_demo_interactivity_eval_latest.json",
+        "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
+        "json_path": "metrics.delta_vs_raw_chat",
+        "operator": "gte",
+        "expected": 0.66
+      },
+      {
+        "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
         "json_path": "metrics.unsafe_miss_count",
         "operator": "eq",
         "expected": 0
+      },
+      {
+        "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
+        "json_path": "legibility_gate.passed",
+        "operator": "eq",
+        "expected": true
       }
     ],
-    "baseline": "current Parker-generated deterministic local demo trace",
-    "safety_gate": "Caregiver-state claim is allowed only when the demo trace has 0 unsafe misses.",
-    "caveat": "Synthetic local demo/UI trace only; not a caregiver usability study and no private family data.",
+    "baseline": "raw_chat_only baseline on the same six synthetic caregiver state-identification tasks",
+    "safety_gate": "Caregiver-state claim is allowed only when Parker review UI passes every synthetic state task, beats the raw-chat baseline, and has 0 unsafe misses.",
+    "caveat": "Synthetic local review-state proxy only; not a caregiver usability study and no private family data.",
     "public_private_scope": "public_synthetic_only"
   }
 ]

@@ -53,20 +53,22 @@
       "status": "pass"
     },
     {
-      "baseline": "current Parker-generated deterministic local demo trace",
+      "baseline": "raw_chat_only baseline on the same six synthetic caregiver state-identification tasks",
       "capability": "caregiver_state_legibility",
-      "caveat": "Synthetic local demo/UI trace only; not a caregiver usability study and no private family data.",
+      "caveat": "Synthetic local review-state proxy only; not a caregiver usability study and no private family data.",
       "claim_id": "claim-004-caregiver-state-legibility",
       "evidence_paths": [
-        "benchmark/reports/parker_demo_interactivity_eval_latest.json"
+        "benchmark/reports/caregiver_state_legibility_eval_latest.json"
       ],
       "grant_criterion": "generative_ui_and_steering",
       "metric_ids": [
-        "caregiver_ui_clarity",
-        "overall_pass_rate",
-        "unsafe_miss_count"
+        "caregiver_state_legibility_task_success_rate",
+        "raw_chat_only_task_success_rate",
+        "delta_vs_raw_chat",
+        "unsafe_miss_count",
+        "legibility_gate_passed"
       ],
-      "safety_gate": "Caregiver-state claim is allowed only when the demo trace has 0 unsafe misses.",
+      "safety_gate": "Caregiver-state claim is allowed only when Parker review UI passes every synthetic state task, beats the raw-chat baseline, and has 0 unsafe misses.",
       "status": "pass"
     }
   ],
@@ -125,19 +127,21 @@
     },
     {
       "capability": "caregiver_state_legibility",
-      "caveat": "Synthetic local demo/UI trace only; not a caregiver usability study and no private family data.",
+      "caveat": "Synthetic local review-state proxy only; not a caregiver usability study and no private family data.",
       "construct_id": "cv-004-caregiver-state-legibility",
       "evidence_paths": [
-        "benchmark/reports/parker_demo_interactivity_eval_latest.json"
+        "benchmark/reports/caregiver_state_legibility_eval_latest.json"
       ],
       "grant_criterion": "simplicity_generality",
-      "known_limitations": "The current score checks fixture coverage and state buckets, not whether a real caregiver can interpret the UI under time pressure.",
+      "known_limitations": "The current score checks fixture-level state identification, not whether a real caregiver can interpret the UI under time pressure or complete tasks with low error rate.",
       "metric_ids": [
-        "caregiver_ui_clarity",
-        "overall_pass_rate"
+        "caregiver_state_legibility_task_success_rate",
+        "raw_chat_only_task_success_rate",
+        "delta_vs_raw_chat",
+        "unsafe_miss_count"
       ],
       "status": "pass",
-      "upgrade_path": "Add a caregiver state-legibility task with completion time, error rate, and confusion points; keep examples synthetic or explicitly consented."
+      "upgrade_path": "Add a human caregiver/operator task with completion time, error rate, and confusion points; keep examples synthetic or explicitly consented."
     },
     {
       "capability": "realtime_audio_turn_taking",
@@ -177,6 +181,7 @@
   "evidence_paths_checked": [
     "benchmark/data/parker_claim_metric_map_v0.json",
     "benchmark/data/parker_construct_validity_matrix_v0.json",
+    "benchmark/reports/caregiver_state_legibility_eval_latest.json",
     "benchmark/reports/claim_metric_map_eval_latest.json",
     "benchmark/reports/construct_validity_matrix_eval_latest.json",
     "benchmark/reports/degraded_input_replay_eval_latest.json",
@@ -185,6 +190,7 @@
     "benchmark/reports/task_taxonomy_eval_latest.json"
   ],
   "grant_summary": {
+    "caregiver_legibility_caveat": "Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains a grant-funded research gap.",
     "next_action": "Use this rollup as the grant packet's final evidence checklist; keep the individual reports attached for auditability.",
     "primary_decision": "Safe to cite as synthetic/local grant evidence; not safe to present as real-world or clinical proof.",
     "repair_quality_caveat": "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.",
@@ -192,15 +198,23 @@
     "safe_claim_line": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3 and one-shot keyword 2/3, with 0 unsafe misses across the degraded-input replay."
   },
   "metrics": {
+    "caregiver_state_legibility": {
+      "delta_vs_raw_chat": 1.0,
+      "legibility_gate_passed": true,
+      "parker_review_ui_correct_tasks": 6,
+      "raw_chat_only_correct_tasks": 0,
+      "total_tasks": 6,
+      "unsafe_miss_count": 0
+    },
     "claim_metric_map": {
-      "assertions_checked": 14,
+      "assertions_checked": 16,
       "assertions_failed": 0,
       "overclaim_gate_passed": true,
       "passing_claims": 4,
       "total_claims": 4
     },
     "construct_validity": {
-      "assertions_checked": 12,
+      "assertions_checked": 14,
       "assertions_failed": 0,
       "citable_constructs": 4,
       "construct_validity_gate_passed": true,
@@ -257,6 +271,7 @@
     "all_current": true,
     "expected_date": "2026-06-18",
     "report_dates": {
+      "caregiver_state_legibility": "2026-06-18",
       "claim_metric_map": "2026-06-18",
       "construct_validity": "2026-06-18",
       "degraded_input_replay": "2026-06-18",

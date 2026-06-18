@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -44,6 +44,12 @@ eval-demo-interactivity: backend-venv
 eval-degraded-input-replay: backend-venv
 	$(BACKEND_PYTHON) benchmark/evaluate_degraded_input_replay_v0.py --write-report
 
+# Caregiver-state legibility proxy: checks whether review UI/state cards make
+# pending/queued/approved/cancelled/candidate/safety-contract status identifiable
+# versus a raw chat-only baseline. Synthetic proxy, not a human usability study.
+eval-caregiver-state-legibility:
+	python3 benchmark/evaluate_caregiver_state_legibility_v0.py --write-report
+
 # Grant overclaim guard: every proposal-facing claim must point at emitted
 # metric evidence, a baseline, a safety gate, and a caveat.
 eval-claim-metric-map:
@@ -62,7 +68,7 @@ eval-repair-quality-rubric:
 # Grant readiness rollup: one mobile-friendly evidence gate above the individual
 # synthetic/local evals. This refreshes every source report first so stale
 # proposal metrics fail closed instead of surviving from an older run.
-eval-grant-readiness: eval-tasks eval-demo-interactivity eval-degraded-input-replay eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric
+eval-grant-readiness: eval-tasks eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric
 	python3 benchmark/evaluate_grant_readiness_v0.py --write-report
 
 # Repair-choice quality eval: runs effortful-speech fixtures through the real

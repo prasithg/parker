@@ -58,6 +58,7 @@ def test_claim_metric_map_evaluator_verifies_current_reports():
         "benchmark/reports/task_taxonomy_eval_latest.json",
         "benchmark/reports/parker_demo_interactivity_eval_latest.json",
         "benchmark/reports/degraded_input_replay_eval_latest.json",
+        "benchmark/reports/caregiver_state_legibility_eval_latest.json",
     }.issubset(set(payload["evidence_paths_checked"]))
 
 

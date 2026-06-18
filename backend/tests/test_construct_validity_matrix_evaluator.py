@@ -68,7 +68,7 @@ def test_construct_validity_evaluator_verifies_current_reports_and_surfaces_gaps
         "research_gap_constructs": 2,
         "passing_citable_constructs": 4,
         "failing_citable_constructs": 0,
-        "assertions_checked": 12,
+        "assertions_checked": 14,
         "assertions_failed": 0,
     }
     assert payload["construct_validity_gate"]["passed"] is True
@@ -81,6 +81,7 @@ def test_construct_validity_evaluator_verifies_current_reports_and_surfaces_gaps
         "benchmark/reports/degraded_input_replay_eval_latest.json",
         "benchmark/reports/parker_demo_interactivity_eval_latest.json",
         "benchmark/reports/task_taxonomy_eval_latest.json",
+        "benchmark/reports/caregiver_state_legibility_eval_latest.json",
     }.issubset(set(payload["evidence_paths_checked"]))
 
 

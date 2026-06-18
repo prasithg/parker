@@ -49,6 +49,7 @@ python3 benchmark/evaluate_interactivity_v0.py --write-report
 make eval-interactivity                                    # from repo root, reference trace
 make eval-demo-interactivity                               # Parker-generated local demo trace
 make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair + one-shot baselines
+make eval-caregiver-state-legibility                       # caregiver review-state proxy vs raw chat-only baseline
 make eval-claim-metric-map                                 # grant claim→metric overclaim guard
 make eval-construct-validity                               # construct-validity matrix: citable evidence vs research gaps
 make eval-repair-quality-rubric                            # repair-choice proxy rubric: generic fallback must stay non-citable
@@ -99,7 +100,19 @@ python3 benchmark/evaluate_construct_validity_matrix_v0.py --write-report
 make eval-construct-validity
 ```
 
-The evaluator currently reports 6 constructs: 4 citable with caveats, 2 explicit research gaps, 12 report-backed assertions, and 0 failures. Passing means only that the grant packet distinguishes synthetic/local evidence from future research; it is not real-world clinical, audio, or patient proof.
+The evaluator currently reports 6 constructs: 4 citable with caveats, 2 explicit research gaps, 14 report-backed assertions, and 0 failures. Passing means only that the grant packet distinguishes synthetic/local evidence from future research; it is not real-world clinical, audio, or patient proof.
+
+## Run caregiver-state legibility proxy
+
+`data/caregiver_state_legibility_v0.json` defines six synthetic review-state tasks for pending actions, queued local outbox, approved-local outbox, cancelled audit rows, review-only non-response candidates, and the visible demo safety contract. The evaluator compares Parker's structured review UI/state-card observation against a raw chat-only baseline.
+
+```bash
+python3 benchmark/evaluate_caregiver_state_legibility_v0.py --json
+python3 benchmark/evaluate_caregiver_state_legibility_v0.py --write-report
+make eval-caregiver-state-legibility
+```
+
+This is a construct-validity bump for the grant packet's caregiver/operator legibility claim: current synthetic proxy result is Parker review UI 6/6 tasks vs raw chat-only 0/6, with 0 unsafe misses. It is **not** a caregiver usability study, human-graded evidence, or real family data.
 
 ## Run grant-readiness rollup
 
@@ -111,6 +124,6 @@ python3 benchmark/evaluate_grant_readiness_v0.py --write-report
 make eval-grant-readiness
 ```
 
-`make eval-grant-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so proposal metrics do not silently survive from an older run.
+`make eval-grant-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so proposal metrics do not silently survive from an older run.
 
 Passing means only that the current synthetic/local reports are safe to cite with caveats. It does **not** establish real-world, clinical, patient, audio, emergency-readiness, or private-data proof.

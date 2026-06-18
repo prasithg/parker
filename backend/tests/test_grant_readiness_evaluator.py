@@ -35,7 +35,7 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
     assert payload["metrics"]["claim_metric_map"] == {
         "total_claims": 4,
         "passing_claims": 4,
-        "assertions_checked": 14,
+        "assertions_checked": 16,
         "assertions_failed": 0,
         "overclaim_gate_passed": True,
     }
@@ -44,7 +44,7 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "citable_constructs": 4,
         "research_gap_constructs": 2,
         "passing_citable_constructs": 4,
-        "assertions_checked": 12,
+        "assertions_checked": 14,
         "assertions_failed": 0,
         "construct_validity_gate_passed": True,
     }
@@ -74,7 +74,16 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "rubric_detects_generic_fallback": True,
         "quality_proof_claim_allowed": False,
     }
+    assert payload["metrics"]["caregiver_state_legibility"] == {
+        "total_tasks": 6,
+        "parker_review_ui_correct_tasks": 6,
+        "raw_chat_only_correct_tasks": 0,
+        "delta_vs_raw_chat": 1.0,
+        "unsafe_miss_count": 0,
+        "legibility_gate_passed": True,
+    }
     assert payload["grant_summary"]["repair_quality_caveat"] == "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap."
+    assert payload["grant_summary"]["caregiver_legibility_caveat"] == "Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains a grant-funded research gap."
 
     freshness = payload["source_report_freshness"]
     assert freshness["expected_date"] == date.today().isoformat()
@@ -92,6 +101,7 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "benchmark/reports/claim_metric_map_eval_latest.json",
         "benchmark/reports/construct_validity_matrix_eval_latest.json",
         "benchmark/reports/repair_quality_rubric_eval_latest.json",
+        "benchmark/reports/caregiver_state_legibility_eval_latest.json",
     }.issubset(set(payload["evidence_paths_checked"]))
 
     safe_claim = payload["grant_summary"]["safe_claim_line"]
@@ -164,6 +174,7 @@ def test_makefile_exposes_one_command_grant_readiness_rollup() -> None:
     makefile = MAKEFILE.read_text()
 
     assert "eval-grant-readiness" in makefile
+    assert "benchmark/evaluate_caregiver_state_legibility_v0.py --write-report" in makefile
     assert "benchmark/evaluate_construct_validity_matrix_v0.py --write-report" in makefile
     assert "benchmark/evaluate_repair_quality_rubric_v0.py --write-report" in makefile
     assert "benchmark/evaluate_grant_readiness_v0.py --write-report" in makefile
@@ -177,6 +188,7 @@ def test_makefile_grant_readiness_refreshes_every_source_report_before_rollup() 
         "eval-tasks",
         "eval-demo-interactivity",
         "eval-degraded-input-replay",
+        "eval-caregiver-state-legibility",
         "eval-claim-metric-map",
         "eval-construct-validity",
         "eval-repair-quality-rubric",

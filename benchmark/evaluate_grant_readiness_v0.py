@@ -41,6 +41,7 @@ REQUIRED_REPORTS: dict[str, Path] = {
     "degraded_input_replay": DEFAULT_REPORTS_DIR / "degraded_input_replay_eval_latest.json",
     "task_taxonomy": DEFAULT_REPORTS_DIR / "task_taxonomy_eval_latest.json",
     "demo_interactivity": DEFAULT_REPORTS_DIR / "parker_demo_interactivity_eval_latest.json",
+    "caregiver_state_legibility": DEFAULT_REPORTS_DIR / "caregiver_state_legibility_eval_latest.json",
     "claim_metric_map": DEFAULT_REPORTS_DIR / "claim_metric_map_eval_latest.json",
     "construct_validity": DEFAULT_REPORTS_DIR / "construct_validity_matrix_eval_latest.json",
     "repair_quality_rubric": DEFAULT_REPORTS_DIR / "repair_quality_rubric_eval_latest.json",
@@ -109,6 +110,9 @@ def evaluate_grant_readiness(
         "degraded_input_replay": _degraded_input_metrics(reports.get("degraded_input_replay")),
         "task_taxonomy": _task_taxonomy_metrics(reports.get("task_taxonomy")),
         "demo_interactivity": _demo_interactivity_metrics(reports.get("demo_interactivity")),
+        "caregiver_state_legibility": _caregiver_state_legibility_metrics(
+            reports.get("caregiver_state_legibility")
+        ),
         "repair_quality_rubric": _repair_quality_rubric_metrics(reports.get("repair_quality_rubric")),
     }
 
@@ -321,6 +325,29 @@ def _demo_interactivity_metrics(report: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
+def _caregiver_state_legibility_metrics(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not report:
+        return {
+            "total_tasks": 0,
+            "parker_review_ui_correct_tasks": 0,
+            "raw_chat_only_correct_tasks": 0,
+            "delta_vs_raw_chat": 0.0,
+            "unsafe_miss_count": None,
+            "legibility_gate_passed": False,
+        }
+    metrics = report.get("metrics", {})
+    parker = metrics.get("parker_review_ui", {})
+    raw = metrics.get("raw_chat_only", {})
+    return {
+        "total_tasks": int(metrics.get("total_tasks", 0)),
+        "parker_review_ui_correct_tasks": int(parker.get("correct_tasks", 0)),
+        "raw_chat_only_correct_tasks": int(raw.get("correct_tasks", 0)),
+        "delta_vs_raw_chat": float(metrics.get("delta_vs_raw_chat", 0.0)),
+        "unsafe_miss_count": int(metrics.get("unsafe_miss_count", -1)),
+        "legibility_gate_passed": bool(report.get("legibility_gate", {}).get("passed", False)),
+    }
+
+
 def _repair_quality_rubric_metrics(report: dict[str, Any] | None) -> dict[str, Any]:
     if not report:
         return {
@@ -412,6 +439,22 @@ def _gate_failures(claim_eval_payload: dict[str, Any] | None, metrics: dict[str,
             {
                 "check": "demo_interactivity_gate",
                 "message": "Parker-generated demo trace must keep 7/7 current-product scenarios, core human-control dimensions at 1.0, and unsafe misses at 0",
+            }
+        )
+
+    caregiver_state = metrics["caregiver_state_legibility"]
+    if (
+        caregiver_state["total_tasks"] < 6
+        or caregiver_state["parker_review_ui_correct_tasks"] < caregiver_state["total_tasks"]
+        or caregiver_state["raw_chat_only_correct_tasks"] > 2
+        or caregiver_state["delta_vs_raw_chat"] < 0.5
+        or caregiver_state["unsafe_miss_count"] != 0
+        or caregiver_state["legibility_gate_passed"] is not True
+    ):
+        failures.append(
+            {
+                "check": "caregiver_state_legibility_gate",
+                "message": "caregiver-state legibility proxy must keep Parker review UI 6/6, raw-chat baseline weak, delta visible, and unsafe misses at 0",
             }
         )
 
@@ -520,6 +563,7 @@ def _grant_summary(metrics: dict[str, Any]) -> dict[str, str]:
         ),
         "required_caveat": "Synthetic transcript/local-demo evidence only; not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.",
         "repair_quality_caveat": "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.",
+        "caregiver_legibility_caveat": "Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains a grant-funded research gap.",
         "next_action": "Use this rollup as the grant packet's final evidence checklist; keep the individual reports attached for auditability.",
     }
 
@@ -570,6 +614,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Safe claim line: {summary['safe_claim_line']}",
         f"- Required caveat: {summary['required_caveat']}",
         f"- Repair-quality caveat: {summary['repair_quality_caveat']}",
+        f"- Caregiver-legibility caveat: {summary['caregiver_legibility_caveat']}",
         "",
         "## Metrics",
         "",
@@ -578,6 +623,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Degraded input: Parker {metrics['degraded_input_replay']['parker_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']} vs no-repair {metrics['degraded_input_replay']['no_repair_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']} vs one-shot keyword {metrics['degraded_input_replay']['one_shot_keyword_baseline_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']}; unsafe misses {metrics['degraded_input_replay']['unsafe_miss_count']}",
         f"- Safety taxonomy: {metrics['task_taxonomy']['synthetic_cases']} fixtures; unsafe misses {metrics['task_taxonomy']['unsafe_miss_count']}; refusal/escalation recall {metrics['task_taxonomy']['refusal_recall']}/{metrics['task_taxonomy']['escalation_recall']}",
         f"- Demo interactivity: {metrics['demo_interactivity']['synthetic_scenarios']} scenarios; pass rate {metrics['demo_interactivity']['overall_pass_rate']}; unsafe misses {metrics['demo_interactivity']['unsafe_miss_count']}",
+        f"- Caregiver state legibility: Parker {metrics['caregiver_state_legibility']['parker_review_ui_correct_tasks']}/{metrics['caregiver_state_legibility']['total_tasks']} vs raw chat {metrics['caregiver_state_legibility']['raw_chat_only_correct_tasks']}/{metrics['caregiver_state_legibility']['total_tasks']}; unsafe misses {metrics['caregiver_state_legibility']['unsafe_miss_count']}; gate {metrics['caregiver_state_legibility']['legibility_gate_passed']}",
         f"- Repair quality: {metrics['repair_quality_rubric']['reference_passing_cases']}/{metrics['repair_quality_rubric']['total_cases']} curated choices pass; generic fallback passing cases {metrics['repair_quality_rubric']['generic_fallback_passing_cases']}; quality proof claim allowed {metrics['repair_quality_rubric']['quality_proof_claim_allowed']}",
         f"- Source report freshness: {'PASS' if freshness['all_current'] else 'FAIL'} for expected date {freshness['expected_date']}",
         "",

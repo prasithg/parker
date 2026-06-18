@@ -19,6 +19,7 @@ def test_pr_ci_workflow_runs_backend_tests_and_grant_evals() -> None:
         "make eval-interactivity",
         "make eval-demo-interactivity",
         "make eval-degraded-input-replay",
+        "make eval-caregiver-state-legibility",
         "make eval-claim-metric-map",
         "make eval-construct-validity",
         "make eval-grant-readiness",

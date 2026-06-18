@@ -47,6 +47,9 @@ jobs:
       - name: Degraded-input replay eval
         run: make eval-degraded-input-replay
 
+      - name: Caregiver-state legibility proxy eval
+        run: make eval-caregiver-state-legibility
+
       - name: Claim-metric overclaim guard
         run: make eval-claim-metric-map
 
