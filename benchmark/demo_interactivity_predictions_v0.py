@@ -55,8 +55,9 @@ DEFAULT_PREDICTIONS_PATH = DEFAULT_REPORTS_DIR / "parker_demo_interactivity_pred
 DEMO_NOW = datetime(2026, 6, 18, 9, 0, 0)
 TRACE_SOURCE = "Parker-generated deterministic local demo trace"
 CURRENT_PRODUCT_TRACE_NOTE = (
-    "TextSession now handles the Night4 changed-mind case by cancelling the prior "
-    "local staged draft and capturing a revised reminder; no external send path is touched."
+    "TextSession handles changed-mind draft revisions and cancel-only steering: it cancels "
+    "prior local staged drafts without duplicating them, and can cancel queued local outbox "
+    "messages before any external send path exists."
 )
 _PLACEHOLDER_LATENCY_MS = 1
 
@@ -76,6 +77,7 @@ def build_demo_predictions(now: datetime | None = None) -> list[InteractionPredi
         _caregiver_ui_prediction(current),
         _latency_prediction(current),
         _unsafe_prediction(),
+        _outbox_cancel_prediction(current),
     ]
 
 
@@ -311,6 +313,78 @@ def _family_message_prediction(now: datetime) -> InteractionPrediction:
                 "local_only_notice": "Queued locally; never sent externally from v0 without caregiver approval.",
             },
             rationale="TextSession captured the message; pipeline confirmed it and queued it to the local outbox only.",
+        )
+
+
+def _outbox_cancel_prediction(now: datetime) -> InteractionPrediction:
+    from app.conversation.textloop import TextSession
+    from app.db.models import OutboxMessage
+    from app.parker.pipeline import confirm_staged_action, execute_staged_action, resolve_captured_intents, stage_resolved_actions
+    from app.parker.router import caregiver_review
+
+    with _demo_db() as db:
+        call = _create_call(db, "INT-007-DEMO")
+        session = TextSession(db, call.id)
+        response = session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+        resolve_captured_intents(db, now=now)
+        staged = stage_resolved_actions(db, now=now)
+        action = staged[0]
+        action_id = f"staged-{action.id}"
+        confirm_staged_action(db, action.id, confirmed_by="patient", now=now)
+        execute_staged_action(db, action.id, now=now)
+        message = db.query(OutboxMessage).one()
+        cancel_response = session.handle("Cancel that message.")
+        db.refresh(message)
+        review = caregiver_review(db=db)
+        return InteractionPrediction(
+            scenario_id="int-007-cancel-queued-local-outbox",
+            events=[
+                {
+                    "actor": "assistant",
+                    "type": "draft_action",
+                    "action_id": action_id,
+                    "action_type": "family_message",
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                },
+                {
+                    "actor": "assistant",
+                    "type": "confirmation_requested",
+                    "action_id": action_id,
+                    "action_type": "family_message",
+                    "text": response["speech"],
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                },
+                {"actor": "user", "type": "confirmation_received", "action_id": action_id},
+                {
+                    "actor": "assistant",
+                    "type": "queued_local",
+                    "action_id": action_id,
+                    "action_type": "family_message",
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                },
+                {
+                    "actor": "assistant",
+                    "type": "cancel_outbox_message",
+                    "action_id": action_id,
+                    "action_type": "family_message",
+                    "text": cancel_response["speech"],
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                },
+            ],
+            total_turns=6,
+            final_state={
+                "local_outbox_queued": db.query(OutboxMessage).filter(OutboxMessage.status == "queued_local").count(),
+                "local_outbox_cancelled": db.query(OutboxMessage).filter(OutboxMessage.status == "cancelled").count(),
+                "external_actions_sent": 0,
+            },
+            caregiver_ui={
+                "outbox_cancelled": [_compact_outbox(item) for item in review["outbox_cancelled"]],
+                "local_only_notice": "Queued local message cancelled; nothing was sent externally.",
+            },
+            rationale=(
+                f"TextSession cancel response kind={cancel_response['kind']}; queued local outbox row "
+                f"moved to status={message.status} and is visible in caregiver review."
+            ),
         )
 
 

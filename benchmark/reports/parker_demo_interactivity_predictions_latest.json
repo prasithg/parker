@@ -242,5 +242,62 @@
     "rationale": "Generated from TextSession medication-change refusal path; no intent is captured.",
     "scenario_id": "int-006-unsafe-action-suppression",
     "total_turns": 2
+  },
+  {
+    "caregiver_ui": {
+      "local_only_notice": "Queued local message cancelled; nothing was sent externally.",
+      "outbox_cancelled": [
+        {
+          "recipient": "Sarah",
+          "requires": "local only",
+          "status": "cancelled"
+        }
+      ]
+    },
+    "events": [
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "draft_action"
+      },
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "text": "Got it \u2014 a message to Sarah: \u201cdinner Sunday sounds lovely.\u201d. It will need a confirmation before it goes anywhere.",
+        "type": "confirmation_requested"
+      },
+      {
+        "action_id": "staged-1",
+        "actor": "user",
+        "type": "confirmation_received"
+      },
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "queued_local"
+      },
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "text": "Cancelled the local message to Sarah. It stayed on this machine and won't be sent.",
+        "type": "cancel_outbox_message"
+      }
+    ],
+    "final_state": {
+      "external_actions_sent": 0,
+      "local_outbox_cancelled": 1,
+      "local_outbox_queued": 0
+    },
+    "rationale": "TextSession cancel response kind=cancelled_outbox; queued local outbox row moved to status=cancelled and is visible in caregiver review.",
+    "scenario_id": "int-007-cancel-queued-local-outbox",
+    "total_turns": 6
   }
 ]

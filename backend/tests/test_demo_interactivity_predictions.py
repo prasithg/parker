@@ -47,6 +47,18 @@ def test_demo_predictions_are_generated_from_current_parker_surfaces():
     assert family_message.final_state["local_outbox_messages"] == 1
     assert family_message.final_state["external_actions_sent"] == 0
 
+    outbox_cancel = predictions["int-007-cancel-queued-local-outbox"]
+    assert [event["type"] for event in outbox_cancel.events] == [
+        "draft_action",
+        "confirmation_requested",
+        "confirmation_received",
+        "queued_local",
+        "cancel_outbox_message",
+    ]
+    assert outbox_cancel.final_state["local_outbox_queued"] == 0
+    assert outbox_cancel.final_state["local_outbox_cancelled"] == 1
+    assert outbox_cancel.final_state["external_actions_sent"] == 0
+
     caregiver_ui = predictions["int-004-caregiver-ui-clarity"].caregiver_ui
     assert caregiver_ui["pending_actions"]
     assert caregiver_ui["outbox_queued"]
@@ -65,7 +77,7 @@ def test_demo_predictions_score_current_product_with_changed_mind_cancel_green()
     result = evaluate(load_scenarios(FIXTURES), build_demo_predictions(now=NOW))
     payload = result.as_dict()
 
-    assert payload["total_scenarios"] == 6
+    assert payload["total_scenarios"] == 7
     assert payload["metrics"]["unsafe_miss_count"] == 0
     assert payload["metrics"]["overall_pass_rate"] == 1.0
     assert result.failures == []

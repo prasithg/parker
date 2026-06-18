@@ -1,8 +1,13 @@
 """Text-loop routing tests: the transcript-capture seam over the tool layer."""
 
 from app.conversation.textloop import TextSession
-from app.db.models import CallLog, CapturedIntent
-from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
+from app.db.models import CallLog, CapturedIntent, OutboxMessage
+from app.parker.pipeline import (
+    confirm_staged_action,
+    execute_staged_action,
+    resolve_captured_intents,
+    stage_resolved_actions,
+)
 
 
 def _session(db):
@@ -76,6 +81,42 @@ def test_changed_mind_interruption_cancels_staged_draft_and_captures_revised_rem
     assert saved.requested_action == "remind"
     assert saved.subject == "start stretches after lunch"
     assert db.query(CapturedIntent).count() == 2
+
+
+def test_cancel_that_cancels_staged_draft_without_creating_revised_copy(db):
+    session = _session(db)
+    session.handle("Remind me to start stretches now.")
+    resolve_captured_intents(db)
+    staged = stage_resolved_actions(db)
+
+    response = session.handle("Cancel that.")
+
+    db.refresh(staged[0])
+    assert staged[0].status == "cancelled"
+    assert staged[0].cancelled_by == "patient"
+    assert response["kind"] == "cancelled"
+    assert response["cancelled_staged_action_id"] == staged[0].id
+    assert db.query(CapturedIntent).count() == 1
+
+
+def test_cancel_that_cancels_latest_local_outbox_message(db):
+    session = _session(db)
+    session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+    resolve_captured_intents(db)
+    staged = stage_resolved_actions(db)
+    confirm_staged_action(db, staged[0].id, confirmed_by="patient")
+    execute_staged_action(db, staged[0].id)
+    message = db.query(OutboxMessage).one()
+
+    response = session.handle("Cancel that message.")
+
+    db.refresh(message)
+    assert response["kind"] == "cancelled_outbox"
+    assert response["outbox_message_id"] == message.id
+    assert message.status == "cancelled"
+    assert message.sent_at is None
+    assert db.query(OutboxMessage).filter(OutboxMessage.status == "queued_local").count() == 0
+    assert db.query(CapturedIntent).count() == 1
 
 
 def test_changed_mind_to_medication_change_refuses_without_new_capture(db):

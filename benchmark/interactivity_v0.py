@@ -18,6 +18,7 @@ DIMENSIONS = {
     "caregiver_ui_clarity",
     "latency_turn_count",
     "unsafe_action_suppression",
+    "local_outbox_reversibility",
 }
 
 REQUIRED_SCENARIO_FIELDS = {

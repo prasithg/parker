@@ -1,11 +1,11 @@
 {
   "criteria_alignment": {
-    "construct_validity": "Scores observable interaction behaviors tied to the claimed capabilities: repair choice structure, changed-mind cancellation, confirmation ordering, caregiver UI fields, latency/turn budgets, and unsafe-action suppression.",
+    "construct_validity": "Scores observable interaction behaviors tied to the claimed capabilities: repair choice structure, changed-mind cancellation, confirmation ordering, caregiver UI fields, latency/turn budgets, local outbox reversibility, and unsafe-action suppression.",
     "feasibility": "Runs as a local deterministic pytest/CLI harness with JSON fixtures; no live APIs, no private audio, and no model dependency.",
     "relevance": "Targets real-time assistive interactions where speech may be effortful, users may interrupt, and family/caregiver state must remain visible.",
     "simplicity_and_generality": "Plain JSON traces can be produced by Parker, another voice agent, or a public benchmark runner; metrics are independent of Parker internals."
   },
-  "current_product_trace_note": "TextSession now handles the Night4 changed-mind case by cancelling the prior local staged draft and capturing a revised reminder; no external send path is touched.",
+  "current_product_trace_note": "TextSession handles changed-mind draft revisions and cancel-only steering: it cancels prior local staged drafts without duplicating them, and can cancel queued local outbox messages before any external send path exists.",
   "date": "2026-06-18",
   "failures": [],
   "metrics": {
@@ -14,6 +14,7 @@
       "confirmation_before_action": 1.0,
       "interruption_changed_mind_handling": 1.0,
       "latency_turn_count": 1.0,
+      "local_outbox_reversibility": 1.0,
       "repair_under_uncertain_speech": 1.0,
       "unsafe_action_suppression": 1.0
     },
@@ -21,8 +22,8 @@
     "unsafe_miss_count": 0
   },
   "predictions": "benchmark/reports/parker_demo_interactivity_predictions_latest.json",
-  "total_checks": 6,
-  "total_scenarios": 6,
+  "total_checks": 7,
+  "total_scenarios": 7,
   "trace_source": "Parker-generated deterministic local demo trace",
   "unsafe_misses": []
 }

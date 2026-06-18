@@ -45,6 +45,23 @@ TRAILING_TIMING_PATTERN = re.compile(
     r"\s+(?:now|today|tomorrow|tonight|this\s+(?:morning|afternoon|evening)|after\s+.+|before\s+.+|in\s+.+|at\s+.+)$",
     re.IGNORECASE,
 )
+CANCEL_ONLY_REVISION_FRAGMENTS = {
+    "",
+    "it",
+    "that",
+    "this",
+    "message",
+    "the message",
+    "that message",
+    "this message",
+    "draft",
+    "the draft",
+    "that draft",
+    "this draft",
+    "the note",
+    "that note",
+    "this note",
+}
 
 
 def _build_model_client() -> "Any | None":
@@ -78,6 +95,12 @@ def _extract_revision_fragment(utterance: str) -> str:
     fragment = re.sub(r"\s+instead$", "", fragment, flags=re.IGNORECASE)
     fragment = fragment.strip(" .!?,")
     return fragment
+
+
+def _is_cancel_only_revision(fragment: str) -> bool:
+    normalized = re.sub(r"[,.!?]+", " ", fragment).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized in CANCEL_ONLY_REVISION_FRAGMENTS
 
 
 def _revised_subject(prior_subject: str, utterance: str) -> str:
@@ -199,18 +222,37 @@ class TextSession:
         return self._offer_choices(utterance)
 
     def _handle_changed_mind(self, utterance: str, lowered: str) -> dict[str, Any] | None:
-        """Cancel the latest local draft and capture a revised one.
+        """Cancel or revise the latest local draft/outbox item.
 
-        This is deliberately narrow v0 steering: it only rewrites the most
-        recent reminder/message draft from the same text/voice session, keeps
-        the old staged action cancelled locally, and still requires the normal
-        later confirmation/execution path for the revised draft.
+        This is deliberately narrow v0 steering: it rewrites or cancels only
+        local artifacts from the same text/voice session. Revisions still use
+        the normal confirmation/execution path, and outbox cancellation only
+        touches cancellable local rows — never an external send path.
         """
 
         if not _looks_like_changed_mind(lowered):
             return None
 
+        revision_fragment = _extract_revision_fragment(utterance)
+        cancel_only = _is_cancel_only_revision(revision_fragment)
         draft = self._latest_active_staged_action()
+
+        if draft is None and cancel_only:
+            outbox = self._latest_cancellable_outbox_message()
+            if outbox is not None:
+                from app.parker.pipeline import cancel_outbox_message
+
+                cancelled = cancel_outbox_message(self.db, outbox.id)
+                assert cancelled is not None
+                return {
+                    "kind": "cancelled_outbox",
+                    "speech": (
+                        f"Cancelled the local message to {cancelled.recipient}. "
+                        "It stayed on this machine and won't be sent."
+                    ),
+                    "outbox_message_id": cancelled.id,
+                }
+
         captured = draft.resolution_result.captured_intent if draft is not None else self._latest_open_captured_intent()
         if captured is None:
             return None
@@ -225,8 +267,16 @@ class TextSession:
             captured.status = "rejected"
             self.db.commit()
 
+        if cancel_only:
+            response: dict[str, Any] = {
+                "kind": "cancelled",
+                "speech": "Cancelled the earlier draft. Nothing will run unless you ask again.",
+            }
+            if cancelled_id is not None:
+                response["cancelled_staged_action_id"] = cancelled_id
+            return response
+
         prior_subject = (captured.subject or captured.intent_text).strip()
-        revision_fragment = _extract_revision_fragment(utterance)
         revision_lower = revision_fragment.lower()
         if any(w in revision_lower for w in MED_WORDS) and any(p in revision_lower for p in MED_CHANGE_PHRASES):
             return {
@@ -274,6 +324,20 @@ class TextSession:
             .filter(CapturedIntent.call_log_id == self.call_log_id)
             .filter(StagedAction.status.in_(["staged", "confirmed"]))
             .order_by(StagedAction.created_at.desc(), StagedAction.id.desc())
+            .first()
+        )
+
+    def _latest_cancellable_outbox_message(self):
+        from app.db.models import CapturedIntent, OutboxMessage, ResolutionResult, StagedAction
+
+        return (
+            self.db.query(OutboxMessage)
+            .join(OutboxMessage.staged_action)
+            .join(StagedAction.resolution_result)
+            .join(ResolutionResult.captured_intent)
+            .filter(CapturedIntent.call_log_id == self.call_log_id)
+            .filter(OutboxMessage.status.in_(["queued_local", "approved_local"]))
+            .order_by(OutboxMessage.created_at.desc(), OutboxMessage.id.desc())
             .first()
         )
 
