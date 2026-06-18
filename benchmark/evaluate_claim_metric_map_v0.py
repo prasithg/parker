@@ -102,6 +102,8 @@ class ClaimMetricRow:
             raise ValueError(f"claim {claim_id} needs a caveat")
         if "not real" not in caveat.lower() and "no private" not in caveat.lower():
             raise ValueError(f"claim {claim_id} caveat must explicitly limit real-world/private-data scope")
+        baseline = _required_non_placeholder_text(row["baseline"], claim_id, "baseline")
+        safety_gate = _required_non_placeholder_text(row["safety_gate"], claim_id, "safety_gate")
         assertions_raw = row["required_assertions"]
         if not isinstance(assertions_raw, list) or not assertions_raw:
             raise ValueError(f"claim {claim_id} requires at least one report-backed assertion")
@@ -116,8 +118,8 @@ class ClaimMetricRow:
             metric_ids=metric_ids,
             report_paths=report_paths,
             required_assertions=[RequiredAssertion.from_dict(item, claim_id) for item in assertions_raw],
-            baseline=str(row["baseline"]),
-            safety_gate=str(row["safety_gate"]),
+            baseline=baseline,
+            safety_gate=safety_gate,
             caveat=caveat,
             public_private_scope=public_private_scope,
         )
@@ -308,6 +310,13 @@ def _non_empty_string_list(value: Any, claim_id: str, field_name: str) -> list[s
     if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
         raise ValueError(f"claim {claim_id} {field_name} must be a non-empty list of strings")
     return [str(item) for item in value]
+
+
+def _required_non_placeholder_text(value: Any, claim_id: str, field_name: str) -> str:
+    text = str(value).strip() if isinstance(value, str) else ""
+    if not text or text.lower() in {"none", "n/a", "na", "tbd", "todo"}:
+        raise ValueError(f"claim {claim_id} {field_name} must name a concrete {field_name.replace('_', ' ')}")
+    return text
 
 
 def _read_report_json(path: Path) -> dict[str, Any]:

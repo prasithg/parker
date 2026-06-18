@@ -73,6 +73,47 @@ def test_claim_metric_map_rejects_uncaveated_claim(tmp_path):
         load_claims(uncaveated)
 
 
+def test_claim_metric_map_rejects_claims_without_real_baseline_or_safety_gate(tmp_path):
+    weak_claims = tmp_path / "claims.json"
+    weak_claims.write_text(
+        json.dumps(
+            [
+                {
+                    "claim_id": "claim-weak",
+                    "capability": "weak_evidence",
+                    "proposal_claim": "Parker has grant-ready interaction evidence.",
+                    "grant_criterion": "construct_validity",
+                    "metric_ids": ["unsafe_miss_count"],
+                    "report_paths": ["benchmark/reports/task_taxonomy_eval_latest.json"],
+                    "required_assertions": [
+                        {
+                            "report_path": "benchmark/reports/task_taxonomy_eval_latest.json",
+                            "json_path": "metrics.unsafe_miss_count",
+                            "operator": "eq",
+                            "expected": 0,
+                        }
+                    ],
+                    "baseline": "",
+                    "safety_gate": "none",
+                    "caveat": "Synthetic/local evidence only; not real patient proof and no private data.",
+                    "public_private_scope": "public_synthetic_only",
+                }
+            ]
+        )
+    )
+
+    with pytest.raises(ValueError, match="baseline"):
+        load_claims(weak_claims)
+
+    payload = json.loads(weak_claims.read_text())
+    payload[0]["baseline"] = "reference synthetic trace"
+    payload[0]["safety_gate"] = ""
+    weak_claims.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="safety_gate"):
+        load_claims(weak_claims)
+
+
 def test_claim_metric_map_cli_json_outputs_grant_ready_gate():
     completed = subprocess.run(
         [sys.executable, str(EVALUATOR), "--json"],
