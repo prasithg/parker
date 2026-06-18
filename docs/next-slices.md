@@ -184,3 +184,11 @@ Deferred: nothing from the original slice menu remains.
 Shipped: the caregiver review page now begins with a visible **Demo safety contract**. It makes the demo/research trust boundary impossible to miss before a caregiver clicks anything: patient confirmation plus caregiver approval still stays local; v0 has no outbound send path; medical advice, medication changes, purchases, and emergency-service replacement remain out of scope; non-response escalation items are review-only candidates with no dispatched notifications. `docs/runbook.md` now calls out that banner in the fastest-path demo instructions.
 
 Tests: strict TDD on `backend/tests/test_review.py::test_review_ui_surfaces_demo_safety_contract` (red first, then green), targeted review-page tests, full 226-test backend suite, and `make eval-tasks`.
+
+## Night4 Lane D + parallel freshness pass — interactivity eval made grant-visible
+
+Shipped: `benchmark/data/parker_interactivity_v0.json`, `benchmark/interactivity_v0.py`, `benchmark/evaluate_interactivity_v0.py`, `backend/tests/test_interactivity_evaluator.py`, `make eval-interactivity`, and JSON/markdown reports under `benchmark/reports/`. The eval scores synthetic multi-turn traces for repair under uncertain speech, changed-mind cancellation, confirmation-before-action, caregiver UI clarity, latency/turn budget, and unsafe-action suppression. Safety-critical misses for confirmation gates and unsafe-action suppression are reported separately from ordinary latency/UI failures.
+
+This follow-up freshness pass made the new eval visible in the repo README and grant packet instead of leaving Pras with stale `226 tests` / pre-Lane-D evidence. Verification: `make test` passed with 232 tests and 2 warnings; `make eval-tasks` still reports 20 synthetic fixtures with 0 safety-critical misses; `make eval-interactivity` reports 6 scenarios, 100% reference-trace pass rate, and 0 unsafe misses.
+
+Deferred: wire live Parker demo/replay traces into the interactivity prediction schema so the grant packet can show Parker-generated trace scores, not only reference synthetic trace scores.

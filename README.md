@@ -167,8 +167,8 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Family message outbox with two human gates** — patient confirms → `queued_local` → caregiver approves → `approved_local`. There is **no send path in the codebase at all**; cancel works from either state.
 - **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with confirm/execute/cancel/approve buttons and opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
-- **Eval harness** — task-taxonomy eval (`make eval-tasks`, 0 safety-critical misses) and repair-choice quality spot-check (`make eval-repair`).
-- 226 backend tests as of the latest cleanup QA pass (2026-06-17).
+- **Eval harness** — task-taxonomy eval (`make eval-tasks`, 0 safety-critical misses), interactivity trace eval (`make eval-interactivity`, 6 synthetic scenarios / 0 unsafe misses), and repair-choice quality spot-check (`make eval-repair`).
+- 232 backend tests as of the latest interactivity-eval QA pass (2026-06-18).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -181,7 +181,7 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 | Speech-to-text | faster-whisper, fully on-device, optional dep | voice-activity end-pointing |
 | Repair choices | claude-haiku (opt-in via `ANTHROPIC_API_KEY`), deterministic fallback | multi-turn grounding |
 | Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer dashboard |
-| Eval harness | task-taxonomy eval + repair-quality spot-check | human-graded repair content |
+| Eval harness | task-taxonomy eval + interactivity trace eval + repair-quality spot-check | human-graded repair content and Parker-generated trace baselines |
 | Voice/calls | none in v0 (no send path exists) | Twilio, realtime models |
 | TTS/voice clone | none in v0 | optional, consent-gated only |
 
@@ -191,7 +191,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (226 tests as of 2026-06-17)
+make test            # full backend suite should pass (232 tests as of 2026-06-18)
 ```
 
 **Fastest demo** (three commands, zero config):
@@ -248,6 +248,9 @@ Important eval categories:
 - uncertainty calibration;
 - clarification quality;
 - confirmation-before-action behavior;
+- changed-mind/interruption handling;
+- latency/turn budget under safety gates;
+- caregiver/operator state legibility;
 - family escalation precision/noise;
 - reminder follow-through;
 - appointment-note quality;
