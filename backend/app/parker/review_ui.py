@@ -30,6 +30,10 @@ REVIEW_PAGE_HTML = """<!doctype html>
   .badge.info { background: #d6e4f0; }
   .badge.warning, .badge.urgent { background: #f8d7da; }
   .note { background: #f4f7f4; border-radius: 8px; padding: .6rem 1rem; font-size: .85rem; }
+  .safety { background: #fff8e8; border-left: 4px solid #c98500; border-radius: 8px; padding: .7rem 1rem; font-size: .86rem; margin: .8rem 0 1rem; }
+  .safety strong { display: block; margin-bottom: .35rem; }
+  .safety ul { margin: .25rem 0 0 1.1rem; padding: 0; }
+  .safety li { margin: .18rem 0; }
   .updated { color: #888; font-size: .8rem; }
 </style>
 </head>
@@ -37,6 +41,15 @@ REVIEW_PAGE_HTML = """<!doctype html>
 <h1>Parker — caregiver review</h1>
 <p class="note">Everything here is local. Confirming queues a message to the local outbox and
 approving marks it reviewed; nothing is ever sent externally from this page.</p>
+<section class="safety" aria-label="Demo safety contract">
+  <strong>Demo safety contract</strong>
+  <ul>
+    <li>Patient confirms → caregiver approves → still local. This page is the second human gate.</li>
+    <li>No outbound sends exist in v0; approved messages remain on this machine.</li>
+    <li>No medical advice, medication changes, purchases, or emergency-service replacement.</li>
+    <li>Non-response items are candidates for review only — no notifications are dispatched here.</li>
+  </ul>
+</section>
 <p class="updated" id="updated"></p>
 
 <h2 id="h-pending">Pending actions (awaiting confirmation or execution)</h2>

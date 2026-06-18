@@ -75,6 +75,8 @@ make run    # then open http://localhost:8000/parker/review/ui
 
 Message lifecycle on the page: patient confirms → `queued_local` (awaiting your approval) → `approved_local` (reviewed, still on this machine) — or cancelled from either state. No send exists.
 
+The top of the review page now opens with a **Demo safety contract** so reviewers see the trust boundary before clicking anything: patient confirmation plus caregiver approval stays local, there is no outbound send path in v0, medical advice/medication changes/purchases/emergency-service replacement are out of scope, and non-response escalation items are review-only candidates.
+
 ### Review-page auth (opt-in)
 
 With no password configured (the default), everything above works credential-free on localhost. To lock the caregiver decision surface — review feed/page, outbox, and the confirm/execute/cancel/approve buttons — set credentials before `make run`:

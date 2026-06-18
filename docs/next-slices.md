@@ -178,3 +178,9 @@ Schema note: two new nullable columns on `staged_actions` → pre-existing local
 Tests: review audit test rewritten time-true (later cancellation listed first despite earlier id) + `cancelled_at`/`cancelled_by` serialization; demo tests assert the seeded cancelled item and the new summary key. 225 total.
 
 Deferred: nothing from the original slice menu remains.
+
+## Night4 parallel cleanup stream X1 — review UI safety contract
+
+Shipped: the caregiver review page now begins with a visible **Demo safety contract**. It makes the demo/research trust boundary impossible to miss before a caregiver clicks anything: patient confirmation plus caregiver approval still stays local; v0 has no outbound send path; medical advice, medication changes, purchases, and emergency-service replacement remain out of scope; non-response escalation items are review-only candidates with no dispatched notifications. `docs/runbook.md` now calls out that banner in the fastest-path demo instructions.
+
+Tests: strict TDD on `backend/tests/test_review.py::test_review_ui_surfaces_demo_safety_contract` (red first, then green), targeted review-page tests, full 226-test backend suite, and `make eval-tasks`.

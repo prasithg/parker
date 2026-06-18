@@ -296,3 +296,14 @@ def test_review_ui_includes_cancelled_section(db):
     assert "Changed my mind" in page
     assert "recent_cancelled" in page
     assert "outbox_cancelled" in page
+
+
+def test_review_ui_surfaces_demo_safety_contract(db):
+    client = TestClient(app)
+
+    page = client.get("/parker/review/ui").text
+
+    assert "Demo safety contract" in page
+    assert "Patient confirms → caregiver approves → still local" in page
+    assert "No medical advice, medication changes, purchases, or emergency-service replacement." in page
+    assert "No outbound sends exist in v0" in page
