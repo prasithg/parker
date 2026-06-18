@@ -71,7 +71,7 @@ make demo
 make run    # then open http://localhost:8000/parker/review/ui
 ```
 
-The review page opens populated: three actions awaiting confirmation (two reminders, one drafted message to Rohan with its text restated), one message to Sarah queued in the local outbox (approve it — it moves to the "still local only" section — or cancel it), and one non-response escalation candidate from a reminder that was resurfaced three times without an answer. The printed replay dialogue shows repair choices, a refused medication question, and a purchase routed to human approval.
+`make demo` runs both the family-day seed and the transcript replay, so the final review page opens populated with six actions awaiting confirmation: three seeded items (stale stretches, tomato-plants reminder, Rohan draft) plus three replay captures (tomato-plants reminder, Sarah draft, garden-utterance reminder). It also shows one Sarah message queued in the local outbox (approve it — it moves to the "still local only" section — or cancel it), one non-response escalation candidate from a reminder that was resurfaced three times without an answer, two "Recently done" local actions, and one "Changed my mind" cancellation. The printed replay dialogue shows repair choices, a refused medication question, and a purchase routed to human approval.
 
 Message lifecycle on the page: patient confirms → `queued_local` (awaiting your approval) → `approved_local` (reviewed, still on this machine) — or cancelled from either state. No send exists.
 

@@ -168,7 +168,7 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with confirm/execute/cancel/approve buttons and opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
 - **Eval harness** — task-taxonomy eval (`make eval-tasks`, 0 safety-critical misses) and repair-choice quality spot-check (`make eval-repair`).
-- 214 backend tests.
+- 225 backend tests as of the latest live-demo QA pass (2026-06-17).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -191,7 +191,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # 214 tests should pass
+make test            # full backend suite should pass (225 tests as of 2026-06-17)
 ```
 
 **Fastest demo** (three commands, zero config):

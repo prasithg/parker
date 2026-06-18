@@ -133,11 +133,17 @@ Deferred: a `SETUP.md` or `README.md` at the repo root (currently no top-level r
 
 ## Post-milestone slice (2026-06-10, fourteenth): README refresh — scaffold to pilot-ready
 
-Shipped: the stale bottom half of `README.md` brought up to v0 reality; the vision sections (pitch, thesis, why-it-matters, what-Parker-should-do, safety boundaries, eval agenda) were already accurate and are untouched. Changes: "Current repo state" no longer says *scaffold* — it now lists the shipped input ladder, pipeline, repair choices with model opt-in, two-gate outbox with no send path, review UI with opt-in auth, escalation candidates, eval harness, and the 214-test count. Stack table split into "v0 (shipped)" vs "possible later" — Twilio/OpenAI Realtime moved out of the current column (no send/call path exists in v0). Setup section now leads with the three-command demo (`make demo` → `make run` → review UI) and the talk-loop voice path, and points at the runbook's pilot-setup section and `.env.example`. The completed "Near-term Fable 5 task" section (architecture reconciliation — done a dozen slices ago) replaced with "Where to start reading" (runbook, next-slices, AGENTS/CLAUDE). Naming section updated: ParkinsClaw is fully retired from code as of slice 9.
+Shipped: the stale bottom half of `README.md` brought up to v0 reality; the vision sections (pitch, thesis, why-it-matters, what-Parker-should-do, safety boundaries, eval agenda) were already accurate and are untouched. Changes: "Current repo state" no longer says *scaffold* — it now lists the shipped input ladder, pipeline, repair choices with model opt-in, two-gate outbox with no send path, review UI with opt-in auth, escalation candidates, eval harness, and the then-current 214-test count. Stack table split into "v0 (shipped)" vs "possible later" — Twilio/OpenAI Realtime moved out of the current column (no send/call path exists in v0). Setup section now leads with the three-command demo (`make demo` → `make run` → review UI) and the talk-loop voice path, and points at the runbook's pilot-setup section and `.env.example`. The completed "Near-term Fable 5 task" section (architecture reconciliation — done a dozen slices ago) replaced with "Where to start reading" (runbook, next-slices, AGENTS/CLAUDE). Naming section updated: ParkinsClaw is fully retired from code as of slice 9.
 
-No code changes; 214 tests and evals unchanged.
+No code changes; the then-current 214 tests and evals were unchanged.
 
-Deferred: nothing README-related. Open quality items: voice-activity end-pointing, multi-turn repair grounding, human-graded repair-content evals.
+## Night4 live-demo QA docs refresh — DONE (2026-06-17)
+
+Shipped: README test-count references refreshed to the verified 225-test suite, and `docs/runbook.md` now matches the actual `make demo` end state after seed + transcript replay: six pending actions, one queued local outbox message, one non-response candidate, two recent-history rows, and one cancellation audit row. This was a demo/runbook fix only; the existing behavior was already pinned by `backend/tests/test_demo.py::test_seed_and_replay_compose_for_the_full_demo`.
+
+Verification: targeted review/demo tests passed, full `make test` passed with 225 tests, `make eval-tasks` reported 0 safety-critical misses, `make eval-repair` skipped cleanly without `ANTHROPIC_API_KEY`, and the live local review UI at `http://127.0.0.1:8000/parker/review/ui` returned HTTP 200 with the expected review-feed counts.
+
+Deferred after the README refresh slice: nothing README-related. Open quality items at that point: voice-activity end-pointing, multi-turn repair grounding, human-graded repair-content evals.
 
 ## Post-milestone slice (2026-06-10, fifteenth): multi-turn repair grounding
 
