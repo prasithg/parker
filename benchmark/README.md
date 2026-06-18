@@ -48,7 +48,7 @@ python3 benchmark/evaluate_interactivity_v0.py --predictions my_trace_prediction
 python3 benchmark/evaluate_interactivity_v0.py --write-report
 make eval-interactivity                                    # from repo root, reference trace
 make eval-demo-interactivity                               # Parker-generated local demo trace
-make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair baseline
+make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair + one-shot baselines
 make eval-claim-metric-map                                 # grant claim→metric overclaim guard
 ```
 
@@ -58,20 +58,21 @@ The default `reference synthetic trace` is the ideal fixture trace; use `--predi
 
 ## Run degraded-input replay evaluator
 
-`data/degraded_input_replay_v0.json` is the Night4 Claw/adversarial-review smoke check for the grant pitch: one pre-registered quantitative interaction metric, `intent_recovery_accuracy_delta_vs_non_interactive`, on synthetic held-out degraded/effortful-speech transcript inputs.
+`data/degraded_input_replay_v0.json` is the Night4 Claw/adversarial-review smoke check for the grant pitch: one pre-registered quantitative interaction metric, `intent_recovery_accuracy_delta_vs_non_interactive`, on synthetic held-out degraded/effortful-speech transcript inputs, plus a stronger secondary one-shot keyword comparator for caveating the weak no-repair baseline.
 
 ```bash
-python3 benchmark/evaluate_degraded_input_replay_v0.py --json
-python3 benchmark/evaluate_degraded_input_replay_v0.py --write-report
+backend/.venv/bin/python benchmark/evaluate_degraded_input_replay_v0.py --json
+backend/.venv/bin/python benchmark/evaluate_degraded_input_replay_v0.py --write-report
 make eval-degraded-input-replay
 ```
 
-It compares two baselines on the same cases:
+It compares three baselines on the same cases:
 
 - `non_interactive_no_repair`: no repair loop; degraded input stalls at “please repeat”.
-- `parker_repair_protocol`: current deterministic Parker `TextSession` repair-choice path with a one-number user repair selection.
+- `one_shot_keyword_baseline`: no repair loop, but a one-shot explicit-cue transcript classifier tries to infer reminder/message intent; current smoke result recovers 2/3 synthetic cases.
+- `parker_repair_protocol`: current deterministic Parker `TextSession` repair-choice path with a one-number user repair selection; current smoke result recovers 3/3 synthetic cases.
 
-This is **not** real Parkinson's audio evidence and should not be overclaimed. It exists to keep the proposal honest: no “Parker improves interactivity” sentence should survive unless it maps to an emitted metric, a baseline, and a caveat.
+This is **not** real Parkinson's audio evidence and should not be overclaimed. It exists to keep the proposal honest: no “Parker improves interactivity” sentence should survive unless it maps to an emitted metric, a baseline, a safety gate, and a caveat.
 
 ## Run claim→metric map evaluator
 

@@ -30,6 +30,20 @@ def test_claim_metric_map_rows_are_metric_bound_synthetic_and_caveated():
     assert all("not real" in claim.caveat.lower() or "no private" in claim.caveat.lower() for claim in claims)
 
 
+def test_effortful_speech_claim_names_one_shot_secondary_baseline():
+    claims = load_claims(DEFAULT_CLAIM_MAP_PATH)
+    claim = next(claim for claim in claims if claim.claim_id == "claim-001-effortful-speech-repair")
+
+    assert "non_interactive_no_repair" in claim.baseline
+    assert "one_shot_keyword_baseline" in claim.baseline
+    assert any(
+        assertion.json_path == "secondary_comparisons.one_shot_keyword_baseline.delta_vs_parker"
+        and assertion.operator == "gte"
+        and assertion.expected == 0.333
+        for assertion in claim.required_assertions
+    )
+
+
 def test_claim_metric_map_evaluator_verifies_current_reports():
     result = evaluate_claims(load_claims(DEFAULT_CLAIM_MAP_PATH))
     payload = result.as_dict()

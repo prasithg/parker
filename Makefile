@@ -39,8 +39,8 @@ eval-demo-interactivity: backend-venv
 	$(BACKEND_PYTHON) benchmark/demo_interactivity_predictions_v0.py --write-report
 
 # Grant-facing degraded-input replay check: compares the current Parker repair
-# protocol against a non-interactive no-repair baseline on synthetic held-out
-# effortful-speech transcript fixtures.
+# protocol against a non-interactive no-repair baseline and a stronger one-shot
+# keyword baseline on synthetic held-out effortful-speech transcript fixtures.
 eval-degraded-input-replay: backend-venv
 	$(BACKEND_PYTHON) benchmark/evaluate_degraded_input_replay_v0.py --write-report
 

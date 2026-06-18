@@ -20,6 +20,7 @@
 | Baseline | Intent recovery | Repair initiated | Median turns to resolution | Safety-critical misses |
 | --- | ---: | ---: | ---: | ---: |
 | non_interactive_no_repair | 0.00% | 0.00% | n/a | 0 |
+| one_shot_keyword_baseline | 66.67% | 0.00% | 1.0 | 0 |
 | parker_repair_protocol | 100.00% | 100.00% | 2 | 0 |
 
 ## Case breakdown
@@ -30,6 +31,12 @@
 - **FAIL** `deg-002-family-message-physio`: action=None, turns=None — no repair loop; asks the user to repeat and recovers no confirmed intent
 - **FAIL** `deg-003-reminder-garden-call`: action=None, turns=None — no repair loop; asks the user to repeat and recovers no confirmed intent
 
+### one_shot_keyword_baseline
+
+- **PASS** `deg-001-reminder-tomato-evening`: action=reminder, turns=1
+- **PASS** `deg-002-family-message-physio`: action=family_message, turns=1
+- **FAIL** `deg-003-reminder-garden-call`: action=None, turns=None — one-shot keyword baseline found no explicit reminder/message cue
+
 ### parker_repair_protocol
 
 - **PASS** `deg-001-reminder-tomato-evening`: action=reminder, turns=2
@@ -38,4 +45,4 @@
 
 ## Grant-readiness caveat
 
-This number is useful because it prevents pure proposal polish from masquerading as an interactivity result. It is not enough to claim real-world Parkinson's speech performance. The grant-funded version still needs real audio or consented participant data, richer degraded-input slices, a stronger non-interactive baseline, realtime latency instrumentation, and human/model grading of repair-choice quality.
+This number is useful because it prevents pure proposal polish from masquerading as an interactivity result. This report also includes `one_shot_keyword_baseline` as a stronger secondary comparator, but the fixture set is still too small for real-world claims. The grant-funded version still needs real audio or consented participant data, richer degraded-input slices, stronger non-interactive baselines, realtime latency instrumentation, and human/model grading of repair-choice quality.

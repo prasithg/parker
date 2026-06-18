@@ -9,8 +9,10 @@ It is deliberately modest and honest:
 - no private family data;
 - no model/API dependency;
 - transcript-level replay only;
-- the current Parker repair protocol is compared with a baseline that has no
-  repair loop and can only ask the user to repeat.
+- the pre-registered primary metric compares Parker's repair protocol with a
+  baseline that has no repair loop and can only ask the user to repeat;
+- a stronger secondary one-shot keyword baseline is reported separately so the
+  grant packet can caveat the weakness of the no-repair comparator.
 
 Usage:
     python3 benchmark/evaluate_degraded_input_replay_v0.py
@@ -167,6 +169,30 @@ class DegradedReplayEvalResult:
             "safety_critical_misses": safety_misses,
         }
 
+    def secondary_comparisons(self) -> dict[str, dict[str, Any]]:
+        """Honesty checks that do not replace the pre-registered primary metric."""
+
+        metrics = self.baseline_metrics()
+        parker = metrics["parker_repair_protocol"]
+        comparisons: dict[str, dict[str, Any]] = {}
+        for baseline_name in ("one_shot_keyword_baseline",):
+            if baseline_name not in metrics:
+                continue
+            baseline = metrics[baseline_name]
+            comparisons[baseline_name] = {
+                "baseline": baseline_name,
+                "baseline_intent_recovery_accuracy": baseline["intent_recovery_accuracy"],
+                "parker_repair_protocol": parker["intent_recovery_accuracy"],
+                "delta_vs_parker": parker["intent_recovery_accuracy"] - baseline["intent_recovery_accuracy"],
+                "baseline_safety_critical_misses": baseline["safety_critical_misses"],
+                "parker_safety_critical_misses": parker["safety_critical_misses"],
+                "interpretation": (
+                    "secondary comparator only: a one-shot transcript classifier with no repair, "
+                    "confirmation, or caregiver-visible state; useful for caveating the weak no-repair baseline"
+                ),
+            }
+        return comparisons
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "eval": "degraded_input_replay_v0",
@@ -178,6 +204,7 @@ class DegradedReplayEvalResult:
             },
             "total_cases": self.total_cases,
             "pre_registered_primary_metric": self.primary_metric(),
+            "secondary_comparisons": self.secondary_comparisons(),
             "baseline_metrics": self.baseline_metrics(),
             "case_results": {
                 baseline: [row.as_dict() for row in rows]
@@ -213,6 +240,7 @@ def evaluate(cases: list[ReplayCase]) -> DegradedReplayEvalResult:
         total_cases=len(cases),
         baseline_results={
             "non_interactive_no_repair": [_run_non_interactive_no_repair(case) for case in cases],
+            "one_shot_keyword_baseline": [_run_one_shot_keyword_baseline(case) for case in cases],
             "parker_repair_protocol": [_run_parker_repair_protocol(case) for case in cases],
         },
     )
@@ -233,6 +261,44 @@ def _run_non_interactive_no_repair(case: ReplayCase) -> CaseResult:
         events=[
             {"actor": "user", "type": "degraded_input", "text": case.degraded_input},
             {"actor": "assistant", "type": "ask_repeat", "committed_action": False},
+        ],
+    )
+
+
+def _run_one_shot_keyword_baseline(case: ReplayCase) -> CaseResult:
+    """Baseline: classify the degraded transcript once, without repair or confirmation."""
+
+    action_type = _one_shot_action_type(case.degraded_input)
+    keywords_present = _keywords_present(case, case.degraded_input)
+    recovered = action_type == case.expected_action_type and keywords_present
+    failure_reason = None
+    if not recovered:
+        if action_type is None:
+            failure_reason = "one-shot keyword baseline found no explicit reminder/message cue"
+        elif action_type != case.expected_action_type:
+            failure_reason = f"one-shot action_type={action_type!r}, expected {case.expected_action_type!r}"
+        elif not keywords_present:
+            failure_reason = "one-shot classification did not preserve expected subject keywords"
+        else:
+            failure_reason = "unknown one-shot recovery failure"
+    return CaseResult(
+        case_id=case.case_id,
+        baseline="one_shot_keyword_baseline",
+        recovered_intent=recovered,
+        repair_initiated=False,
+        turns_to_resolution=1 if recovered else None,
+        action_type=action_type,
+        safety_critical_miss=False,
+        failure_reason=failure_reason,
+        events=[
+            {"actor": "user", "type": "degraded_input", "text": case.degraded_input},
+            {
+                "actor": "assistant",
+                "type": "one_shot_classification",
+                "action_type": action_type,
+                "committed_action": False,
+                "confirmed_intent": False,
+            },
         ],
     )
 
@@ -276,7 +342,7 @@ def _run_parker_repair_protocol(case: ReplayCase) -> CaseResult:
                 second.get("speech") if second else None,
             ]
         ).lower()
-        keywords_present = all(keyword in text_blob for keyword in case.subject_keywords)
+        keywords_present = _keywords_present(case, text_blob)
         recovered = (
             repair_initiated
             and (second or {}).get("kind") == "captured"
@@ -365,6 +431,22 @@ def _normalize_action_type(value: Any) -> str | None:
         return None
     raw = str(value).strip().lower()
     return ACTION_ALIASES.get(raw, raw)
+
+
+def _one_shot_action_type(text: str) -> str | None:
+    """Infer an action from explicit transcript cues only; no repair allowed."""
+
+    lowered = text.lower()
+    if any(cue in lowered for cue in ("tell ", "text ", "message ", "send ")):
+        return "family_message"
+    if "remind" in lowered or "reminder" in lowered:
+        return "reminder"
+    return None
+
+
+def _keywords_present(case: ReplayCase, text: str) -> bool:
+    lowered = text.lower()
+    return all(keyword in lowered for keyword in case.subject_keywords)
 
 
 def _failure_reason(
@@ -471,7 +553,7 @@ def format_markdown_report(result: DegradedReplayEvalResult, run_date: str) -> s
         [
             "## Grant-readiness caveat",
             "",
-            "This number is useful because it prevents pure proposal polish from masquerading as an interactivity result. It is not enough to claim real-world Parkinson's speech performance. The grant-funded version still needs real audio or consented participant data, richer degraded-input slices, a stronger non-interactive baseline, realtime latency instrumentation, and human/model grading of repair-choice quality.",
+            "This number is useful because it prevents pure proposal polish from masquerading as an interactivity result. This report also includes `one_shot_keyword_baseline` as a stronger secondary comparator, but the fixture set is still too small for real-world claims. The grant-funded version still needs real audio or consented participant data, richer degraded-input slices, stronger non-interactive baselines, realtime latency instrumentation, and human/model grading of repair-choice quality.",
             "",
         ]
     )

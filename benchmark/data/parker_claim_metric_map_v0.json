@@ -2,12 +2,13 @@
   {
     "claim_id": "claim-001-effortful-speech-repair",
     "capability": "effortful_speech_repair",
-    "proposal_claim": "Parker's interactive repair protocol can recover intended local reminder/message actions from degraded synthetic transcripts better than a non-interactive no-repair baseline.",
+    "proposal_claim": "Parker's interactive repair protocol can recover intended local reminder/message actions from degraded synthetic transcripts better than a non-interactive no-repair baseline, with a one-shot keyword baseline reported as a secondary caveat comparator.",
     "grant_criterion": "construct_validity",
     "metric_ids": [
       "intent_recovery_accuracy_delta_vs_non_interactive",
       "median_turns_to_resolution",
-      "safety_critical_misses"
+      "safety_critical_misses",
+      "secondary_one_shot_delta_vs_parker"
     ],
     "report_paths": [
       "benchmark/reports/degraded_input_replay_eval_latest.json"
@@ -30,9 +31,15 @@
         "json_path": "pre_registered_primary_metric.safety_critical_misses",
         "operator": "eq",
         "expected": 0
+      },
+      {
+        "report_path": "benchmark/reports/degraded_input_replay_eval_latest.json",
+        "json_path": "secondary_comparisons.one_shot_keyword_baseline.delta_vs_parker",
+        "operator": "gte",
+        "expected": 0.333
       }
     ],
-    "baseline": "non_interactive_no_repair",
+    "baseline": "primary: non_interactive_no_repair; secondary caveat comparator: one_shot_keyword_baseline",
     "safety_gate": "Parker repair safety-critical misses must be 0 before the metric can support any grant-facing claim.",
     "caveat": "Synthetic transcript-level smoke check only; not real Parkinson's audio, not patient evidence, and no private family data.",
     "public_private_scope": "public_synthetic_only"

@@ -45,6 +45,26 @@ def test_degraded_input_replay_primary_metric_compares_repair_against_no_repair(
     assert metrics["non_interactive_no_repair"]["median_turns_to_resolution"] is None
 
 
+def test_degraded_input_replay_reports_one_shot_keyword_baseline_as_secondary_comparator():
+    result = evaluate(load_cases(DEFAULT_CASES_PATH))
+    payload = result.as_dict()
+    metrics = payload["baseline_metrics"]
+    secondary = payload["secondary_comparisons"]["one_shot_keyword_baseline"]
+    one_shot_rows = {
+        row["case_id"]: row for row in payload["case_results"]["one_shot_keyword_baseline"]
+    }
+
+    assert metrics["one_shot_keyword_baseline"]["intent_recovery_accuracy"] == pytest.approx(2 / 3)
+    assert metrics["one_shot_keyword_baseline"]["repair_initiated_rate"] == 0.0
+    assert metrics["one_shot_keyword_baseline"]["safety_critical_misses"] == 0
+    assert secondary["baseline"] == "one_shot_keyword_baseline"
+    assert secondary["baseline_intent_recovery_accuracy"] == pytest.approx(2 / 3)
+    assert secondary["delta_vs_parker"] == pytest.approx(1 / 3)
+    assert one_shot_rows["deg-001-reminder-tomato-evening"]["recovered_intent"] is True
+    assert one_shot_rows["deg-002-family-message-physio"]["recovered_intent"] is True
+    assert one_shot_rows["deg-003-reminder-garden-call"]["recovered_intent"] is False
+
+
 def test_degraded_input_replay_cli_json_outputs_primary_metric():
     completed = subprocess.run(
         [sys.executable, str(EVALUATOR), "--json"],
