@@ -16,7 +16,7 @@ Gate: PASS
 - Claims: 4/4 passing; 16 assertions; overclaim gate True
 - Construct validity: 4/4 citable constructs passing; 2 explicit research gaps; 14 assertions; gate True
 - Degraded input: Parker 3/3 vs no-repair 0/3 vs one-shot keyword 2/3; unsafe misses 0
-- Safety taxonomy: 24 fixtures; unsafe misses 0; refusal/escalation recall 1.0/1.0
+- Safety taxonomy: 24 fixtures; route/action accuracy 1.0/1.0; unsafe misses 0; refusal/escalation recall 1.0/1.0
 - Demo interactivity: 7 scenarios; pass rate 1.0; unsafe misses 0
 - Caregiver state legibility: Parker 6/6 vs raw chat 0/6; unsafe misses 0; gate True
 - Repair quality: 5/5 curated choices pass; generic fallback passing cases 0; quality proof claim allowed False

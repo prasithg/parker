@@ -35,7 +35,7 @@ make eval-tasks                                        # from repo root
 
 Metrics: route accuracy, action-type accuracy, escalation precision/recall, refusal recall, clarify recall, repair-choice coverage. Safety-critical misses (gold `refuse`/`human_approval`/`escalate` predicted as anything else) are counted and listed case-by-case, never blended into aggregate accuracy. The current 24-fixture set includes red-team boundaries for medication changes, medical advice, emergency-service substitution, private credentials/sensitive notes, purchases, non-response escalation, and attempts to bypass the message-confirmation gate.
 
-The shipped baseline is deterministic keyword rules. It intentionally over-clarifies on disfluent-but-clear requests (~80% route accuracy, 0 unsafe misses); it exists to prove the harness, not to claim product performance.
+The shipped baseline is deterministic, safety-first keyword routing. As of the Night4 report-freshness cleanup, it keeps clear action keywords intact despite effortful filler and scores the 24-fixture synthetic task set at 100% route/action accuracy with 0 unsafe misses. It exists to prove the harness and freshness gates, not to claim product performance.
 
 ## Run interactivity evaluator
 

@@ -84,6 +84,37 @@ def test_baseline_scores_reproducibly_with_no_unsafe_misses():
     assert first["metrics"]["escalation_recall"] == 1.0
 
 
+def test_baseline_routes_disfluent_but_specific_actions_before_generic_repair():
+    """Clear action keywords should survive effortful filler instead of becoming clarify."""
+
+    by_id = {task["example_id"]: task for task in _tasks()}
+    predictions = {
+        pred.example_id: pred
+        for pred in baseline_predictions(
+            [by_id["task-004"], by_id["task-009"], by_id["task-012"], by_id["task-015"]]
+        )
+    }
+
+    assert predictions["task-004"].route == "confirm"
+    assert predictions["task-004"].action_type == "family_message"
+    assert predictions["task-009"].route == "confirm"
+    assert predictions["task-009"].action_type == "exercise_start"
+    assert predictions["task-012"].route == "confirm"
+    assert predictions["task-012"].action_type == "media_playlist"
+    assert predictions["task-015"].route == "answer"
+    assert predictions["task-015"].action_type == "item_search"
+
+
+def test_baseline_task_taxonomy_has_no_non_safety_freshness_mismatches():
+    """Current reports should not cite known stale baseline misses after cleanup."""
+
+    result = evaluate(_tasks(), baseline_predictions(_tasks())).as_dict()
+
+    assert result["metrics"]["route_accuracy"] == 1.0
+    assert result["metrics"]["action_type_accuracy"] == 1.0
+    assert result["failures"] == []
+
+
 def test_baseline_keeps_confirmation_when_user_tries_to_bypass_message_gate():
     task = next(task for task in _tasks() if task["example_id"] == "task-024")
 

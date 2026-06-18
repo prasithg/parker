@@ -290,6 +290,8 @@ def _task_taxonomy_metrics(report: dict[str, Any] | None) -> dict[str, Any]:
     if not report:
         return {
             "synthetic_cases": 0,
+            "route_accuracy": 0.0,
+            "action_type_accuracy": 0.0,
             "unsafe_miss_count": None,
             "refusal_recall": 0.0,
             "escalation_recall": 0.0,
@@ -297,6 +299,8 @@ def _task_taxonomy_metrics(report: dict[str, Any] | None) -> dict[str, Any]:
     metrics = report.get("metrics", {})
     return {
         "synthetic_cases": int(report.get("total_examples", 0)),
+        "route_accuracy": float(metrics.get("route_accuracy", 0.0)),
+        "action_type_accuracy": float(metrics.get("action_type_accuracy", 0.0)),
         "unsafe_miss_count": int(metrics.get("unsafe_miss_count", -1)),
         "refusal_recall": float(metrics.get("refusal_recall", 0.0)),
         "escalation_recall": float(metrics.get("escalation_recall", 0.0)),
@@ -621,7 +625,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Claims: {metrics['claim_metric_map']['passing_claims']}/{metrics['claim_metric_map']['total_claims']} passing; {metrics['claim_metric_map']['assertions_checked']} assertions; overclaim gate {metrics['claim_metric_map']['overclaim_gate_passed']}",
         f"- Construct validity: {metrics['construct_validity']['passing_citable_constructs']}/{metrics['construct_validity']['citable_constructs']} citable constructs passing; {metrics['construct_validity']['research_gap_constructs']} explicit research gaps; {metrics['construct_validity']['assertions_checked']} assertions; gate {metrics['construct_validity']['construct_validity_gate_passed']}",
         f"- Degraded input: Parker {metrics['degraded_input_replay']['parker_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']} vs no-repair {metrics['degraded_input_replay']['no_repair_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']} vs one-shot keyword {metrics['degraded_input_replay']['one_shot_keyword_baseline_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']}; unsafe misses {metrics['degraded_input_replay']['unsafe_miss_count']}",
-        f"- Safety taxonomy: {metrics['task_taxonomy']['synthetic_cases']} fixtures; unsafe misses {metrics['task_taxonomy']['unsafe_miss_count']}; refusal/escalation recall {metrics['task_taxonomy']['refusal_recall']}/{metrics['task_taxonomy']['escalation_recall']}",
+        f"- Safety taxonomy: {metrics['task_taxonomy']['synthetic_cases']} fixtures; route/action accuracy {metrics['task_taxonomy']['route_accuracy']}/{metrics['task_taxonomy']['action_type_accuracy']}; unsafe misses {metrics['task_taxonomy']['unsafe_miss_count']}; refusal/escalation recall {metrics['task_taxonomy']['refusal_recall']}/{metrics['task_taxonomy']['escalation_recall']}",
         f"- Demo interactivity: {metrics['demo_interactivity']['synthetic_scenarios']} scenarios; pass rate {metrics['demo_interactivity']['overall_pass_rate']}; unsafe misses {metrics['demo_interactivity']['unsafe_miss_count']}",
         f"- Caregiver state legibility: Parker {metrics['caregiver_state_legibility']['parker_review_ui_correct_tasks']}/{metrics['caregiver_state_legibility']['total_tasks']} vs raw chat {metrics['caregiver_state_legibility']['raw_chat_only_correct_tasks']}/{metrics['caregiver_state_legibility']['total_tasks']}; unsafe misses {metrics['caregiver_state_legibility']['unsafe_miss_count']}; gate {metrics['caregiver_state_legibility']['legibility_gate_passed']}",
         f"- Repair quality: {metrics['repair_quality_rubric']['reference_passing_cases']}/{metrics['repair_quality_rubric']['total_cases']} curated choices pass; generic fallback passing cases {metrics['repair_quality_rubric']['generic_fallback_passing_cases']}; quality proof claim allowed {metrics['repair_quality_rubric']['quality_proof_claim_allowed']}",

@@ -252,8 +252,10 @@
       "total_cases": 5
     },
     "task_taxonomy": {
+      "action_type_accuracy": 1.0,
       "escalation_recall": 1.0,
       "refusal_recall": 1.0,
+      "route_accuracy": 1.0,
       "synthetic_cases": 24,
       "unsafe_miss_count": 0
     }

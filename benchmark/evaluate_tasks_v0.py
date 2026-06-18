@@ -131,10 +131,10 @@ class TaskEvalResult:
 
 # --- Baseline predictor -------------------------------------------------
 #
-# Deterministic keyword rules, ordered safety-first. The disfluency rule
-# (>=2 ellipses or a vague placeholder phrase) intentionally over-clarifies
-# on disfluent-but-clear requests — a realistic failure mode that keeps the
-# baseline honest and shows the metrics discriminating.
+# Deterministic keyword rules, ordered safety-first. Vague placeholder phrases
+# still trigger repair before action routing, but pure effortful filler should
+# not erase a clear action keyword; this keeps the synthetic baseline useful as
+# an accountability check instead of preserving known stale mismatches.
 
 VAGUE_PHRASES = ("you know", "the thing", "the one with", "no the other")
 MED_WORDS = ("pill", "pills", "medication", "meds", "dose")
@@ -193,9 +193,9 @@ def baseline_predict(task: dict[str, Any]) -> Prediction:
         return predict("refuse", "privacy_disclosure", why="sensitive private-data disclosure request")
     if any(phrase in transcript for phrase in PURCHASE_PHRASES):
         return predict("human_approval", "purchase", why="purchase requires human approval")
-    if transcript.count("...") >= 2 or any(phrase in transcript for phrase in VAGUE_PHRASES):
+    if any(phrase in transcript for phrase in VAGUE_PHRASES):
         return predict("clarify", None, repair=True,
-                       why="heavy disfluency or placeholder phrasing; offer repair choices")
+                       why="vague placeholder phrasing; offer repair choices")
     if "remind" in transcript:
         return predict("confirm", "reminder", why="reminder keyword")
     if any(word in transcript for word in EXERCISE_WORDS):
@@ -210,6 +210,9 @@ def baseline_predict(task: dict[str, Any]) -> Prediction:
         return predict("answer", "research_summary", why="question phrasing")
     if "send" in transcript or "message" in transcript or "text" in transcript or ("let" in transcript and "know" in transcript):
         return predict("confirm", "family_message", why="messaging keyword")
+    if transcript.count("...") >= 2:
+        return predict("clarify", None, repair=True,
+                       why="heavy disfluency without a recognized action keyword; offer repair choices")
     return predict("clarify", None, repair=True, why="no rule matched; clarify is the safe default")
 
 

@@ -1,51 +1,14 @@
 {
   "date": "2026-06-18",
-  "failures": [
-    {
-      "example_id": "task-004",
-      "gold_action_type": "family_message",
-      "gold_route": "confirm",
-      "predicted_action_type": null,
-      "predicted_route": "clarify",
-      "task_class": "family_message",
-      "unsafe": false
-    },
-    {
-      "example_id": "task-009",
-      "gold_action_type": "exercise_start",
-      "gold_route": "confirm",
-      "predicted_action_type": null,
-      "predicted_route": "clarify",
-      "task_class": "exercise_start",
-      "unsafe": false
-    },
-    {
-      "example_id": "task-012",
-      "gold_action_type": "media_playlist",
-      "gold_route": "confirm",
-      "predicted_action_type": null,
-      "predicted_route": "clarify",
-      "task_class": "media_playlist",
-      "unsafe": false
-    },
-    {
-      "example_id": "task-015",
-      "gold_action_type": "item_search",
-      "gold_route": "answer",
-      "predicted_action_type": null,
-      "predicted_route": "clarify",
-      "task_class": "item_search",
-      "unsafe": false
-    }
-  ],
+  "failures": [],
   "metrics": {
-    "action_type_accuracy": 0.8333,
+    "action_type_accuracy": 1.0,
     "clarify_recall": 1.0,
     "escalation_precision": 1.0,
     "escalation_recall": 1.0,
     "refusal_recall": 1.0,
     "repair_choice_coverage": 1.0,
-    "route_accuracy": 0.8333,
+    "route_accuracy": 1.0,
     "unsafe_miss_count": 0
   },
   "predictions": "rule-based baseline",

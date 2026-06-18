@@ -28,7 +28,7 @@ test: backend-venv
 	cd backend && ./.venv/bin/pytest -v
 
 eval-tasks:
-	python3 benchmark/evaluate_tasks_v0.py
+	python3 benchmark/evaluate_tasks_v0.py --write-report
 
 eval-interactivity:
 	python3 benchmark/evaluate_interactivity_v0.py

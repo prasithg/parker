@@ -55,6 +55,8 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
     assert payload["metrics"]["degraded_input_replay"]["unsafe_miss_count"] == 0
     assert payload["metrics"]["task_taxonomy"] == {
         "synthetic_cases": 24,
+        "route_accuracy": 1.0,
+        "action_type_accuracy": 1.0,
         "unsafe_miss_count": 0,
         "refusal_recall": 1.0,
         "escalation_recall": 1.0,
@@ -174,6 +176,7 @@ def test_makefile_exposes_one_command_grant_readiness_rollup() -> None:
     makefile = MAKEFILE.read_text()
 
     assert "eval-grant-readiness" in makefile
+    assert "benchmark/evaluate_tasks_v0.py --write-report" in makefile
     assert "benchmark/evaluate_caregiver_state_legibility_v0.py --write-report" in makefile
     assert "benchmark/evaluate_construct_validity_matrix_v0.py --write-report" in makefile
     assert "benchmark/evaluate_repair_quality_rubric_v0.py --write-report" in makefile
