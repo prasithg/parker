@@ -138,6 +138,21 @@ class DegradedReplayEvalResult:
     total_cases: int
     baseline_results: dict[str, list[CaseResult]]
 
+    def recovered_count(self, baseline: str) -> int:
+        """Return recovered-intent count for a baseline.
+
+        Proposal-facing prose should cite these counts (for example, 3/3
+        fixtures) instead of uncaveated percentage framing. Percent fields stay
+        in JSON for machine checks, but the human report is count-scoped.
+        """
+
+        return sum(1 for row in self.baseline_results.get(baseline, []) if row.recovered_intent)
+
+    def repair_count(self, baseline: str) -> int:
+        """Return repair-initiated count for a baseline."""
+
+        return sum(1 for row in self.baseline_results.get(baseline, []) if row.repair_initiated)
+
     def baseline_metrics(self) -> dict[str, dict[str, Any]]:
         metrics: dict[str, dict[str, Any]] = {}
         for baseline, rows in self.baseline_results.items():
@@ -159,11 +174,23 @@ class DegradedReplayEvalResult:
         baseline = metrics["non_interactive_no_repair"]["intent_recovery_accuracy"]
         delta = parker - baseline
         safety_misses = metrics["parker_repair_protocol"]["safety_critical_misses"]
+        parker_recovered = self.recovered_count("parker_repair_protocol")
+        no_repair_recovered = self.recovered_count("non_interactive_no_repair")
         return {
             "name": PRIMARY_METRIC_NAME,
             "parker_repair_protocol": parker,
             "non_interactive_no_repair": baseline,
             "delta": delta,
+            "synthetic_heldout_transcript_fixtures": self.total_cases,
+            "parker_recovered_count": parker_recovered,
+            "non_interactive_no_repair_recovered_count": no_repair_recovered,
+            "delta_recovered_count": parker_recovered - no_repair_recovered,
+            "citeable_count_scoped_result": (
+                f"{self.total_cases} synthetic held-out transcript fixtures: "
+                f"Parker repair recovered {parker_recovered}/{self.total_cases} intended local actions "
+                f"vs no-repair {no_repair_recovered}/{self.total_cases}; "
+                "not real-speech/audio, patient, statistical, or clinical evidence."
+            ),
             "success_threshold_delta": PRE_REGISTERED_SUCCESS_THRESHOLD,
             "threshold_met": delta >= PRE_REGISTERED_SUCCESS_THRESHOLD and safety_misses == 0,
             "safety_critical_misses": safety_misses,
@@ -476,14 +503,15 @@ def format_summary(result: DegradedReplayEvalResult) -> str:
     payload = result.as_dict()
     primary = payload["pre_registered_primary_metric"]
     metrics = payload["baseline_metrics"]
+    total = result.total_cases
     lines = [
         "Parker degraded-input replay eval v0",
         "",
         f"Cases: {result.total_cases} synthetic held-out transcript replays",
         f"Primary metric: {primary['name']}",
-        f"  Parker repair protocol:     {primary['parker_repair_protocol']:.2%}",
-        f"  Non-interactive no-repair:  {primary['non_interactive_no_repair']:.2%}",
-        f"  Delta:                      {primary['delta']:.2%}",
+        f"  Parker repair protocol:     {primary['parker_recovered_count']}/{total} fixtures",
+        f"  Non-interactive no-repair:  {primary['non_interactive_no_repair_recovered_count']}/{total} fixtures",
+        f"  Delta:                      +{primary['delta_recovered_count']} recovered fixtures vs no-repair",
         f"  Safety-critical misses:     {primary['safety_critical_misses']}",
         f"  Threshold met:              {primary['threshold_met']}",
         "",
@@ -492,9 +520,11 @@ def format_summary(result: DegradedReplayEvalResult) -> str:
     for baseline, row in metrics.items():
         turns = row["median_turns_to_resolution"]
         turns_text = "n/a" if turns is None else str(turns)
+        recovered = result.recovered_count(baseline)
+        repairs = result.repair_count(baseline)
         lines.append(
-            f"  {baseline}: intent_recovery={row['intent_recovery_accuracy']:.2%}, "
-            f"repair_initiated={row['repair_initiated_rate']:.2%}, "
+            f"  {baseline}: intent_recovery={recovered}/{total}, "
+            f"repair_initiated={repairs}/{total}, "
             f"median_turns={turns_text}, safety_misses={row['safety_critical_misses']}"
         )
     lines.extend(
@@ -510,6 +540,7 @@ def format_markdown_report(result: DegradedReplayEvalResult, run_date: str) -> s
     payload = result.as_dict()
     primary = payload["pre_registered_primary_metric"]
     metrics = payload["baseline_metrics"]
+    total = result.total_cases
     lines = [
         "# Parker degraded-input replay eval v0",
         "",
@@ -521,10 +552,11 @@ def format_markdown_report(result: DegradedReplayEvalResult, run_date: str) -> s
         "",
         "| Metric | Value |",
         "| --- | ---: |",
-        f"| Parker repair protocol intent recovery | {primary['parker_repair_protocol']:.2%} |",
-        f"| Non-interactive no-repair intent recovery | {primary['non_interactive_no_repair']:.2%} |",
-        f"| Delta | {primary['delta']:.2%} |",
-        f"| Success threshold delta | {primary['success_threshold_delta']:.2%} |",
+        f"| Synthetic held-out transcript fixtures | {total} |",
+        f"| Parker repair protocol intent recovery | {primary['parker_recovered_count']}/{total} fixtures |",
+        f"| Non-interactive no-repair intent recovery | {primary['non_interactive_no_repair_recovered_count']}/{total} fixtures |",
+        f"| Delta | +{primary['delta_recovered_count']} recovered fixtures vs no-repair |",
+        f"| Machine threshold delta | {primary['success_threshold_delta']:.2f} ratio points |",
         f"| Safety-critical misses | {primary['safety_critical_misses']} |",
         f"| Threshold met | {primary['threshold_met']} |",
         "",
@@ -536,9 +568,11 @@ def format_markdown_report(result: DegradedReplayEvalResult, run_date: str) -> s
     for baseline, row in metrics.items():
         turns = row["median_turns_to_resolution"]
         turns_text = "n/a" if turns is None else str(turns)
+        recovered = result.recovered_count(baseline)
+        repairs = result.repair_count(baseline)
         lines.append(
-            f"| {baseline} | {row['intent_recovery_accuracy']:.2%} | "
-            f"{row['repair_initiated_rate']:.2%} | {turns_text} | {row['safety_critical_misses']} |"
+            f"| {baseline} | {recovered}/{total} fixtures | "
+            f"{repairs}/{total} fixtures | {turns_text} | {row['safety_critical_misses']} |"
         )
     lines.extend(["", "## Case breakdown", ""])
     for baseline, rows in result.baseline_results.items():

@@ -191,7 +191,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (259 tests as of 2026-06-18)
+make test            # full backend suite should pass (263 tests as of 2026-06-18)
 ```
 
 **Fastest demo** (three commands, zero config):

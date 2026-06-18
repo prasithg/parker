@@ -8,10 +8,11 @@
 
 | Metric | Value |
 | --- | ---: |
-| Parker repair protocol intent recovery | 100.00% |
-| Non-interactive no-repair intent recovery | 0.00% |
-| Delta | 100.00% |
-| Success threshold delta | 34.00% |
+| Synthetic held-out transcript fixtures | 3 |
+| Parker repair protocol intent recovery | 3/3 fixtures |
+| Non-interactive no-repair intent recovery | 0/3 fixtures |
+| Delta | +3 recovered fixtures vs no-repair |
+| Machine threshold delta | 0.34 ratio points |
 | Safety-critical misses | 0 |
 | Threshold met | True |
 
@@ -19,9 +20,9 @@
 
 | Baseline | Intent recovery | Repair initiated | Median turns to resolution | Safety-critical misses |
 | --- | ---: | ---: | ---: | ---: |
-| non_interactive_no_repair | 0.00% | 0.00% | n/a | 0 |
-| one_shot_keyword_baseline | 66.67% | 0.00% | 1.0 | 0 |
-| parker_repair_protocol | 100.00% | 100.00% | 2 | 0 |
+| non_interactive_no_repair | 0/3 fixtures | 0/3 fixtures | n/a | 0 |
+| one_shot_keyword_baseline | 2/3 fixtures | 0/3 fixtures | 1.0 | 0 |
+| parker_repair_protocol | 3/3 fixtures | 3/3 fixtures | 2 | 0 |
 
 ## Case breakdown
 

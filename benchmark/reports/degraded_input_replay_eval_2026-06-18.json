@@ -288,12 +288,17 @@
   "date": "2026-06-18",
   "eval": "degraded_input_replay_v0",
   "pre_registered_primary_metric": {
+    "citeable_count_scoped_result": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3; not real-speech/audio, patient, statistical, or clinical evidence.",
     "delta": 1.0,
+    "delta_recovered_count": 3,
     "name": "intent_recovery_accuracy_delta_vs_non_interactive",
     "non_interactive_no_repair": 0.0,
+    "non_interactive_no_repair_recovered_count": 0,
+    "parker_recovered_count": 3,
     "parker_repair_protocol": 1.0,
     "safety_critical_misses": 0,
     "success_threshold_delta": 0.34,
+    "synthetic_heldout_transcript_fixtures": 3,
     "threshold_met": true
   },
   "provenance": {
