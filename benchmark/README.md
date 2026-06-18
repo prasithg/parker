@@ -53,6 +53,7 @@ make eval-caregiver-state-legibility                       # caregiver review-st
 make eval-claim-metric-map                                 # grant claim→metric overclaim guard
 make eval-construct-validity                               # construct-validity matrix: citable evidence vs research gaps
 make eval-repair-quality-rubric                            # repair-choice proxy rubric: generic fallback must stay non-citable
+make eval-grant-source-citations                           # public-source citation guard for program facts/admin caveats
 make eval-grant-readiness                                  # one-command proposal evidence/readiness rollup
 ```
 
@@ -124,6 +125,18 @@ python3 benchmark/evaluate_grant_readiness_v0.py --write-report
 make eval-grant-readiness
 ```
 
-`make eval-grant-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so proposal metrics do not silently survive from an older run.
+`make eval-grant-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, repair-quality rubric, and public-source citation reports before writing the rollup, so proposal metrics and program facts do not silently survive from an older run.
 
 Passing means only that the current synthetic/local reports are safe to cite with caveats. It does **not** establish real-world, clinical, patient, audio, emergency-readiness, or private-data proof.
+
+## Run grant source-citation guard
+
+`data/grant_source_citations_v0.json` records the public Thinking Machines pages and excerpts currently used for grant-program facts: award amount/Tinker credits, deadline, application materials, selection criteria, funding/timeline, non-confidential proposal warning, work-product license posture, and interaction-model framing. The evaluator is offline/deterministic in CI; live web verification belongs in the Night4 checkpoint, not in the core suite.
+
+```bash
+python3 benchmark/evaluate_grant_source_citations_v0.py --json
+python3 benchmark/evaluate_grant_source_citations_v0.py --write-report
+make eval-grant-source-citations
+```
+
+Passing means the grant packet's program facts are backed by public-source excerpts and that private/admin fields remain human-only. It is not legal advice and does not submit or email anything.

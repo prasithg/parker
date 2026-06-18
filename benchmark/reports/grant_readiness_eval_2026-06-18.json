@@ -185,6 +185,7 @@
     "benchmark/reports/claim_metric_map_eval_latest.json",
     "benchmark/reports/construct_validity_matrix_eval_latest.json",
     "benchmark/reports/degraded_input_replay_eval_latest.json",
+    "benchmark/reports/grant_source_citations_eval_latest.json",
     "benchmark/reports/parker_demo_interactivity_eval_latest.json",
     "benchmark/reports/repair_quality_rubric_eval_latest.json",
     "benchmark/reports/task_taxonomy_eval_latest.json"
@@ -195,7 +196,8 @@
     "primary_decision": "Safe to cite as synthetic/local grant evidence; not safe to present as real-world or clinical proof.",
     "repair_quality_caveat": "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.",
     "required_caveat": "Synthetic transcript/local-demo evidence only; not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.",
-    "safe_claim_line": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3 and one-shot keyword 2/3, with 0 unsafe misses across the degraded-input replay."
+    "safe_claim_line": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3 and one-shot keyword 2/3, with 0 unsafe misses across the degraded-input replay.",
+    "source_citation_caveat": "Program facts are backed by public Thinking Machines pages; private/admin fields still require Pras and were not inferred."
   },
   "metrics": {
     "caregiver_state_legibility": {
@@ -244,6 +246,17 @@
       "synthetic_scenarios": 7,
       "unsafe_miss_count": 0
     },
+    "grant_source_citations": {
+      "citation_gate_passed": true,
+      "proposal_requirements_count": 5,
+      "public_web_sources": 4,
+      "required_fact_coverage": 1.0,
+      "required_facts_covered": 11,
+      "selection_criteria_count": 4,
+      "terms_risk_facts": 3,
+      "total_facts": 11,
+      "total_sources": 4
+    },
     "repair_quality_rubric": {
       "generic_fallback_passing_cases": 0,
       "quality_proof_claim_allowed": false,
@@ -278,6 +291,7 @@
       "construct_validity": "2026-06-18",
       "degraded_input_replay": "2026-06-18",
       "demo_interactivity": "2026-06-18",
+      "grant_source_citations": "2026-06-18",
       "repair_quality_rubric": "2026-06-18",
       "task_taxonomy": "2026-06-18"
     },

@@ -10,6 +10,7 @@ Gate: PASS
 - Required caveat: Synthetic transcript/local-demo evidence only; not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.
 - Repair-quality caveat: Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.
 - Caregiver-legibility caveat: Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains a grant-funded research gap.
+- Source-citation caveat: Program facts are backed by public Thinking Machines pages; private/admin fields still require Pras and were not inferred.
 
 ## Metrics
 
@@ -20,6 +21,7 @@ Gate: PASS
 - Demo interactivity: 7 scenarios; pass rate 1.0; unsafe misses 0
 - Caregiver state legibility: Parker 6/6 vs raw chat 0/6; unsafe misses 0; gate True
 - Repair quality: 5/5 curated choices pass; generic fallback passing cases 0; quality proof claim allowed False
+- Grant source citations: 11/11 required facts covered across 4 public sources; citation gate True
 - Source report freshness: PASS for expected date 2026-06-18
 
 ## Claim cards

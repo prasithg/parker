@@ -45,6 +45,7 @@ REQUIRED_REPORTS: dict[str, Path] = {
     "claim_metric_map": DEFAULT_REPORTS_DIR / "claim_metric_map_eval_latest.json",
     "construct_validity": DEFAULT_REPORTS_DIR / "construct_validity_matrix_eval_latest.json",
     "repair_quality_rubric": DEFAULT_REPORTS_DIR / "repair_quality_rubric_eval_latest.json",
+    "grant_source_citations": DEFAULT_REPORTS_DIR / "grant_source_citations_eval_latest.json",
 }
 
 
@@ -114,6 +115,7 @@ def evaluate_grant_readiness(
             reports.get("caregiver_state_legibility")
         ),
         "repair_quality_rubric": _repair_quality_rubric_metrics(reports.get("repair_quality_rubric")),
+        "grant_source_citations": _grant_source_citation_metrics(reports.get("grant_source_citations")),
     }
 
     source_report_freshness = _source_report_freshness(reports, paths)
@@ -371,6 +373,33 @@ def _repair_quality_rubric_metrics(report: dict[str, Any] | None) -> dict[str, A
     }
 
 
+def _grant_source_citation_metrics(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not report:
+        return {
+            "total_sources": 0,
+            "public_web_sources": 0,
+            "total_facts": 0,
+            "required_facts_covered": 0,
+            "required_fact_coverage": 0.0,
+            "proposal_requirements_count": 0,
+            "selection_criteria_count": 0,
+            "terms_risk_facts": 0,
+            "citation_gate_passed": False,
+        }
+    metrics = report.get("metrics", {})
+    return {
+        "total_sources": int(metrics.get("total_sources", 0)),
+        "public_web_sources": int(metrics.get("public_web_sources", 0)),
+        "total_facts": int(metrics.get("total_facts", 0)),
+        "required_facts_covered": int(metrics.get("required_facts_covered", 0)),
+        "required_fact_coverage": float(metrics.get("required_fact_coverage", 0.0)),
+        "proposal_requirements_count": int(metrics.get("proposal_requirements_count", 0)),
+        "selection_criteria_count": int(metrics.get("selection_criteria_count", 0)),
+        "terms_risk_facts": int(metrics.get("terms_risk_facts", 0)),
+        "citation_gate_passed": bool(report.get("citation_gate", {}).get("passed", False)),
+    }
+
+
 def _recovered_count(report: dict[str, Any], baseline: str) -> int:
     case_results = report.get("case_results", {}).get(baseline, [])
     if isinstance(case_results, list):
@@ -476,6 +505,25 @@ def _gate_failures(claim_eval_payload: dict[str, Any] | None, metrics: dict[str,
                 "message": "repair-quality rubric must pass curated synthetic choices while flagging generic fallback as non-citable quality evidence",
             }
         )
+
+    source_citations = metrics["grant_source_citations"]
+    if (
+        source_citations["total_sources"] < 4
+        or source_citations["public_web_sources"] < source_citations["total_sources"]
+        or source_citations["total_facts"] < 11
+        or source_citations["required_facts_covered"] < 11
+        or source_citations["required_fact_coverage"] < 1.0
+        or source_citations["proposal_requirements_count"] < 5
+        or source_citations["selection_criteria_count"] < 4
+        or source_citations["terms_risk_facts"] < 3
+        or source_citations["citation_gate_passed"] is not True
+    ):
+        failures.append(
+            {
+                "check": "grant_source_citation_gate",
+                "message": "grant source citations must cover public program facts, required materials, criteria, and terms-risk caveats with no private/admin inference",
+            }
+        )
     return failures
 
 
@@ -568,6 +616,7 @@ def _grant_summary(metrics: dict[str, Any]) -> dict[str, str]:
         "required_caveat": "Synthetic transcript/local-demo evidence only; not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.",
         "repair_quality_caveat": "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.",
         "caregiver_legibility_caveat": "Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains a grant-funded research gap.",
+        "source_citation_caveat": "Program facts are backed by public Thinking Machines pages; private/admin fields still require Pras and were not inferred.",
         "next_action": "Use this rollup as the grant packet's final evidence checklist; keep the individual reports attached for auditability.",
     }
 
@@ -619,6 +668,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Required caveat: {summary['required_caveat']}",
         f"- Repair-quality caveat: {summary['repair_quality_caveat']}",
         f"- Caregiver-legibility caveat: {summary['caregiver_legibility_caveat']}",
+        f"- Source-citation caveat: {summary['source_citation_caveat']}",
         "",
         "## Metrics",
         "",
@@ -629,6 +679,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Demo interactivity: {metrics['demo_interactivity']['synthetic_scenarios']} scenarios; pass rate {metrics['demo_interactivity']['overall_pass_rate']}; unsafe misses {metrics['demo_interactivity']['unsafe_miss_count']}",
         f"- Caregiver state legibility: Parker {metrics['caregiver_state_legibility']['parker_review_ui_correct_tasks']}/{metrics['caregiver_state_legibility']['total_tasks']} vs raw chat {metrics['caregiver_state_legibility']['raw_chat_only_correct_tasks']}/{metrics['caregiver_state_legibility']['total_tasks']}; unsafe misses {metrics['caregiver_state_legibility']['unsafe_miss_count']}; gate {metrics['caregiver_state_legibility']['legibility_gate_passed']}",
         f"- Repair quality: {metrics['repair_quality_rubric']['reference_passing_cases']}/{metrics['repair_quality_rubric']['total_cases']} curated choices pass; generic fallback passing cases {metrics['repair_quality_rubric']['generic_fallback_passing_cases']}; quality proof claim allowed {metrics['repair_quality_rubric']['quality_proof_claim_allowed']}",
+        f"- Grant source citations: {metrics['grant_source_citations']['required_facts_covered']}/11 required facts covered across {metrics['grant_source_citations']['public_web_sources']} public sources; citation gate {metrics['grant_source_citations']['citation_gate_passed']}",
         f"- Source report freshness: {'PASS' if freshness['all_current'] else 'FAIL'} for expected date {freshness['expected_date']}",
         "",
         "## Claim cards",

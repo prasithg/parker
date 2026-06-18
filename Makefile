@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-grant-source-citations eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -65,10 +65,15 @@ eval-construct-validity:
 eval-repair-quality-rubric:
 	python3 benchmark/evaluate_repair_quality_rubric_v0.py --write-report
 
+# Public-source citation guard: keeps grant program facts grounded in public
+# Thinking Machines pages and separate from private/admin fields.
+eval-grant-source-citations:
+	python3 benchmark/evaluate_grant_source_citations_v0.py --write-report
+
 # Grant readiness rollup: one mobile-friendly evidence gate above the individual
 # synthetic/local evals. This refreshes every source report first so stale
 # proposal metrics fail closed instead of surviving from an older run.
-eval-grant-readiness: eval-tasks eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric
+eval-grant-readiness: eval-tasks eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-grant-source-citations
 	python3 benchmark/evaluate_grant_readiness_v0.py --write-report
 
 # Repair-choice quality eval: runs effortful-speech fixtures through the real

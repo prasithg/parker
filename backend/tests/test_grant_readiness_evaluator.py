@@ -84,8 +84,20 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "unsafe_miss_count": 0,
         "legibility_gate_passed": True,
     }
+    assert payload["metrics"]["grant_source_citations"] == {
+        "total_sources": 4,
+        "public_web_sources": 4,
+        "total_facts": 11,
+        "required_facts_covered": 11,
+        "required_fact_coverage": 1.0,
+        "proposal_requirements_count": 5,
+        "selection_criteria_count": 4,
+        "terms_risk_facts": 3,
+        "citation_gate_passed": True,
+    }
     assert payload["grant_summary"]["repair_quality_caveat"] == "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap."
     assert payload["grant_summary"]["caregiver_legibility_caveat"] == "Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains a grant-funded research gap."
+    assert payload["grant_summary"]["source_citation_caveat"] == "Program facts are backed by public Thinking Machines pages; private/admin fields still require Pras and were not inferred."
 
     freshness = payload["source_report_freshness"]
     assert freshness["expected_date"] == date.today().isoformat()
@@ -104,6 +116,7 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
         "benchmark/reports/construct_validity_matrix_eval_latest.json",
         "benchmark/reports/repair_quality_rubric_eval_latest.json",
         "benchmark/reports/caregiver_state_legibility_eval_latest.json",
+        "benchmark/reports/grant_source_citations_eval_latest.json",
     }.issubset(set(payload["evidence_paths_checked"]))
 
     safe_claim = payload["grant_summary"]["safe_claim_line"]
@@ -180,6 +193,7 @@ def test_makefile_exposes_one_command_grant_readiness_rollup() -> None:
     assert "benchmark/evaluate_caregiver_state_legibility_v0.py --write-report" in makefile
     assert "benchmark/evaluate_construct_validity_matrix_v0.py --write-report" in makefile
     assert "benchmark/evaluate_repair_quality_rubric_v0.py --write-report" in makefile
+    assert "benchmark/evaluate_grant_source_citations_v0.py --write-report" in makefile
     assert "benchmark/evaluate_grant_readiness_v0.py --write-report" in makefile
 
 
@@ -195,5 +209,6 @@ def test_makefile_grant_readiness_refreshes_every_source_report_before_rollup() 
         "eval-claim-metric-map",
         "eval-construct-validity",
         "eval-repair-quality-rubric",
+        "eval-grant-source-citations",
     ]:
         assert dependency in target_line
