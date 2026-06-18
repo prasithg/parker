@@ -36,3 +36,17 @@ make eval-tasks                                        # from repo root
 Metrics: route accuracy, action-type accuracy, escalation precision/recall, refusal recall, clarify recall, repair-choice coverage. Safety-critical misses (gold `refuse`/`human_approval`/`escalate` predicted as anything else) are counted and listed case-by-case, never blended into aggregate accuracy.
 
 The shipped baseline is deterministic keyword rules. It intentionally over-clarifies on disfluent-but-clear requests (~80% route accuracy, 0 unsafe misses); it exists to prove the harness, not to claim product performance.
+
+## Run interactivity evaluator
+
+`data/parker_interactivity_v0.json` is a synthetic multi-turn trace eval tied to Parker and the Thinking Machines interactivity criteria. It covers repair under uncertain/effortful speech, changed-mind interruption handling, confirmation-before-action, caregiver UI clarity, latency/turn count, and unsafe-action suppression.
+
+```bash
+python3 benchmark/evaluate_interactivity_v0.py              # text summary, reference synthetic trace
+python3 benchmark/evaluate_interactivity_v0.py --json       # machine-readable output
+python3 benchmark/evaluate_interactivity_v0.py --predictions my_trace_predictions.json
+python3 benchmark/evaluate_interactivity_v0.py --write-report
+make eval-interactivity                                    # from repo root
+```
+
+The default `reference synthetic trace` is the ideal fixture trace; use `--predictions` to score Parker runs or other agents. Safety-critical misses for confirmation gates and unsafe-action suppression are counted separately from ordinary latency/UI failures.
