@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -75,6 +76,13 @@ def test_grant_readiness_rollup_summarizes_actionable_proposal_evidence() -> Non
     }
     assert payload["grant_summary"]["repair_quality_caveat"] == "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap."
 
+    freshness = payload["source_report_freshness"]
+    assert freshness["expected_date"] == date.today().isoformat()
+    assert freshness["all_current"] is True
+    assert freshness["stale_reports"] == []
+    assert set(freshness["report_dates"]) == set(REQUIRED_REPORTS)
+    assert all(report_date == date.today().isoformat() for report_date in freshness["report_dates"].values())
+
     assert len(payload["claim_cards"]) == 4
     assert all(card["status"] == "pass" for card in payload["claim_cards"])
     assert {
@@ -109,6 +117,36 @@ def test_grant_readiness_fails_closed_when_required_report_is_missing(tmp_path: 
     )
 
 
+def test_grant_readiness_fails_closed_when_source_report_date_is_stale(tmp_path: Path) -> None:
+    report_paths: dict[str, Path] = {}
+    for report_name, source_path in REQUIRED_REPORTS.items():
+        copied_path = tmp_path / f"{report_name}.json"
+        copied_path.write_text(source_path.read_text())
+        report_paths[report_name] = copied_path
+
+    stale_report = json.loads(report_paths["task_taxonomy"].read_text())
+    stale_report["date"] = "1999-01-01"
+    report_paths["task_taxonomy"].write_text(json.dumps(stale_report))
+
+    payload = evaluate_grant_readiness(report_paths=report_paths).as_dict()
+
+    assert payload["readiness_gate"]["passed"] is False
+    assert payload["source_report_freshness"]["all_current"] is False
+    assert payload["source_report_freshness"]["stale_reports"] == [
+        {
+            "report": "task_taxonomy",
+            "path": str(report_paths["task_taxonomy"]),
+            "date": "1999-01-01",
+            "expected_date": date.today().isoformat(),
+        }
+    ]
+    assert any(
+        failure["check"] == "source_report_freshness"
+        and "task_taxonomy" in failure["message"]
+        for failure in payload["readiness_gate"]["blocking_failures"]
+    )
+
+
 def test_grant_readiness_cli_json_outputs_mobile_briefing_fields() -> None:
     completed = subprocess.run(
         [sys.executable, str(EVALUATOR), "--json"],
@@ -129,3 +167,18 @@ def test_makefile_exposes_one_command_grant_readiness_rollup() -> None:
     assert "benchmark/evaluate_construct_validity_matrix_v0.py --write-report" in makefile
     assert "benchmark/evaluate_repair_quality_rubric_v0.py --write-report" in makefile
     assert "benchmark/evaluate_grant_readiness_v0.py --write-report" in makefile
+
+
+def test_makefile_grant_readiness_refreshes_every_source_report_before_rollup() -> None:
+    makefile = MAKEFILE.read_text()
+    target_line = next(line for line in makefile.splitlines() if line.startswith("eval-grant-readiness:"))
+
+    for dependency in [
+        "eval-tasks",
+        "eval-demo-interactivity",
+        "eval-degraded-input-replay",
+        "eval-claim-metric-map",
+        "eval-construct-validity",
+        "eval-repair-quality-rubric",
+    ]:
+        assert dependency in target_line

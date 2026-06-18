@@ -112,6 +112,19 @@ def evaluate_grant_readiness(
         "repair_quality_rubric": _repair_quality_rubric_metrics(reports.get("repair_quality_rubric")),
     }
 
+    source_report_freshness = _source_report_freshness(reports, paths)
+    if not source_report_freshness["all_current"]:
+        stale_names = ", ".join(row["report"] for row in source_report_freshness["stale_reports"])
+        blocking_failures.append(
+            {
+                "check": "source_report_freshness",
+                "message": (
+                    f"required source reports must be generated for {source_report_freshness['expected_date']}; "
+                    f"stale or missing dates: {stale_names}"
+                ),
+            }
+        )
+
     blocking_failures.extend(_gate_failures(claim_eval_payload, metrics))
 
     evidence_paths = _evidence_paths(
@@ -135,6 +148,7 @@ def evaluate_grant_readiness(
         },
         "grant_summary": _grant_summary(metrics),
         "metrics": metrics,
+        "source_report_freshness": source_report_freshness,
         "claim_cards": _claim_cards(claim_eval_payload),
         "construct_validity_cards": _construct_validity_cards(construct_eval_payload),
         "evidence_paths_checked": evidence_paths,
@@ -152,6 +166,43 @@ def _load_json_report(report_name: str, path: Path) -> tuple[dict[str, Any], dic
     if not isinstance(payload, dict):
         return {}, {"check": f"{report_name}_report", "message": f"required report is not a JSON object: {path}"}
     return payload, None
+
+
+def _source_report_freshness(reports: dict[str, dict[str, Any]], paths: dict[str, Path]) -> dict[str, Any]:
+    """Summarize whether required source reports were generated today.
+
+    The grant packet's headline metrics are only safe to cite when the source
+    reports feeding the rollup are current. This intentionally checks the
+    report payload date, not filesystem mtime, so copied reports retain their
+    evidence date and stale JSON fixtures fail closed in CI/tests.
+    """
+
+    expected_date = date.today().isoformat()
+    report_dates: dict[str, str | None] = {}
+    stale_reports: list[dict[str, Any]] = []
+
+    for report_name in sorted(paths):
+        if report_name not in reports:
+            continue
+        raw_report_date = reports[report_name].get("date")
+        report_date = raw_report_date if isinstance(raw_report_date, str) else None
+        report_dates[report_name] = report_date
+        if report_date != expected_date:
+            stale_reports.append(
+                {
+                    "report": report_name,
+                    "path": _repo_relative(Path(paths[report_name])),
+                    "date": report_date,
+                    "expected_date": expected_date,
+                }
+            )
+
+    return {
+        "expected_date": expected_date,
+        "all_current": not stale_reports,
+        "report_dates": report_dates,
+        "stale_reports": stale_reports,
+    }
 
 
 def _claim_metric_metrics(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -506,6 +557,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
     gate = payload["readiness_gate"]
     summary = payload["grant_summary"]
     metrics = payload["metrics"]
+    freshness = payload["source_report_freshness"]
     lines = [
         "# Parker grant-readiness rollup",
         "",
@@ -526,6 +578,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Degraded input: Parker {metrics['degraded_input_replay']['parker_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']} vs no-repair {metrics['degraded_input_replay']['no_repair_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']} vs one-shot keyword {metrics['degraded_input_replay']['one_shot_keyword_baseline_recovered']}/{metrics['degraded_input_replay']['synthetic_cases']}; unsafe misses {metrics['degraded_input_replay']['unsafe_miss_count']}",
         f"- Safety taxonomy: {metrics['task_taxonomy']['synthetic_cases']} fixtures; unsafe misses {metrics['task_taxonomy']['unsafe_miss_count']}; refusal/escalation recall {metrics['task_taxonomy']['refusal_recall']}/{metrics['task_taxonomy']['escalation_recall']}",
         f"- Demo interactivity: {metrics['demo_interactivity']['synthetic_scenarios']} scenarios; pass rate {metrics['demo_interactivity']['overall_pass_rate']}; unsafe misses {metrics['demo_interactivity']['unsafe_miss_count']}",
+        f"- Repair quality: {metrics['repair_quality_rubric']['reference_passing_cases']}/{metrics['repair_quality_rubric']['total_cases']} curated choices pass; generic fallback passing cases {metrics['repair_quality_rubric']['generic_fallback_passing_cases']}; quality proof claim allowed {metrics['repair_quality_rubric']['quality_proof_claim_allowed']}",
+        f"- Source report freshness: {'PASS' if freshness['all_current'] else 'FAIL'} for expected date {freshness['expected_date']}",
         "",
         "## Claim cards",
         "",

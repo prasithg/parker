@@ -252,5 +252,18 @@
   "readiness_gate": {
     "blocking_failures": [],
     "passed": true
+  },
+  "source_report_freshness": {
+    "all_current": true,
+    "expected_date": "2026-06-18",
+    "report_dates": {
+      "claim_metric_map": "2026-06-18",
+      "construct_validity": "2026-06-18",
+      "degraded_input_replay": "2026-06-18",
+      "demo_interactivity": "2026-06-18",
+      "repair_quality_rubric": "2026-06-18",
+      "task_taxonomy": "2026-06-18"
+    },
+    "stale_reports": []
   }
 }

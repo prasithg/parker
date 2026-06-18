@@ -51,6 +51,7 @@ make eval-demo-interactivity                               # Parker-generated lo
 make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair + one-shot baselines
 make eval-claim-metric-map                                 # grant claim→metric overclaim guard
 make eval-construct-validity                               # construct-validity matrix: citable evidence vs research gaps
+make eval-repair-quality-rubric                            # repair-choice proxy rubric: generic fallback must stay non-citable
 make eval-grant-readiness                                  # one-command proposal evidence/readiness rollup
 ```
 
@@ -102,12 +103,14 @@ The evaluator currently reports 6 constructs: 4 citable with caveats, 2 explicit
 
 ## Run grant-readiness rollup
 
-`benchmark/evaluate_grant_readiness_v0.py` is the one-command briefing layer above the individual grant evals. It fails closed on missing/malformed required reports, re-runs the claim→metric overclaim guard and construct-validity matrix guard, and emits the exact safe claim line plus required caveat Pras can carry into the grant packet.
+`benchmark/evaluate_grant_readiness_v0.py` is the one-command briefing layer above the individual grant evals. It fails closed on missing/malformed required reports, stale source-report dates, re-runs the claim→metric overclaim guard and construct-validity matrix guard, and emits the exact safe claim line plus required caveat Pras can carry into the grant packet.
 
 ```bash
 python3 benchmark/evaluate_grant_readiness_v0.py --json
 python3 benchmark/evaluate_grant_readiness_v0.py --write-report
 make eval-grant-readiness
 ```
+
+`make eval-grant-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so proposal metrics do not silently survive from an older run.
 
 Passing means only that the current synthetic/local reports are safe to cite with caveats. It does **not** establish real-world, clinical, patient, audio, emergency-readiness, or private-data proof.

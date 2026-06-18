@@ -17,6 +17,8 @@ Gate: PASS
 - Degraded input: Parker 3/3 vs no-repair 0/3 vs one-shot keyword 2/3; unsafe misses 0
 - Safety taxonomy: 24 fixtures; unsafe misses 0; refusal/escalation recall 1.0/1.0
 - Demo interactivity: 7 scenarios; pass rate 1.0; unsafe misses 0
+- Repair quality: 5/5 curated choices pass; generic fallback passing cases 0; quality proof claim allowed False
+- Source report freshness: PASS for expected date 2026-06-18
 
 ## Claim cards
 

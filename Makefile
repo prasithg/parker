@@ -60,9 +60,9 @@ eval-repair-quality-rubric:
 	python3 benchmark/evaluate_repair_quality_rubric_v0.py --write-report
 
 # Grant readiness rollup: one mobile-friendly evidence gate above the individual
-# synthetic/local evals. This does not create new claims; it summarizes whether
-# current reports are safe to cite with caveats.
-eval-grant-readiness: eval-construct-validity eval-repair-quality-rubric
+# synthetic/local evals. This refreshes every source report first so stale
+# proposal metrics fail closed instead of surviving from an older run.
+eval-grant-readiness: eval-tasks eval-demo-interactivity eval-degraded-input-replay eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric
 	python3 benchmark/evaluate_grant_readiness_v0.py --write-report
 
 # Repair-choice quality eval: runs effortful-speech fixtures through the real
