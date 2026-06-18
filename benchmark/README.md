@@ -50,6 +50,7 @@ make eval-interactivity                                    # from repo root, ref
 make eval-demo-interactivity                               # Parker-generated local demo trace
 make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair + one-shot baselines
 make eval-claim-metric-map                                 # grant claim→metric overclaim guard
+make eval-grant-readiness                                  # one-command proposal evidence/readiness rollup
 ```
 
 The default `reference synthetic trace` is the ideal fixture trace; use `--predictions` to score Parker runs or other agents. Safety-critical misses for confirmation gates, local outbox reversibility, and unsafe-action suppression are counted separately from ordinary latency/UI failures.
@@ -85,3 +86,15 @@ make eval-claim-metric-map
 ```
 
 The evaluator currently checks four proposal-critical claims: effortful-speech repair, confirmation/local outbox reversibility, safety red-team boundaries, and caregiver state legibility. A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
+
+## Run grant-readiness rollup
+
+`benchmark/evaluate_grant_readiness_v0.py` is the one-command briefing layer above the individual grant evals. It fails closed on missing/malformed required reports, re-runs the claim→metric overclaim guard, and emits the exact safe claim line plus required caveat Pras can carry into the grant packet.
+
+```bash
+python3 benchmark/evaluate_grant_readiness_v0.py --json
+python3 benchmark/evaluate_grant_readiness_v0.py --write-report
+make eval-grant-readiness
+```
+
+Passing means only that the current synthetic/local reports are safe to cite with caveats. It does **not** establish real-world, clinical, patient, audio, emergency-readiness, or private-data proof.

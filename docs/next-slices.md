@@ -235,6 +235,14 @@ TDD/verification: RED observed first on `backend/tests/test_degraded_input_repla
 
 ## Night4 expansion workbench — PR CI gate for grant evidence
 
-Shipped: GitHub Actions CI for PR #1 via `.github/workflows/parker-ci.yml`, with a repo-policy regression test in `backend/tests/test_ci_workflow.py`. The workflow runs the same personal-safe local gates the grant packet cites: `make test`, `make eval-tasks`, `make eval-interactivity`, `make eval-demo-interactivity`, `make eval-degraded-input-replay`, and `make eval-claim-metric-map`. It uses Python 3.11, does not require `ANTHROPIC_API_KEY`, and deliberately skips any live sends, purchases, grant submission, or private-data access.
+Shipped: GitHub Actions CI for PR #1 via `.github/workflows/parker-ci.yml`, with a repo-policy regression test in `backend/tests/test_ci_workflow.py`. The workflow runs the same personal-safe local gates the grant packet cites: `make test`, `make eval-tasks`, `make eval-interactivity`, `make eval-demo-interactivity`, `make eval-degraded-input-replay`, `make eval-claim-metric-map`, and `make eval-grant-readiness`. It uses Python 3.11, does not require `ANTHROPIC_API_KEY`, and deliberately skips any live sends, purchases, grant submission, or private-data access.
 
 TDD/verification: RED observed first on `backend/tests/test_ci_workflow.py::test_pr_ci_workflow_runs_backend_tests_and_grant_evals` with `AssertionError: Parker PR CI workflow is missing`; GREEN after the workflow landed. Full `make test` reports 259 passed / 2 warnings. The next remote proof is GitHub's check run on the pushed branch; until it completes, local tests/evals remain the authoritative verification.
+
+## Night4 parallel cleanup — grant-readiness rollup
+
+Shipped: `benchmark/evaluate_grant_readiness_v0.py`, `backend/tests/test_grant_readiness_evaluator.py`, `make eval-grant-readiness`, CI coverage for the new target, and JSON/Markdown reports under `benchmark/reports/grant_readiness_eval_latest.*`. The rollup is the proposal-facing skim layer above the individual evals: it fails closed on missing/malformed reports, re-runs the claim→metric overclaim gate, summarizes the four passing claim cards, and emits the exact safe claim line plus required caveat for Pras to carry into the grant packet.
+
+Current rollup result: PASS. Safe claim line: 3 synthetic held-out transcript fixtures; Parker repair recovered 3/3 intended local actions vs no-repair 0/3 and one-shot keyword 2/3, with 0 unsafe misses. Required caveat: synthetic transcript/local-demo evidence only — not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.
+
+TDD/verification: RED observed first as `ModuleNotFoundError: No module named 'benchmark.evaluate_grant_readiness_v0'`, then GREEN after the evaluator landed. A second RED/green pass required Makefile/CI exposure. Full `make test` reports 263 passed / 2 warnings; `make eval-grant-readiness` writes the latest/datestamped rollup reports.

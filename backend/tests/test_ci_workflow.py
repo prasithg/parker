@@ -20,6 +20,7 @@ def test_pr_ci_workflow_runs_backend_tests_and_grant_evals() -> None:
         "make eval-demo-interactivity",
         "make eval-degraded-input-replay",
         "make eval-claim-metric-map",
+        "make eval-grant-readiness",
     ]
     for command in required_commands:
         assert command in workflow_text
