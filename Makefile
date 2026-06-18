@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-claim-metric-map eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -43,6 +43,11 @@ eval-demo-interactivity: backend-venv
 # effortful-speech transcript fixtures.
 eval-degraded-input-replay: backend-venv
 	$(BACKEND_PYTHON) benchmark/evaluate_degraded_input_replay_v0.py --write-report
+
+# Grant overclaim guard: every proposal-facing claim must point at emitted
+# metric evidence, a baseline, a safety gate, and a caveat.
+eval-claim-metric-map:
+	python3 benchmark/evaluate_claim_metric_map_v0.py --write-report
 
 # Repair-choice quality eval: runs effortful-speech fixtures through the real
 # Claude haiku model and prints candidates for human review. Requires

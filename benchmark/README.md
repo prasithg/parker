@@ -49,6 +49,7 @@ python3 benchmark/evaluate_interactivity_v0.py --write-report
 make eval-interactivity                                    # from repo root, reference trace
 make eval-demo-interactivity                               # Parker-generated local demo trace
 make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair baseline
+make eval-claim-metric-map                                 # grant claim→metric overclaim guard
 ```
 
 The default `reference synthetic trace` is the ideal fixture trace; use `--predictions` to score Parker runs or other agents. Safety-critical misses for confirmation gates, local outbox reversibility, and unsafe-action suppression are counted separately from ordinary latency/UI failures.
@@ -71,3 +72,15 @@ It compares two baselines on the same cases:
 - `parker_repair_protocol`: current deterministic Parker `TextSession` repair-choice path with a one-number user repair selection.
 
 This is **not** real Parkinson's audio evidence and should not be overclaimed. It exists to keep the proposal honest: no “Parker improves interactivity” sentence should survive unless it maps to an emitted metric, a baseline, and a caveat.
+
+## Run claim→metric map evaluator
+
+`data/parker_claim_metric_map_v0.json` binds the current grant-facing Parker claims to concrete report paths, metric IDs, baselines, safety gates, and caveats. It is a proposal overclaim guard, not a new performance claim.
+
+```bash
+python3 benchmark/evaluate_claim_metric_map_v0.py --json
+python3 benchmark/evaluate_claim_metric_map_v0.py --write-report
+make eval-claim-metric-map
+```
+
+The evaluator currently checks four proposal-critical claims: effortful-speech repair, confirmation/local outbox reversibility, safety red-team boundaries, and caregiver state legibility. A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
