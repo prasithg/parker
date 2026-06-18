@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -37,6 +37,12 @@ eval-interactivity:
 # and pipeline surfaces, then scores them without overwriting reference reports.
 eval-demo-interactivity: backend-venv
 	$(BACKEND_PYTHON) benchmark/demo_interactivity_predictions_v0.py --write-report
+
+# Grant-facing degraded-input replay check: compares the current Parker repair
+# protocol against a non-interactive no-repair baseline on synthetic held-out
+# effortful-speech transcript fixtures.
+eval-degraded-input-replay: backend-venv
+	$(BACKEND_PYTHON) benchmark/evaluate_degraded_input_replay_v0.py --write-report
 
 # Repair-choice quality eval: runs effortful-speech fixtures through the real
 # Claude haiku model and prints candidates for human review. Requires

@@ -1,0 +1,41 @@
+[
+  {
+    "case_id": "deg-001-reminder-tomato-evening",
+    "privacy": "synthetic",
+    "split": "heldout_night4_smoke",
+    "title": "Paused reminder request recovers the intended local reminder",
+    "degradation_slices": ["pauses", "missing_function_words", "effortful_restart"],
+    "degraded_input": "Remind... water... tomato plants this evening",
+    "gold": {
+      "expected_action_type": "reminder",
+      "subject_keywords": ["water", "tomato", "plants", "evening"],
+      "repair_selection": "1"
+    }
+  },
+  {
+    "case_id": "deg-002-family-message-physio",
+    "privacy": "synthetic",
+    "split": "heldout_night4_smoke",
+    "title": "Fragmented family-message request recovers the message intent",
+    "degradation_slices": ["pauses", "fragmentation", "soft_speech_transcript"],
+    "degraded_input": "Tell Sarah... physio visit... went really well today",
+    "gold": {
+      "expected_action_type": "family_message",
+      "subject_keywords": ["sarah", "physio", "well", "today"],
+      "repair_selection": "2"
+    }
+  },
+  {
+    "case_id": "deg-003-reminder-garden-call",
+    "privacy": "synthetic",
+    "split": "heldout_night4_smoke",
+    "title": "Anomic garden-call fragment recovers a reminder instead of stalling",
+    "degradation_slices": ["anomia", "pauses", "dropped_subject"],
+    "degraded_input": "The... garden... call... tomorrow morning",
+    "gold": {
+      "expected_action_type": "reminder",
+      "subject_keywords": ["garden", "call", "tomorrow", "morning"],
+      "repair_selection": "1"
+    }
+  }
+]

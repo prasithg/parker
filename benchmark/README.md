@@ -48,8 +48,26 @@ python3 benchmark/evaluate_interactivity_v0.py --predictions my_trace_prediction
 python3 benchmark/evaluate_interactivity_v0.py --write-report
 make eval-interactivity                                    # from repo root, reference trace
 make eval-demo-interactivity                               # Parker-generated local demo trace
+make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair baseline
 ```
 
 The default `reference synthetic trace` is the ideal fixture trace; use `--predictions` to score Parker runs or other agents. Safety-critical misses for confirmation gates and unsafe-action suppression are counted separately from ordinary latency/UI failures.
 
 `benchmark/demo_interactivity_predictions_v0.py` generates a current-product trace from Parker's deterministic local surfaces (repair tool, `TextSession`, capture/resolve/stage/confirm/execute pipeline, demo seed, caregiver review feed) and writes `benchmark/reports/parker_demo_interactivity_predictions_latest.json` plus demo-specific eval reports. As of the 2026-06-18 Night4 pass, this Parker-generated trace scores 83.33% with 0 unsafe misses and one intentional/current-product failure: conversational changed-mind cancellation is not implemented in `TextSession` yet, although cancellation exists in the review pipeline/UI.
+
+## Run degraded-input replay evaluator
+
+`data/degraded_input_replay_v0.json` is the Night4 Claw/adversarial-review smoke check for the grant pitch: one pre-registered quantitative interaction metric, `intent_recovery_accuracy_delta_vs_non_interactive`, on synthetic held-out degraded/effortful-speech transcript inputs.
+
+```bash
+python3 benchmark/evaluate_degraded_input_replay_v0.py --json
+python3 benchmark/evaluate_degraded_input_replay_v0.py --write-report
+make eval-degraded-input-replay
+```
+
+It compares two baselines on the same cases:
+
+- `non_interactive_no_repair`: no repair loop; degraded input stalls at “please repeat”.
+- `parker_repair_protocol`: current deterministic Parker `TextSession` repair-choice path with a one-number user repair selection.
+
+This is **not** real Parkinson's audio evidence and should not be overclaimed. It exists to keep the proposal honest: no “Parker improves interactivity” sentence should survive unless it maps to an emitted metric, a baseline, and a caveat.

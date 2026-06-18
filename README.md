@@ -167,8 +167,8 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Family message outbox with two human gates** — patient confirms → `queued_local` → caregiver approves → `approved_local`. There is **no send path in the codebase at all**; cancel works from either state.
 - **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with confirm/execute/cancel/approve buttons and opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
-- **Eval harness** — task-taxonomy eval (`make eval-tasks`, 0 safety-critical misses), interactivity trace eval (`make eval-interactivity`, 6 synthetic scenarios / 0 unsafe misses), Parker-generated demo trace eval (`make eval-demo-interactivity`, 83.33% current-product pass rate / 0 unsafe misses / changed-mind gap exposed), and repair-choice quality spot-check (`make eval-repair`).
-- 234 backend tests as of the latest demo-trace interactivity QA pass (2026-06-18).
+- **Eval harness** — task-taxonomy eval (`make eval-tasks`, 0 safety-critical misses), interactivity trace eval (`make eval-interactivity`, 6 synthetic scenarios / 0 unsafe misses), Parker-generated demo trace eval (`make eval-demo-interactivity`, 83.33% current-product pass rate / 0 unsafe misses / changed-mind gap exposed), degraded-input replay eval (`make eval-degraded-input-replay`, Parker repair 100% vs. no-repair 0% on 3 synthetic held-out transcript fixtures), and repair-choice quality spot-check (`make eval-repair`).
+- 237 backend tests as of the latest degraded-input replay QA pass (2026-06-18).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -191,7 +191,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (234 tests as of 2026-06-18)
+make test            # full backend suite should pass (237 tests as of 2026-06-18)
 ```
 
 **Fastest demo** (three commands, zero config):
