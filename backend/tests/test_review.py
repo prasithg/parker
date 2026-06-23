@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 
 from app.db.models import CallLog, CapturedIntent, OutboxMessage
+from app.exercises.session import LocalExerciseSession
 from app.escalation.candidates import flag_non_response_candidates
 from app.main import app
 from app.parker.pipeline import (
@@ -308,3 +309,38 @@ def test_review_ui_surfaces_demo_safety_contract(db):
     assert "No medical advice, medication changes, purchases, or emergency-service replacement." in page
     assert "No private credentials or sensitive notes are displayed or sent." in page
     assert "No outbound sends exist in v0" in page
+
+
+def test_review_feed_and_ui_show_exercise_sessions_without_medical_claims(db):
+    call = _call(db, sid="CA_EXERCISE_REVIEW")
+    exercise = _staged(db, call, requested_action="exercise", subject="speech exercise: strong voice")
+    confirm_staged_action(db, exercise.id, now=NOW)
+    execute_staged_action(db, exercise.id, now=NOW + timedelta(minutes=1))
+    session = db.query(LocalExerciseSession).one()
+
+    client = TestClient(app)
+    review = client.get("/parker/review").json()
+
+    assert "recent_exercise_sessions" in review
+    assert review["recent_exercise_sessions"][0]["id"] == session.id
+    assert review["recent_exercise_sessions"][0]["staged_action_id"] == exercise.id
+    assert review["recent_exercise_sessions"][0]["category"] == "speech"
+    assert review["recent_exercise_sessions"][0]["status"] == "started"
+    prompt = review["recent_exercise_sessions"][0]["prompt_card"].lower()
+    assert "strong voice" in prompt
+    assert "treatment" not in prompt
+    assert "therapy" not in prompt
+
+    completed = client.post(
+        f"/parker/exercises/{session.id}/complete",
+        json={"caregiver_note": "Finished one short round.", "now": "2026-06-10T09:05:00"},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["completed_at"] == "2026-06-10T09:05:00"
+    assert completed.json()["caregiver_note"] == "Finished one short round."
+
+    page = client.get("/parker/review/ui").text
+    assert "Exercise sessions" in page
+    assert "recent_exercise_sessions" in page
+    assert "/parker/exercises/${s.id}/complete" in page

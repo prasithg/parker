@@ -71,6 +71,9 @@ approving marks it reviewed; nothing is ever sent externally from this page.</p>
 <h2 id="h-history">Recently done (stayed on this machine)</h2>
 <div id="history"></div>
 
+<h2 id="h-exercise-sessions">Exercise sessions</h2>
+<div id="exercise-sessions"></div>
+
 <h2 id="h-cancelled">Changed my mind (cancelled)</h2>
 <div id="cancelled"></div>
 <div id="cancelled-messages"></div>
@@ -87,7 +90,9 @@ function el(html) { const d = document.createElement('div'); d.innerHTML = html;
 function actionCard(a) {
   const what = a.action_type === 'family_message'
     ? `Message to <b>${a.recipient ?? '(no recipient)'}</b>: “${a.message_text ?? ''}”`
-    : `Reminder: <b>${a.subject ?? ''}</b>`;
+    : a.action_type === 'exercise_start'
+      ? `Exercise: <b>${a.subject ?? ''}</b>`
+      : `Reminder: <b>${a.subject ?? ''}</b>`;
   const card = el(`<div class="card">${what}<span class="badge ${a.status}">${a.status}</span>
     <div class="meta">resurfaced ${a.resurface_count}x · due ${a.execute_after ?? 'now'} · confirmed by ${a.confirmed_by ?? '—'}</div></div>`);
   if (a.status === 'staged') {
@@ -138,9 +143,27 @@ function escalationCard(e) {
 function historyCard(a) {
   const what = a.action_type === 'family_message'
     ? `Message to <b>${a.recipient ?? '(no recipient)'}</b>: “${a.message_text ?? ''}” — queued to local outbox`
-    : `Reminder: <b>${a.subject ?? ''}</b>`;
+    : a.action_type === 'exercise_start'
+      ? `Exercise started: <b>${a.subject ?? ''}</b>`
+      : `Reminder: <b>${a.subject ?? ''}</b>`;
   return el(`<div class="card">${what}<span class="badge executed">executed</span>
     <div class="meta">done ${a.executed_at ?? '—'} · confirmed by ${a.confirmed_by ?? '—'} · ${a.execution_result ?? ''}</div></div>`);
+}
+
+function exerciseSessionCard(s) {
+  const note = s.caregiver_note ? ` · note: ${s.caregiver_note}` : '';
+  const card = el(`<div class="card"><b>${s.subject}</b><span class="badge ${s.status}">${s.status}</span>
+    <div class="meta">${s.category} · ${s.difficulty} · started ${s.started_at ?? '—'}${note}</div>
+    <div class="meta">Prompt card: ${s.prompt_card}</div></div>`);
+  if (s.status === 'started') {
+    const done = el('<button class="primary">Mark complete</button>');
+    done.onclick = () => post(`/parker/exercises/${s.id}/complete`, {caregiver_note: 'completed from review page'});
+    card.appendChild(done);
+    const cancel = el('<button class="danger">Cancel exercise</button>');
+    cancel.onclick = () => post(`/parker/exercises/${s.id}/cancel`, {caregiver_note: 'cancelled from review page'});
+    card.appendChild(cancel);
+  }
+  return card;
 }
 
 function cancelledActionCard(a) {
@@ -173,6 +196,7 @@ async function load() {
   fill('candidates', data.escalation_candidates, escalationCard, 'No non-response candidates.', 'Non-response escalation candidates');
   fill('escalations', data.open_escalations, escalationCard, 'No open escalations.', 'Other open escalations');
   fill('history', data.recent_history, historyCard, 'Nothing executed yet.', 'Recently done (stayed on this machine)');
+  fill('exercise-sessions', data.recent_exercise_sessions, exerciseSessionCard, 'No exercise sessions yet.', 'Exercise sessions');
   const cancelledTotal = data.recent_cancelled.length + data.outbox_cancelled.length;
   fill('cancelled', data.recent_cancelled, cancelledActionCard, cancelledTotal ? '' : 'Nothing cancelled.', null);
   fill('cancelled-messages', data.outbox_cancelled, cancelledMessageCard, '', null);

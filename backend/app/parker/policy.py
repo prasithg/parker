@@ -6,7 +6,7 @@ whether v0 is allowed to execute it at all.
 
 The taxonomy describes the target capability surface; `executable_in_v0`
 stays deliberately narrow until each action class gets its own tests/evals.
-v0 executes reminders and family messages — and a family message "executes"
+v0 executes reminders, local exercise starts, and family messages — and a family message "executes"
 into the local outbox only (a reversible, cancellable local artifact);
 nothing leaves the machine.
 """
@@ -82,8 +82,10 @@ ACTION_POLICIES: dict[str, ActionPolicy] = {
             "Prepare/save notes and questions for an upcoming appointment.",
         ),
         ActionPolicy(
-            "exercise_start", TIER_LOCAL_REVERSIBLE, CONFIRM_USER, False,
-            "Start a speech/movement/cognitive exercise session.",
+            "exercise_start", TIER_LOCAL_REVERSIBLE, CONFIRM_USER, True,
+            "Start a local speech/movement/cognitive exercise session after confirmation. "
+            "v0 execution records a local start artifact only; no video/device launch or "
+            "external integration happens.",
         ),
         ActionPolicy(
             "media_playlist", TIER_LOCAL_REVERSIBLE, CONFIRM_USER, False,

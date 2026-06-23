@@ -71,6 +71,10 @@ CHANGED_MIND_PREFIXES = (
 MESSAGE_PATTERN = re.compile(r"^(?:tell|message|text)\s+([A-Za-z]+)\s+(.+)$", re.IGNORECASE)
 SEND_PATTERN = re.compile(r"^send\s+([A-Za-z]+)\s+(?:a\s+message\s+)?(?:that\s+|saying\s+)?(.+)$", re.IGNORECASE)
 REMIND_PATTERN = re.compile(r"^remind\s+(?:me|us|him|her|dad|mom)?\s*(?:to\s+)?(.+)$", re.IGNORECASE)
+EXERCISE_PATTERN = re.compile(
+    r"^(?:start|begin|do|practice)\s+(?:a\s+|an\s+|the\s+)?(?:(speech|voice|movement|stretching|cognitive)\s+)?exercise(?:\s+(?:for|about|called)\s+(.+))?$",
+    re.IGNORECASE,
+)
 TRAILING_TIMING_PATTERN = re.compile(
     r"\s+(?:now|today|tomorrow|tonight|this\s+(?:morning|afternoon|evening)|after\s+.+|before\s+.+|in\s+.+|at\s+.+)$",
     re.IGNORECASE,
@@ -286,6 +290,21 @@ class TextSession:
                 subject=subject,
                 recipient=None,
                 speech=f"Okay — I'll bring up “{subject}” and check with you before anything runs.",
+            )
+        match = EXERCISE_PATTERN.match(utterance)
+        if match:
+            exercise_type = (match.group(1) or "speech").lower()
+            details = (match.group(2) or "short practice").strip().rstrip(".")
+            subject = f"{exercise_type} exercise: {details}"
+            return self._capture(
+                intent_text=utterance,
+                requested_action="exercise",
+                subject=subject,
+                recipient=None,
+                speech=(
+                    f"Okay — I can start “{subject}” locally. "
+                    "I'll confirm before it starts."
+                ),
             )
         if "?" in utterance or lowered.startswith(("what", "how", "who", "when", "where")):
             return {

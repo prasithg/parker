@@ -16,12 +16,12 @@ Legacy note: the codebase began as "ParkinsClaw," a scheduled-outbound-call comp
 | --- | --- | --- | --- |
 | Understand | Interpret effortful/variable speech as intent, with calibrated uncertainty | `backend/app/conversation/textloop.py`, `backend/app/conversation/tools.py`, `backend/app/conversation/repair.py`, `backend/app/voice/transcribe.py`, `backend/app/demo/` | Typed, scripted-replay, audio-file, live-mic, and continuous talk-loop paths exist. Ambiguity routes through model-driven repair choices when configured, with deterministic fallback when no key/model is available. |
 | Confirm | Never act on ambiguous input; repair with choices; confirm before side effects | `backend/app/conversation/repair.py`, `backend/app/parker/pipeline.py` (`confirm_staged_action`, `cancel_staged_action`), `backend/app/parker/policy.py` | Repair choices, "none of these," changed-mind revisions, cancel-only steering, and confirmation gates are implemented before any side effect. |
-| Act | Execute safe, policy-allowed actions through a tool layer | `backend/app/parker/pipeline.py` (`execute_staged_action`, outbox helpers), `backend/app/conversation/tools.py` | v0 executes reminders locally, and family messages queue to the local outbox only. The message path has a two-human gate: patient confirmation, then caregiver approval; no sender exists in v0. |
+| Act | Execute safe, policy-allowed actions through a tool layer | `backend/app/parker/pipeline.py` (`execute_staged_action`, outbox helpers), `backend/app/conversation/tools.py`, `backend/app/exercises/session.py` | v0 executes reminders locally, starts local exercise sessions with prompt cards/lifecycle rows, and queues family messages to the local outbox only. The message path has a two-human gate: patient confirmation, then caregiver approval; no sender exists in v0. |
 | Follow up | Resurface staged intents, track completion, retry | `backend/app/parker/pipeline.py` (`get_due_resurfaced_actions`), `/parker` routes, review UI | Working vertical slice (capture → resolve → stage → resurface → confirm/cancel → execute/audit) with recent-history and changed-mind audit rows. |
 | Escalate/Coordinate | Notify family per policy; severity routing; candidate escalation when the user does not respond | `backend/app/escalation/` (engine, notifier, models), `backend/app/escalation/candidates.py` | Severity-routed escalation engine exists. The non-response escalation candidates path is candidate-only, review-only, `info` severity, and never auto-dispatched. |
 | Learn | Memory of the user, family, routines, preferences; eval feedback | `backend/app/memory/`, `benchmark/`, `docs/task-taxonomy.md` | Basic memory store + context builder exists. Accountability now comes from 24 synthetic fixtures, task-taxonomy eval, interactivity trace eval, Parker-generated demo trace eval, degraded-input replay, claim→metric overclaim guard, construct-validity matrix guard, and repair-quality spot checks. |
 
-Supporting modules: `backend/app/meds/` (dose tracking + photo-based dose verification), `backend/app/exercises/` (cognitive exercise library/sessions), `backend/app/calls/` and `backend/app/voice/stream.py` (legacy Twilio/realtime call scaffolding), and `backend/app/dashboard/` (family/operator API). The v0 demo path is the Parker text/voice/review pipeline above, not the legacy outbound-call loop.
+Supporting modules: `backend/app/meds/` (dose tracking + photo-based dose verification), `backend/app/exercises/` (cognitive exercise library plus Parker local exercise-session lifecycle rows), `backend/app/calls/` and `backend/app/voice/stream.py` (legacy Twilio/realtime call scaffolding), and `backend/app/dashboard/` (family/operator API). The v0 demo path is the Parker text/voice/review pipeline above, not the legacy outbound-call loop.
 
 ## 2. Capability taxonomy
 
@@ -30,7 +30,7 @@ The single source of truth is `backend/app/parker/policy.py`. Every action type 
 | Tier | Action types | Confirmation | Executable in v0 |
 | --- | --- | --- | --- |
 | `informational` (read-only) | `research_summary`, `item_search` | none | no (planned) |
-| `local_reversible` | `reminder`, `routine_log`, `appointment_note`, `exercise_start`, `media_playlist` | user (voice/tap) | `reminder` only |
+| `local_reversible` | `reminder`, `routine_log`, `appointment_note`, `exercise_start`, `media_playlist` | user (voice/tap) | `reminder`, `exercise_start` |
 | `external_messaging` | `family_message` | user | yes — **to the local outbox only** (cancellable row; no send path exists in v0) |
 | `external_messaging` | `family_escalation` | escalation policy | no (engine exists; not wired through staged actions) |
 | `irreversible_external` | `smart_home`, `calendar_change`, `purchase` | human operator | no |
@@ -65,7 +65,7 @@ Protocol rules:
 3. The set of executable action types comes from `policy.executable_v0_action_types()` — never inlined in pipeline code.
 4. Prohibited types are refused at resolution, regardless of confirmation.
 5. Unknown types are treated as irreversible until classified.
-6. "Execute" must produce a local, reversible artifact: reminders resurface locally; confirmed family messages queue to the local outbox (`outbox_messages`, cancellable via `POST /parker/outbox/{id}/cancel`).
+6. "Execute" must produce a local, reversible artifact: reminders resurface locally; exercise starts create `local_exercise_sessions` rows with category, prompt card, started/completed/cancelled state, perceived difficulty, and optional caregiver note; confirmed family messages queue to the local outbox (`outbox_messages`, cancellable via `POST /parker/outbox/{id}/cancel`).
 7. Outbound messages carry a two-human gate: the patient confirms (queues to `queued_local`), then a caregiver approves (`POST /parker/outbox/{id}/approve` → `approved_local`, still on-machine). A future sender — which does not exist in v0 — must only ever consider `approved_local` rows behind an explicit config flag.
 
 ## 4. Confirmation policy

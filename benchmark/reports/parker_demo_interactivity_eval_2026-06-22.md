@@ -1,6 +1,6 @@
 # Parker interactivity eval v0
 
-- Date: 2026-06-23
+- Date: 2026-06-22
 - Predictions: benchmark/reports/parker_demo_interactivity_predictions_latest.json
 - Scenarios: 7
 

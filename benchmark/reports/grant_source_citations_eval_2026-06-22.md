@@ -1,6 +1,6 @@
 # Parker grant source-citation guard
 
-Date: 2026-06-23
+Date: 2026-06-22
 Gate: PASS
 
 ## Public-source facts to carry forward

@@ -9,17 +9,22 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.db.models import CapturedIntent, OutboxMessage, ResolutionResult, StagedAction
+from app.exercises.session import start_local_exercise_session
 from app.parker.policy import executable_v0_action_types
 
 # Action types v0 may execute after confirmation. Every entry's execution
-# artifact is local and reversible (reminders resurface locally; family
-# messages queue to the cancellable local outbox — no send path exists).
+# artifact is local and reversible (reminders resurface locally; exercise starts
+# are local/auditable; family messages queue to the cancellable local outbox — no send path exists).
 EXECUTABLE_V0_ACTION_TYPES = executable_v0_action_types()
 # Backwards-compatible alias for earlier naming.
 REVERSIBLE_ACTION_TYPES = EXECUTABLE_V0_ACTION_TYPES
 REQUESTED_ACTION_TO_ACTION_TYPE = {
     "remind": "reminder",
     "reminder": "reminder",
+    "exercise": "exercise_start",
+    "exercise_start": "exercise_start",
+    "speech_exercise": "exercise_start",
+    "movement_exercise": "exercise_start",
     "message": "family_message",
     "family_message": "family_message",
 }
@@ -212,6 +217,20 @@ def execute_staged_action(db: Session, staged_action_id: int, now: datetime | No
         action.execution_result = "Action requires confirmation before execution."
     elif action.action_type == "family_message":
         _execute_family_message(db, action, now=now)
+    elif action.action_type == "exercise_start":
+        payload = _json_payload(action.action_payload)
+        subject = payload.get("subject") or action.resolution_result.summary
+        call_log_id = action.resolution_result.captured_intent.call_log_id
+        session = start_local_exercise_session(
+            db,
+            staged_action_id=action.id,
+            call_log_id=call_log_id,
+            subject=subject,
+            now=now,
+        )
+        action.status = "executed"
+        action.executed_at = now or datetime.utcnow()
+        action.execution_result = f"local exercise session started: {subject} (exercise session {session.id})"
     else:
         payload = _json_payload(action.action_payload)
         subject = payload.get("subject") or action.resolution_result.summary

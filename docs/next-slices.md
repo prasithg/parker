@@ -278,3 +278,22 @@ TDD/verification: RED observed first on `test_baseline_routes_disfluent_but_spec
 Shipped: `benchmark/data/grant_source_citations_v0.json`, `benchmark/evaluate_grant_source_citations_v0.py`, `backend/tests/test_grant_source_citations_evaluator.py`, `make eval-grant-source-citations`, CI coverage, and JSON/Markdown reports under `benchmark/reports/grant_source_citations_eval_latest.*`. The guard keeps grant program facts backed by public Thinking Machines pages: award/Tinker credits, required materials, deadline, selection criteria, funding timeline, non-confidential proposal warning, open-license posture, and the interaction-model framing. It deliberately keeps private/admin/contact/tax fields out of agent-generated artifacts.
 
 Grant-readiness now requires this source-citation report and fails closed if it is missing, stale, or incomplete. Current source-citation result: 4 public sources, 11/11 required facts covered, 5 application-material categories counted, 4 selection criteria counted, 3 terms-risk facts counted, citation gate PASS. This is source/provenance hardening only; it is not legal advice, grant submission, or approval to include private details.
+
+This follow-up pivot is now product-led rather than grant-led: the grant package was submitted, so new work should optimize for Dad/family usefulness first and keep grant/public evidence as a byproduct, not the driver.
+
+Shipped in this slice: `exercise_start` graduated into Parker's v0 executable surface as a local, confirmation-gated, auditable action. The text loop now captures "Start a speech exercise about strong voice" as `requested_action="exercise"`, resolves it to `exercise_start`, stages it, requires confirmation, then executes by recording `local exercise session started: ...`; no video launch, device integration, live API call, or external side effect is added. This is a product-usefulness step toward Dad-facing daily practice, not grant prose.
+
+Verification: targeted tests for policy/pipeline/textloop passed (`32 passed, 2 warnings`); full backend suite passed (`289 passed, 2 warnings`); manual smoke through `TextSession -> resolve -> stage -> confirm -> execute` returned `status='executed'` and `execution_result='local exercise session started: speech exercise: strong voice'`.
+
+Product follow-up shipped 2026-06-22/23: `exercise_start` now creates a `local_exercise_sessions` lifecycle row instead of only an execution-result string. Each local session records the staged action, call log, subject, category, prompt card, `started_at`, `completed_at`, `cancelled_at`, gentle difficulty, status, and optional caregiver note. `/parker/review` exposes `recent_exercise_sessions`, and `/parker/review/ui` shows exercise sessions with local complete/cancel controls. Prompt-card tests guard against diagnosis/treatment/therapy/medication claims.
+
+## Next open slice — product usefulness after grant submission
+
+Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:
+
+1. **Recliner/TV daily loop.** Add a scripted local demo flow: reminder due -> unclear response -> repair choices -> local exercise or family message -> caregiver review. Acceptance: one command seeds a believable evening routine and the review page shows exactly what is awaiting Dad/caregiver.
+2. **Non-response caregiver ladder.** Extend review-only non-response candidates into a clearer local ladder: gentle re-prompt -> wait -> caregiver review candidate, with false-negative-heavy evals and no automatic dispatch.
+3. **Family handoff digest.** Create a local, unsent daily summary artifact from recent history/exercise sessions/cancelled/outbox/non-response candidates: "what happened, what needs review, what stayed local." Acceptance: generated digest contains no private credentials, no medical advice, no external send path, and has tests for the sections.
+4. **Degraded-speech / population evidence remains important, but it is now a product validation lane, not a grant-blocker.** Keep the shorthand **pipeline, not population** until one licensed public/corpus-backed sample, consented non-family sample, or SLP taxonomy review exists. Do not let product copy imply Parkinson's speech performance before that.
+
+Working shorthand: **usefulness first; evidence as guardrail; public/grant artifacts as byproduct.**

@@ -10,7 +10,7 @@ One-line pitch:
 
 Parker helps people with effortful speech be understood, stay connected, and get useful things done at home — with family-aware safeguards and an OpenClaw/Hermes-style action layer.
 
-Voice is the main interface and the first wedge. But Parker is not just a transcription app, a phone-call bot, a medication reminder, or a voice clone demo.
+Voice is the main interface and the first wedge. Parker's broader thesis is variable-speech understanding, repair under uncertainty, safe action, follow-through, family coordination, and eval-backed usefulness.
 
 Core loop:
 
@@ -71,6 +71,8 @@ make run
 ```
 
 Run tests before final response if you modify code.
+
+Release/update rule: Parker is a living public project. Commit/push ready milestones with green tests/evals and current docs; do not wait for Pras for in-scope ready work, but do not push midstream half-finished slices.
 
 ## Workspace contract
 

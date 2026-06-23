@@ -1,6 +1,6 @@
 # Agent instructions for Parker
 
-This repo is the private application/prototype for Parker, a family-aware at-home assistant for effortful speech, Parkinson's-adjacent routines, family coordination, and safe action.
+This repo is the living public application/prototype for Parker, a family-aware at-home assistant for effortful speech, Parkinson's-adjacent routines, family coordination, and safe action.
 
 ## Product north star
 
@@ -52,6 +52,21 @@ Use:
 - `~/Knowledge/parker` or `~/Knowledge/research/personal-brand/parker` for research, pitch notes, and product synthesis;
 - `~/Operations` for run manifests, reviews, and agent logs;
 - this repo for code, repo docs, tests, fixtures, and implementation plans tied directly to code.
+
+## Release/update rules
+
+Parker should be continuously updated, tested, released, and made talk-about-able.
+
+Agents should not wait for Pras to manually request commits when a slice is genuinely ready. Commit/push when there is a coherent milestone, green tests/evals, and docs that match the real state. Do not push midstream half-finished work just to reduce a dirty tree.
+
+A Parker change is ready when:
+1. the behavior/docs form a coherent feature, eval, release, or public-positioning milestone;
+2. relevant backend tests and evals pass, or failures are explicitly understood and documented;
+3. README/docs/report files describe what actually works now, not aspirations;
+4. safety boundaries are still explicit for external actions, medical claims, privacy, and family escalation;
+5. the public surface is something Pras can confidently talk about.
+
+If work is promising but not ready, leave it on a branch with a short status note in `docs/next-slices.md` rather than pushing to `main`.
 
 ## Coding-agent rules
 

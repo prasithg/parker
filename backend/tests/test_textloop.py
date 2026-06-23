@@ -94,6 +94,19 @@ def test_message_utterance_captures_recipient(db):
     assert saved.intent_text == "dinner on Sunday would be lovely"
 
 
+def test_exercise_utterance_captures_local_exercise_start(db):
+    session = _session(db)
+
+    response = session.handle("Start a speech exercise about strong voice")
+
+    assert response["kind"] == "captured"
+    assert "locally" in response["speech"].lower()
+    saved = db.get(CapturedIntent, response["captured_intent_id"])
+    assert saved.requested_action == "exercise"
+    assert saved.subject == "speech exercise: strong voice"
+    assert saved.status == "pending"
+
+
 def test_text_message_cannot_bypass_confirmation_gate(db):
     session = _session(db)
 

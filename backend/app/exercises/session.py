@@ -40,6 +40,147 @@ class ExerciseResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class LocalExerciseSession(Base):
+    """Local Parker exercise session started from a confirmed staged action.
+
+    This is a product-facing lifecycle row for v0: it records a safe prompt
+    card and local status only. It does not claim therapeutic or clinical
+    effect, launch external media, or send anything outside the machine.
+    """
+
+    __tablename__ = "local_exercise_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    staged_action_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("staged_actions.id"), nullable=True, index=True
+    )
+    call_log_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("call_logs.id"), nullable=True, index=True
+    )
+    subject: Mapped[str] = mapped_column(String(256))
+    category: Mapped[str] = mapped_column(String(64), index=True)
+    difficulty: Mapped[str] = mapped_column(String(32), default="gentle")
+    prompt_card: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="started", index=True)
+    caregiver_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+def start_local_exercise_session(
+    db: Session,
+    *,
+    subject: str,
+    staged_action_id: int | None = None,
+    call_log_id: int | None = None,
+    now: datetime | str | None = None,
+) -> LocalExerciseSession:
+    """Persist a local Parker exercise session with a safe prompt card."""
+
+    category, prompt_card = _prompt_card_for_subject(subject)
+    session = LocalExerciseSession(
+        staged_action_id=staged_action_id,
+        call_log_id=call_log_id,
+        subject=subject,
+        category=category,
+        difficulty="gentle",
+        prompt_card=prompt_card,
+        status="started",
+        started_at=_coerce_datetime(now) or datetime.utcnow(),
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def complete_local_exercise_session(
+    db: Session,
+    session_id: int,
+    *,
+    caregiver_note: str | None = None,
+    now: datetime | str | None = None,
+) -> LocalExerciseSession | None:
+    """Mark a local exercise session completed, if it is still active."""
+
+    session = db.get(LocalExerciseSession, session_id)
+    if session is None:
+        return None
+    if session.status == "started":
+        session.status = "completed"
+        session.completed_at = _coerce_datetime(now) or datetime.utcnow()
+        session.caregiver_note = caregiver_note
+        db.commit()
+        db.refresh(session)
+    return session
+
+
+def cancel_local_exercise_session(
+    db: Session,
+    session_id: int,
+    *,
+    caregiver_note: str | None = None,
+    now: datetime | str | None = None,
+) -> LocalExerciseSession | None:
+    """Cancel a local exercise session before it is completed."""
+
+    session = db.get(LocalExerciseSession, session_id)
+    if session is None:
+        return None
+    if session.status == "started":
+        session.status = "cancelled"
+        session.cancelled_at = _coerce_datetime(now) or datetime.utcnow()
+        session.caregiver_note = caregiver_note
+        db.commit()
+        db.refresh(session)
+    return session
+
+
+def list_recent_local_exercise_sessions(
+    db: Session,
+    *,
+    limit: int = 10,
+) -> list[LocalExerciseSession]:
+    """Return recent local exercise sessions for caregiver review."""
+
+    return (
+        db.query(LocalExerciseSession)
+        .order_by(LocalExerciseSession.started_at.desc(), LocalExerciseSession.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def _prompt_card_for_subject(subject: str) -> tuple[str, str]:
+    normalized = (subject or "short practice").strip()
+    lowered = normalized.lower()
+    details = normalized.split(":", 1)[1].strip() if ":" in normalized else normalized
+    if any(word in lowered for word in ("movement", "stretch", "walking", "balance")):
+        return (
+            "movement",
+            f"Gentle movement practice — {details}: sit or stand where you feel steady, "
+            "try one small comfortable motion, then pause. Stop if you feel tired or unsure.",
+        )
+    if any(word in lowered for word in ("cognitive", "memory", "word", "recall", "trivia")):
+        return (
+            "cognitive",
+            f"Gentle thinking practice — {details}: answer one short prompt, take your time, "
+            "and skip it if it feels frustrating.",
+        )
+    return (
+        "speech",
+        f"Strong voice practice — {details}: sit comfortably, take one breath, "
+        "say one short phrase clearly three times, then rest.",
+    )
+
+
+def _coerce_datetime(value: datetime | str | None) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value)
+
+
 def start_exercise(db: Session, call_log_id: int, exercise_type: str | None = None) -> tuple[ExerciseResult, str]:
     """Start an exercise and return the result row plus follow-up prompt."""
 

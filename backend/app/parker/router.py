@@ -13,6 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.db.models import OutboxMessage, StagedAction
+from app.exercises.session import (
+    LocalExerciseSession,
+    cancel_local_exercise_session,
+    complete_local_exercise_session,
+    list_recent_local_exercise_sessions,
+)
 from app.parker.auth import require_dashboard_auth
 from app.escalation.candidates import CANDIDATE_REASON_PREFIX, flag_non_response_candidates
 from app.escalation.engine import get_open_escalations
@@ -50,6 +56,16 @@ class ExecuteRequest(BaseModel):
 
 class CancelRequest(BaseModel):
     cancelled_by: str = "caregiver"
+    now: datetime | None = None
+
+
+class CompleteExerciseRequest(BaseModel):
+    caregiver_note: str | None = None
+    now: datetime | None = None
+
+
+class CancelExerciseRequest(BaseModel):
+    caregiver_note: str | None = None
     now: datetime | None = None
 
 
@@ -182,10 +198,52 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
         "outbox_approved": [_serialize_outbox_message(message) for message in approved],
         "escalation_candidates": candidates,
         "open_escalations": others,
+        "recent_exercise_sessions": [
+            _serialize_exercise_session(session)
+            for session in list_recent_local_exercise_sessions(db, limit=RECENT_HISTORY_LIMIT)
+        ],
         "recent_history": [_serialize_action(action) for action in history],
         "recent_cancelled": [_serialize_action(action) for action in cancelled_actions],
         "outbox_cancelled": [_serialize_outbox_message(message) for message in cancelled_messages],
     }
+
+
+@router.post("/exercises/{session_id}/complete", dependencies=[Depends(require_dashboard_auth)])
+def complete_exercise_session(
+    session_id: int,
+    payload: CompleteExerciseRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Caregiver marks a local exercise session completed; still local-only."""
+
+    session = complete_local_exercise_session(
+        db,
+        session_id,
+        caregiver_note=payload.caregiver_note,
+        now=payload.now,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Exercise session not found: {session_id}")
+    return _serialize_exercise_session(session)
+
+
+@router.post("/exercises/{session_id}/cancel", dependencies=[Depends(require_dashboard_auth)])
+def cancel_exercise_session(
+    session_id: int,
+    payload: CancelExerciseRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Caregiver cancels a local exercise session; no external effect."""
+
+    session = cancel_local_exercise_session(
+        db,
+        session_id,
+        caregiver_note=payload.caregiver_note,
+        now=payload.now,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Exercise session not found: {session_id}")
+    return _serialize_exercise_session(session)
 
 
 @router.get(
@@ -254,6 +312,23 @@ def _serialize_outbox_message(message: OutboxMessage) -> dict[str, Any]:
         "approved_by": message.approved_by,
         "approved_at": message.approved_at.isoformat() if message.approved_at else None,
         "cancelled_at": message.cancelled_at.isoformat() if message.cancelled_at else None,
+    }
+
+
+def _serialize_exercise_session(session: LocalExerciseSession) -> dict[str, Any]:
+    return {
+        "id": session.id,
+        "staged_action_id": session.staged_action_id,
+        "call_log_id": session.call_log_id,
+        "subject": session.subject,
+        "category": session.category,
+        "difficulty": session.difficulty,
+        "prompt_card": session.prompt_card,
+        "status": session.status,
+        "caregiver_note": session.caregiver_note,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+        "cancelled_at": session.cancelled_at.isoformat() if session.cancelled_at else None,
     }
 
 

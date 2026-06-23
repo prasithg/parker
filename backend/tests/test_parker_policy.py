@@ -32,13 +32,15 @@ def test_irreversible_external_actions_require_human_operator():
             assert entry.confirmation == policy.CONFIRM_HUMAN_OPERATOR
 
 
-def test_v0_execution_surface_is_reminders_and_local_outbox_messages():
+def test_v0_execution_surface_is_reminders_local_exercises_and_local_outbox_messages():
     # family_message graduated to executable on 2026-06-09: its v0 execution
     # artifact is a LOCAL outbox row (cancellable, no send path), so it stays
-    # within the local-reversible execution boundary. family_escalation and
+    # within the local-reversible execution boundary. exercise_start graduated
+    # after the grant pivot as a product-usefulness slice: it records only a
+    # local/auditable start artifact after confirmation. family_escalation and
     # all irreversible/prohibited types remain non-executable.
-    assert policy.executable_v0_action_types() == {"reminder", "family_message"}
-    assert REVERSIBLE_ACTION_TYPES == {"reminder", "family_message"}
+    assert policy.executable_v0_action_types() == {"reminder", "exercise_start", "family_message"}
+    assert REVERSIBLE_ACTION_TYPES == {"reminder", "exercise_start", "family_message"}
     assert policy.is_executable_v0("family_escalation") is False
     assert policy.is_executable_v0("smart_home") is False
     assert policy.is_executable_v0("purchase") is False
@@ -61,4 +63,5 @@ def test_safety_critical_action_types_are_classified():
     assert policy.confirmation_level("medication_change") == policy.CONFIRM_REFUSE
     assert policy.confirmation_level("medical_advice") == policy.CONFIRM_REFUSE
     assert policy.confirmation_level("purchase") == policy.CONFIRM_HUMAN_OPERATOR
+    assert policy.confirmation_level("exercise_start") == policy.CONFIRM_USER
     assert policy.confirmation_level("family_message") == policy.CONFIRM_USER

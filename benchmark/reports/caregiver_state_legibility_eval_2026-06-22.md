@@ -1,6 +1,6 @@
 # Parker caregiver-state legibility eval v0
 
-- Date: 2026-06-23
+- Date: 2026-06-22
 - Purpose: score whether the local review surface makes state buckets and safe next actions legible versus a raw chat-only baseline.
 - Provenance: public synthetic/local review-state tasks only; no private data; no model/API dependency.
 

@@ -285,7 +285,7 @@
       }
     ]
   },
-  "date": "2026-06-23",
+  "date": "2026-06-22",
   "eval": "degraded_input_replay_v0",
   "pre_registered_primary_metric": {
     "citeable_count_scoped_result": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3; not real-speech/audio, patient, statistical, or clinical evidence.",

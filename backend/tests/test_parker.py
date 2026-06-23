@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.conversation.tools import TOOL_DEFINITIONS, execute_tool
 from app.db.models import CallLog, CapturedIntent, ResolutionResult, StagedAction
+from app.exercises.session import LocalExerciseSession
 from app.parker.pipeline import (
     confirm_staged_action,
     execute_staged_action,
@@ -101,6 +102,56 @@ def test_due_intent_resolves_stages_resurfaces_confirms_and_executes(db):
     assert executed.status == "executed"
     assert executed.executed_at == datetime(2026, 6, 2, 10, 12, 0)
     assert executed.execution_result == "reminder resurfaced: drink water"
+
+
+def test_exercise_start_is_local_reversible_confirmed_action(db):
+    call = _call(db)
+    captured = CapturedIntent(
+        call_log_id=call.id,
+        intent_text="Start a speech exercise about strong voice.",
+        requested_action="exercise",
+        subject="speech exercise: strong voice",
+        due_at=datetime(2026, 6, 2, 10, 10, 0),
+    )
+    db.add(captured)
+    db.commit()
+
+    resolutions = resolve_captured_intents(db, now=datetime(2026, 6, 2, 10, 10, 0))
+    assert len(resolutions) == 1
+    assert resolutions[0].action_type == "exercise_start"
+    assert resolutions[0].reversible is True
+
+    staged = stage_resolved_actions(db)[0]
+    assert staged.action_type == "exercise_start"
+
+    blocked = execute_staged_action(db, staged.id, now=datetime(2026, 6, 2, 10, 11, 0))
+    assert blocked.status == "blocked"
+    assert "confirmation" in (blocked.execution_result or "")
+
+    blocked.status = "staged"
+    blocked.execution_result = None
+    db.commit()
+    confirm_staged_action(db, staged.id, confirmed_by="patient", now=datetime(2026, 6, 2, 10, 11, 30))
+    executed = execute_staged_action(db, staged.id, now=datetime(2026, 6, 2, 10, 12, 0))
+
+    assert executed.status == "executed"
+    session = db.query(LocalExerciseSession).one()
+    assert session.staged_action_id == staged.id
+    assert session.call_log_id == call.id
+    assert session.subject == "speech exercise: strong voice"
+    assert session.category == "speech"
+    assert session.status == "started"
+    assert session.started_at == datetime(2026, 6, 2, 10, 12, 0)
+    assert session.completed_at is None
+    assert session.cancelled_at is None
+    assert session.difficulty == "gentle"
+    assert "strong voice" in session.prompt_card.lower()
+    assert "treatment" not in session.prompt_card.lower()
+    assert "therapy" not in session.prompt_card.lower()
+    assert executed.execution_result == (
+        f"local exercise session started: speech exercise: strong voice "
+        f"(exercise session {session.id})"
+    )
 
 
 def test_stager_refuses_irreversible_actions(db):

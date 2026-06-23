@@ -1,6 +1,6 @@
 # Parker grant-readiness rollup
 
-Date: 2026-06-23
+Date: 2026-06-22
 Gate: PASS
 
 ## Decision
@@ -22,7 +22,7 @@ Gate: PASS
 - Caregiver state legibility: Parker 6/6 vs raw chat 0/6; unsafe misses 0; gate True
 - Repair quality: 5/5 curated choices pass; generic fallback passing cases 0; quality proof claim allowed False
 - Grant source citations: 11/11 required facts covered across 4 public sources; citation gate True
-- Source report freshness: PASS for expected date 2026-06-23
+- Source report freshness: PASS for expected date 2026-06-22
 
 ## Claim cards
 

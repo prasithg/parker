@@ -1,6 +1,6 @@
 # Parker repair-quality rubric eval v0
 
-- Date: 2026-06-23
+- Date: 2026-06-22
 - Purpose: proxy-check repair-choice specificity/safety and prevent generic fallback choices from being cited as quality evidence.
 - Provenance: public synthetic/local rubric cases only; no private data; no model/API dependency; not human-graded evidence.
 

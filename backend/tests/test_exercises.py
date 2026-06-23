@@ -6,9 +6,14 @@ from app.conversation.tools import execute_tool
 from app.db.models import CallLog
 from app.exercises.library import all_exercises, select_exercise
 from app.exercises.session import (
+    LocalExerciseSession,
+    cancel_local_exercise_session,
     complete_exercise,
+    complete_local_exercise_session,
     get_exercise_history,
     get_recommended_exercise,
+    list_recent_local_exercise_sessions,
+    start_local_exercise_session,
     start_exercise,
 )
 
@@ -75,3 +80,61 @@ def test_conversation_tool_start_and_complete(db):
     )
     assert completed["status"] == "completed"
     assert completed["score"] == 4
+
+
+def test_local_exercise_session_start_complete_cancel_history_and_safe_prompt_cards(db):
+    call = _call(db)
+    started = start_local_exercise_session(
+        db,
+        call_log_id=call.id,
+        subject="speech exercise: strong voice",
+        now="2026-06-22T19:30:00",
+    )
+
+    assert started.id is not None
+    assert started.call_log_id == call.id
+    assert started.status == "started"
+    assert started.category == "speech"
+    assert started.difficulty == "gentle"
+    assert started.started_at.isoformat() == "2026-06-22T19:30:00"
+    assert started.completed_at is None
+    assert started.cancelled_at is None
+    assert "strong voice" in started.prompt_card.lower()
+
+    completed = complete_local_exercise_session(
+        db,
+        started.id,
+        caregiver_note="Dad completed one short round comfortably.",
+        now="2026-06-22T19:37:00",
+    )
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.completed_at.isoformat() == "2026-06-22T19:37:00"
+    assert completed.caregiver_note == "Dad completed one short round comfortably."
+
+    to_cancel = start_local_exercise_session(
+        db,
+        call_log_id=call.id,
+        subject="movement exercise: gentle stretch",
+        now="2026-06-22T20:00:00",
+    )
+    cancelled = cancel_local_exercise_session(
+        db,
+        to_cancel.id,
+        caregiver_note="Dad declined after the first prompt.",
+        now="2026-06-22T20:01:00",
+    )
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+    assert cancelled.cancelled_at.isoformat() == "2026-06-22T20:01:00"
+    assert cancelled.caregiver_note == "Dad declined after the first prompt."
+
+    history = list_recent_local_exercise_sessions(db)
+    assert [item.id for item in history] == [to_cancel.id, started.id]
+    assert db.query(LocalExerciseSession).count() == 2
+    for item in history:
+        prompt = item.prompt_card.lower()
+        assert "diagnose" not in prompt
+        assert "treatment" not in prompt
+        assert "therapy" not in prompt
+        assert "medication" not in prompt
