@@ -1,6 +1,6 @@
 # Parker
 
-Parker is a family-aware, room-aware, action-capable home assistant for people whose speech, routines, movement, and support needs are changing.
+Parker is a family-aware, at-home, action-capable assistant for people whose speech, routines, movement, and support needs are changing.
 
 The first private user is one family member. The long-term project is bigger: learn what actually helps at home, then turn those lessons into safety-minded tools, evals, and open patterns for other families.
 
@@ -132,12 +132,6 @@ Parker should help with fun and agency:
 
 ## Naming and repo map
 
-Current repo path:
-
-```text
-~/Development/personal/parkinsons-assistant
-```
-
 Working product name:
 
 ```text
@@ -152,10 +146,10 @@ ParkinsClaw
 
 Useful related project areas:
 
-- private Parker application: this repo;
-- public eval/tooling candidates: `variable-speech-agent-evals`, `assistive-agent-evals-*`, or similar under `~/Development/open-source`;
-- research and pitch notes: `~/Knowledge/parker` or `~/Knowledge/research/personal-brand/parker`;
-- run logs/manifests/reviews: `~/Operations`.
+- Parker application/prototype: this repo;
+- public eval/tooling candidates: future focused repos such as `variable-speech-agent-evals` or `assistive-agent-evals-*`;
+- research and pitch notes: kept outside the public code repo until they are ready to publish;
+- run logs/manifests/reviews: operational artifacts, not public product docs.
 
 ## Current repo state (v0, pilot-ready)
 
