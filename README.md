@@ -2,7 +2,7 @@
 
 Parker is a family-aware, at-home assistant research prototype for people with effortful speech and daily routines that benefit from extra support.
 
-The goal is not “an agent that calls you.” Parker is meant to understand what someone is trying to do, confirm uncertain intent, help with safe routine follow-through, coordinate with trusted family/caregivers when appropriate, and learn from measurable outcomes.
+The goal is broader than outbound reminders or scheduled check-ins. Parker is meant to understand what someone is trying to do, confirm uncertain intent, help with safe routine follow-through, coordinate with trusted family/caregivers when appropriate, and learn from measurable outcomes.
 
 ## Current product thesis
 
