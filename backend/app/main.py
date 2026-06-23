@@ -13,6 +13,7 @@ from app.escalation.router import router as escalation_router
 from app.memory.router import router as memory_router
 from app.db.database import SessionLocal, create_tables
 from app.meds.verification_router import router as dose_verification_router
+from app.parker.router import router as parker_router
 
 
 @asynccontextmanager
@@ -30,8 +31,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ParkinsClaw",
-    description="Voice-first Parkinson's companion",
+    title="Parker",
+    description="Family-aware home assistant for effortful speech (local v0)",
     version="0.2.0",
     lifespan=lifespan,
 )
@@ -41,6 +42,7 @@ app.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(escalation_router, prefix="/escalations", tags=["escalations"])
 app.include_router(memory_router, prefix="/memory", tags=["memory"])
 app.include_router(dose_verification_router, tags=["dose-verification"])
+app.include_router(parker_router, prefix="/parker", tags=["parker"])
 
 
 @app.get("/health")

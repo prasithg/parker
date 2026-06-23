@@ -1,4 +1,6 @@
-# ParkinsClaw Voice-Agent Robustness Benchmark — Card v0
+# Parker Voice-Agent Robustness Benchmark — Card v0
+
+(Earlier drafts used the legacy name ParkinsClaw.)
 
 Status: draft / local-only
 Ticket: PRA-43

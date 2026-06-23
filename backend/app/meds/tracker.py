@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import CallLog, DoseLog, Medication
 
-logger = logging.getLogger("parkinsclaw.meds")
+logger = logging.getLogger("parker.meds")
 
 
 def get_active_medications(db: Session) -> list[Medication]:

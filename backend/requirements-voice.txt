@@ -1,0 +1,6 @@
+# Optional, local-only voice transcription deps (make voice-deps).
+# Deliberately separate from requirements.txt: the core suite never
+# imports these (tests inject a fake transcriber), and the model runs
+# entirely on this machine — no cloud speech APIs.
+faster-whisper>=1.0
+sounddevice>=0.4.6

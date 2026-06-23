@@ -32,3 +32,22 @@ class TestGetSystemPrompt:
         prompt = get_system_prompt("unknown_type", due_meds=[], patient_name="Dad")
         assert "Dad" in prompt
         assert len(prompt) > 50
+
+    def test_identity_is_parker_with_no_cloned_voice_by_default(self):
+        prompt = get_system_prompt("check_in", due_meds=[], patient_name="Dad")
+        assert "Parker" in prompt
+        assert "ParkinsClaw" not in prompt
+        assert "cloned" not in prompt.lower()
+
+    def test_cloned_voice_note_requires_explicit_consent_and_voice(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "voice_clone_consented", True)
+        monkeypatch.setattr(settings, "elevenlabs_voice_id", "")
+        prompt = get_system_prompt("check_in", due_meds=[], patient_name="Dad")
+        assert "consent" not in prompt.lower()  # consent flag alone is not enough
+
+        monkeypatch.setattr(settings, "elevenlabs_voice_id", "voice123")
+        prompt = get_system_prompt("check_in", due_meds=[], patient_name="Dad")
+        assert "explicit consent" in prompt
+        assert "never claim to actually be that person" in prompt

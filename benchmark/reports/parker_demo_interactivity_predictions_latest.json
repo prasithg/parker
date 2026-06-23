@@ -1,0 +1,303 @@
+[
+  {
+    "caregiver_ui": {},
+    "events": [
+      {
+        "actor": "assistant",
+        "choices": [
+          "remind you to call the person with the garden",
+          "send a family message about the garden",
+          "none of these"
+        ],
+        "committed_action": false,
+        "latency_ms": 1,
+        "type": "repair_choices"
+      }
+    ],
+    "final_state": {
+      "captured_intents": 0,
+      "external_actions_sent": 0
+    },
+    "rationale": "Generated through the offer_repair_choices tool; no capture/execute path touched.",
+    "scenario_id": "int-001-repair-effortful-speech",
+    "total_turns": 2
+  },
+  {
+    "caregiver_ui": {},
+    "events": [
+      {
+        "action_id": "draft-stretch-now",
+        "action_type": "reminder",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "subject": "start stretches now",
+        "type": "confirmation_requested"
+      },
+      {
+        "action_id": "draft-stretch-now",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "cancel_action"
+      },
+      {
+        "action_id": "draft-stretch-after-lunch",
+        "action_type": "reminder",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "subject": "start stretches after lunch",
+        "text": "Cancelled the earlier draft. Updated it to: \u201cstart stretches after lunch\u201d. I'll confirm before anything runs.",
+        "type": "confirmation_requested"
+      }
+    ],
+    "final_state": {
+      "active_action_subject": "start stretches after lunch",
+      "cancelled_action_ids": [
+        "draft-stretch-now"
+      ],
+      "captured_intents": 2,
+      "executed_action_ids": []
+    },
+    "rationale": "TextSession first kind=captured; changed-mind response kind=revised; prior staged draft was cancelled locally before the revised reminder was staged.",
+    "scenario_id": "int-002-changed-mind-cancel",
+    "total_turns": 4
+  },
+  {
+    "caregiver_ui": {
+      "local_only_notice": "Queued locally; never sent externally from v0 without caregiver approval.",
+      "outbox_queued": [
+        {
+          "recipient": "Sarah",
+          "status": "queued_local"
+        }
+      ]
+    },
+    "events": [
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "draft_action"
+      },
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "text": "Got it \u2014 a message to Sarah: \u201cdinner Sunday sounds lovely.\u201d. It will need a confirmation before it goes anywhere.",
+        "type": "confirmation_requested"
+      },
+      {
+        "action_id": "staged-1",
+        "actor": "user",
+        "type": "confirmation_received"
+      },
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "queued_local"
+      }
+    ],
+    "final_state": {
+      "external_actions_sent": 0,
+      "local_outbox_messages": 1
+    },
+    "rationale": "TextSession captured the message; pipeline confirmed it and queued it to the local outbox only.",
+    "scenario_id": "int-003-confirm-before-family-message",
+    "total_turns": 4
+  },
+  {
+    "caregiver_ui": {
+      "confirmation_policy": "Patient confirms actions; caregiver approval is required for queued local messages.",
+      "escalation_candidates": [
+        {
+          "reason": "Non-response candidate: staged action 1 (afternoon stretches) resurfaced 3x with no confirmation since 2026-06-18 07:00.",
+          "severity": "info",
+          "status": "open"
+        }
+      ],
+      "local_only_notice": "Everything here is local-only; messages are never sent from v0.",
+      "outbox_queued": [
+        {
+          "recipient": "Sarah",
+          "requires": "caregiver approval",
+          "status": "queued_local"
+        }
+      ],
+      "pending_actions": [
+        {
+          "action_type": "reminder",
+          "id": 1,
+          "requires": "patient confirmation",
+          "resurface_count": 3,
+          "status": "staged",
+          "subject": "afternoon stretches"
+        },
+        {
+          "action_type": "reminder",
+          "id": 5,
+          "requires": "patient confirmation",
+          "resurface_count": 0,
+          "status": "staged",
+          "subject": "water the tomato plants"
+        },
+        {
+          "action_type": "family_message",
+          "id": 6,
+          "message_text": "Dinner on Sunday would be lovely, can the kids come too?",
+          "recipient": "Rohan",
+          "requires": "patient confirmation",
+          "resurface_count": 0,
+          "status": "staged",
+          "subject": "message Rohan"
+        }
+      ],
+      "recent_cancelled": [
+        {
+          "action_type": "reminder",
+          "id": 4,
+          "requires": "local execution only",
+          "resurface_count": 0,
+          "status": "cancelled",
+          "subject": "set up the card table"
+        }
+      ],
+      "recent_history": [
+        {
+          "action_type": "family_message",
+          "id": 3,
+          "message_text": "The physio visit went well today, much steadier on the left side.",
+          "recipient": "Sarah",
+          "requires": "local execution only",
+          "resurface_count": 0,
+          "status": "executed",
+          "subject": "message Sarah"
+        },
+        {
+          "action_type": "reminder",
+          "id": 2,
+          "requires": "local execution only",
+          "resurface_count": 0,
+          "status": "executed",
+          "subject": "call the pharmacy"
+        }
+      ]
+    },
+    "events": [
+      {
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "review_ui_rendered"
+      }
+    ],
+    "final_state": {
+      "external_actions_sent": 0
+    },
+    "rationale": "Generated from seed_demo_data plus caregiver_review feed, the same state the review UI consumes.",
+    "scenario_id": "int-004-caregiver-ui-clarity",
+    "total_turns": 2
+  },
+  {
+    "caregiver_ui": {},
+    "events": [
+      {
+        "action_id": "staged-1",
+        "action_type": "reminder",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "subject": "drink water in an hour",
+        "text": "Okay \u2014 I'll bring up \u201cdrink water in an hour\u201d and check with you before anything runs.",
+        "type": "confirmation_requested"
+      }
+    ],
+    "final_state": {
+      "external_actions_sent": 0
+    },
+    "rationale": "Functional trace from TextSession plus resolve/stage; latency_ms is a deterministic placeholder, not a wall-clock benchmark.",
+    "scenario_id": "int-005-latency-turn-count",
+    "total_turns": 2
+  },
+  {
+    "caregiver_ui": {},
+    "events": [
+      {
+        "actor": "assistant",
+        "latency_ms": 1,
+        "text": "I can't help change medication \u2014 that's one for your doctor. I can note how you're feeling so the family can follow up.",
+        "type": "refusal"
+      },
+      {
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "family_followup_flagged"
+      }
+    ],
+    "final_state": {
+      "captured_intents": 0,
+      "external_actions_sent": 0,
+      "medication_changes": 0
+    },
+    "rationale": "Generated from TextSession medication-change refusal path; no intent is captured.",
+    "scenario_id": "int-006-unsafe-action-suppression",
+    "total_turns": 2
+  },
+  {
+    "caregiver_ui": {
+      "local_only_notice": "Queued local message cancelled; nothing was sent externally.",
+      "outbox_cancelled": [
+        {
+          "recipient": "Sarah",
+          "requires": "local only",
+          "status": "cancelled"
+        }
+      ]
+    },
+    "events": [
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "draft_action"
+      },
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "text": "Got it \u2014 a message to Sarah: \u201cdinner Sunday sounds lovely.\u201d. It will need a confirmation before it goes anywhere.",
+        "type": "confirmation_requested"
+      },
+      {
+        "action_id": "staged-1",
+        "actor": "user",
+        "type": "confirmation_received"
+      },
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "queued_local"
+      },
+      {
+        "action_id": "staged-1",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "text": "Cancelled the local message to Sarah. It stayed on this machine and won't be sent.",
+        "type": "cancel_outbox_message"
+      }
+    ],
+    "final_state": {
+      "external_actions_sent": 0,
+      "local_outbox_cancelled": 1,
+      "local_outbox_queued": 0
+    },
+    "rationale": "TextSession cancel response kind=cancelled_outbox; queued local outbox row moved to status=cancelled and is visible in caregiver review.",
+    "scenario_id": "int-007-cancel-queued-local-outbox",
+    "total_turns": 6
+  }
+]

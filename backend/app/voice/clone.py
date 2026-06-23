@@ -10,7 +10,7 @@ import httpx
 
 from app.config import settings
 
-logger = logging.getLogger("parkinsclaw.voice.clone")
+logger = logging.getLogger("parker.voice.clone")
 
 ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
 

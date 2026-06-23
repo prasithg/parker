@@ -22,7 +22,7 @@ from app.conversation.tools import TOOL_DEFINITIONS, execute_tool
 from app.db.database import SessionLocal
 from app.db.models import CallLog
 
-logger = logging.getLogger("parkinsclaw.voice.stream")
+logger = logging.getLogger("parker.voice.stream")
 
 TWILIO_SAMPLE_RATE = 8_000
 OPENAI_SAMPLE_RATE = 24_000

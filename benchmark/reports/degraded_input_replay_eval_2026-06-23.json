@@ -1,0 +1,322 @@
+{
+  "baseline_metrics": {
+    "non_interactive_no_repair": {
+      "intent_recovery_accuracy": 0.0,
+      "median_turns_to_resolution": null,
+      "repair_initiated_rate": 0.0,
+      "safety_critical_misses": 0
+    },
+    "one_shot_keyword_baseline": {
+      "intent_recovery_accuracy": 0.6666666666666666,
+      "median_turns_to_resolution": 1.0,
+      "repair_initiated_rate": 0.0,
+      "safety_critical_misses": 0
+    },
+    "parker_repair_protocol": {
+      "intent_recovery_accuracy": 1.0,
+      "median_turns_to_resolution": 2,
+      "repair_initiated_rate": 1.0,
+      "safety_critical_misses": 0
+    }
+  },
+  "case_results": {
+    "non_interactive_no_repair": [
+      {
+        "action_type": null,
+        "baseline": "non_interactive_no_repair",
+        "case_id": "deg-001-reminder-tomato-evening",
+        "events": [
+          {
+            "actor": "user",
+            "text": "Remind... water... tomato plants this evening",
+            "type": "degraded_input"
+          },
+          {
+            "actor": "assistant",
+            "committed_action": false,
+            "type": "ask_repeat"
+          }
+        ],
+        "failure_reason": "no repair loop; asks the user to repeat and recovers no confirmed intent",
+        "recovered_intent": false,
+        "repair_initiated": false,
+        "safety_critical_miss": false,
+        "turns_to_resolution": null
+      },
+      {
+        "action_type": null,
+        "baseline": "non_interactive_no_repair",
+        "case_id": "deg-002-family-message-physio",
+        "events": [
+          {
+            "actor": "user",
+            "text": "Tell Sarah... physio visit... went really well today",
+            "type": "degraded_input"
+          },
+          {
+            "actor": "assistant",
+            "committed_action": false,
+            "type": "ask_repeat"
+          }
+        ],
+        "failure_reason": "no repair loop; asks the user to repeat and recovers no confirmed intent",
+        "recovered_intent": false,
+        "repair_initiated": false,
+        "safety_critical_miss": false,
+        "turns_to_resolution": null
+      },
+      {
+        "action_type": null,
+        "baseline": "non_interactive_no_repair",
+        "case_id": "deg-003-reminder-garden-call",
+        "events": [
+          {
+            "actor": "user",
+            "text": "The... garden... call... tomorrow morning",
+            "type": "degraded_input"
+          },
+          {
+            "actor": "assistant",
+            "committed_action": false,
+            "type": "ask_repeat"
+          }
+        ],
+        "failure_reason": "no repair loop; asks the user to repeat and recovers no confirmed intent",
+        "recovered_intent": false,
+        "repair_initiated": false,
+        "safety_critical_miss": false,
+        "turns_to_resolution": null
+      }
+    ],
+    "one_shot_keyword_baseline": [
+      {
+        "action_type": "reminder",
+        "baseline": "one_shot_keyword_baseline",
+        "case_id": "deg-001-reminder-tomato-evening",
+        "events": [
+          {
+            "actor": "user",
+            "text": "Remind... water... tomato plants this evening",
+            "type": "degraded_input"
+          },
+          {
+            "action_type": "reminder",
+            "actor": "assistant",
+            "committed_action": false,
+            "confirmed_intent": false,
+            "type": "one_shot_classification"
+          }
+        ],
+        "failure_reason": null,
+        "recovered_intent": true,
+        "repair_initiated": false,
+        "safety_critical_miss": false,
+        "turns_to_resolution": 1
+      },
+      {
+        "action_type": "family_message",
+        "baseline": "one_shot_keyword_baseline",
+        "case_id": "deg-002-family-message-physio",
+        "events": [
+          {
+            "actor": "user",
+            "text": "Tell Sarah... physio visit... went really well today",
+            "type": "degraded_input"
+          },
+          {
+            "action_type": "family_message",
+            "actor": "assistant",
+            "committed_action": false,
+            "confirmed_intent": false,
+            "type": "one_shot_classification"
+          }
+        ],
+        "failure_reason": null,
+        "recovered_intent": true,
+        "repair_initiated": false,
+        "safety_critical_miss": false,
+        "turns_to_resolution": 1
+      },
+      {
+        "action_type": null,
+        "baseline": "one_shot_keyword_baseline",
+        "case_id": "deg-003-reminder-garden-call",
+        "events": [
+          {
+            "actor": "user",
+            "text": "The... garden... call... tomorrow morning",
+            "type": "degraded_input"
+          },
+          {
+            "action_type": null,
+            "actor": "assistant",
+            "committed_action": false,
+            "confirmed_intent": false,
+            "type": "one_shot_classification"
+          }
+        ],
+        "failure_reason": "one-shot keyword baseline found no explicit reminder/message cue",
+        "recovered_intent": false,
+        "repair_initiated": false,
+        "safety_critical_miss": false,
+        "turns_to_resolution": null
+      }
+    ],
+    "parker_repair_protocol": [
+      {
+        "action_type": "reminder",
+        "baseline": "parker_repair_protocol",
+        "case_id": "deg-001-reminder-tomato-evening",
+        "events": [
+          {
+            "actor": "user",
+            "text": "Remind... water... tomato plants this evening",
+            "type": "degraded_input"
+          },
+          {
+            "actor": "assistant",
+            "choices": [
+              "set a reminder about this",
+              "send a family message about this",
+              "none of these"
+            ],
+            "committed_action": false,
+            "speech": "I want to make sure I understood. Did you mean: 1) set a reminder about this, 2) send a family message about this, or 3) none of these?",
+            "type": "choices"
+          },
+          {
+            "actor": "user",
+            "selection": "1",
+            "type": "repair_selection"
+          },
+          {
+            "action_type": "reminder",
+            "actor": "assistant",
+            "committed_action": true,
+            "speech": "Got it \u2014 I'll treat that as: set a reminder about this. I'll confirm before anything runs.",
+            "type": "captured"
+          }
+        ],
+        "failure_reason": null,
+        "recovered_intent": true,
+        "repair_initiated": true,
+        "safety_critical_miss": false,
+        "turns_to_resolution": 2
+      },
+      {
+        "action_type": "family_message",
+        "baseline": "parker_repair_protocol",
+        "case_id": "deg-002-family-message-physio",
+        "events": [
+          {
+            "actor": "user",
+            "text": "Tell Sarah... physio visit... went really well today",
+            "type": "degraded_input"
+          },
+          {
+            "actor": "assistant",
+            "choices": [
+              "set a reminder about this",
+              "send a family message about this",
+              "none of these"
+            ],
+            "committed_action": false,
+            "speech": "I want to make sure I understood. Did you mean: 1) set a reminder about this, 2) send a family message about this, or 3) none of these?",
+            "type": "choices"
+          },
+          {
+            "actor": "user",
+            "selection": "2",
+            "type": "repair_selection"
+          },
+          {
+            "action_type": "family_message",
+            "actor": "assistant",
+            "committed_action": true,
+            "speech": "Got it \u2014 I'll treat that as: send a family message about this. I'll confirm before anything runs.",
+            "type": "captured"
+          }
+        ],
+        "failure_reason": null,
+        "recovered_intent": true,
+        "repair_initiated": true,
+        "safety_critical_miss": false,
+        "turns_to_resolution": 2
+      },
+      {
+        "action_type": "reminder",
+        "baseline": "parker_repair_protocol",
+        "case_id": "deg-003-reminder-garden-call",
+        "events": [
+          {
+            "actor": "user",
+            "text": "The... garden... call... tomorrow morning",
+            "type": "degraded_input"
+          },
+          {
+            "actor": "assistant",
+            "choices": [
+              "set a reminder about this",
+              "send a family message about this",
+              "none of these"
+            ],
+            "committed_action": false,
+            "speech": "I want to make sure I understood. Did you mean: 1) set a reminder about this, 2) send a family message about this, or 3) none of these?",
+            "type": "choices"
+          },
+          {
+            "actor": "user",
+            "selection": "1",
+            "type": "repair_selection"
+          },
+          {
+            "action_type": "reminder",
+            "actor": "assistant",
+            "committed_action": true,
+            "speech": "Got it \u2014 I'll treat that as: set a reminder about this. I'll confirm before anything runs.",
+            "type": "captured"
+          }
+        ],
+        "failure_reason": null,
+        "recovered_intent": true,
+        "repair_initiated": true,
+        "safety_critical_miss": false,
+        "turns_to_resolution": 2
+      }
+    ]
+  },
+  "date": "2026-06-23",
+  "eval": "degraded_input_replay_v0",
+  "pre_registered_primary_metric": {
+    "citeable_count_scoped_result": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3; not real-speech/audio, patient, statistical, or clinical evidence.",
+    "delta": 1.0,
+    "delta_recovered_count": 3,
+    "name": "intent_recovery_accuracy_delta_vs_non_interactive",
+    "non_interactive_no_repair": 0.0,
+    "non_interactive_no_repair_recovered_count": 0,
+    "parker_recovered_count": 3,
+    "parker_repair_protocol": 1.0,
+    "safety_critical_misses": 0,
+    "success_threshold_delta": 0.34,
+    "synthetic_heldout_transcript_fixtures": 3,
+    "threshold_met": true
+  },
+  "provenance": {
+    "fixture_policy": "synthetic held-out transcript-level smoke check",
+    "grant_claim_status": "feasibility/checkpoint metric only; not real patient or audio evidence",
+    "model_or_api_dependency": "none",
+    "private_data": "none"
+  },
+  "secondary_comparisons": {
+    "one_shot_keyword_baseline": {
+      "baseline": "one_shot_keyword_baseline",
+      "baseline_intent_recovery_accuracy": 0.6666666666666666,
+      "baseline_safety_critical_misses": 0,
+      "delta_vs_parker": 0.33333333333333337,
+      "interpretation": "secondary comparator only: a one-shot transcript classifier with no repair, confirmation, or caregiver-visible state; useful for caveating the weak no-repair baseline",
+      "parker_repair_protocol": 1.0,
+      "parker_safety_critical_misses": 0
+    }
+  },
+  "total_cases": 3
+}

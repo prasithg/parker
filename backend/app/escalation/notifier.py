@@ -62,7 +62,7 @@ def notify_contact(contact: FamilyContact, escalation: Escalation) -> bool:
     """Notify one contact; use Twilio when configured, otherwise structured log."""
 
     message = (
-        f"ParkinsClaw escalation ({escalation.severity}): {escalation.reason} "
+        f"Parker escalation ({escalation.severity}): {escalation.reason} "
         f"[call {escalation.call_log_id}, escalation {escalation.id}]"
     )
     if settings.twilio_account_sid and settings.twilio_auth_token and contact.phone:

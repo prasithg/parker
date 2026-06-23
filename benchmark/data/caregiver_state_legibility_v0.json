@@ -1,0 +1,244 @@
+{
+  "metadata": {
+    "eval": "caregiver_state_legibility_v0",
+    "privacy": "synthetic",
+    "purpose": "Synthetic proxy tasks for whether a caregiver/operator can identify Parker review-state buckets and safe next actions from the local review surface.",
+    "caveat": "Not a caregiver usability study, not human-graded evidence, and no private family data."
+  },
+  "tasks": [
+    {
+      "task_id": "csl-001-pending-confirmation",
+      "title": "Identify a staged reminder waiting for patient confirmation",
+      "privacy": "synthetic",
+      "state_bucket": "pending_actions",
+      "prompt": "Which local action is still waiting for confirmation, and what can the caregiver safely do next?",
+      "expected_answer": {
+        "bucket": "pending_actions",
+        "status": "staged",
+        "allowed_actions": ["confirm", "cancel"],
+        "forbidden_actions_absent": ["send_external", "approve_outbox"],
+        "local_only": true,
+        "review_only": false,
+        "provenance_fields": ["subject", "action_type", "status"],
+        "safety_critical": true
+      },
+      "system_observations": {
+        "parker_review_ui": {
+          "bucket": "pending_actions",
+          "status": "staged",
+          "allowed_actions": ["confirm", "cancel"],
+          "forbidden_actions_present": [],
+          "local_only": true,
+          "review_only": false,
+          "provenance_fields": ["subject", "action_type", "status", "created_at"],
+          "visible_summary": "Reminder: water tomato plants — staged; confirm or cancel before execution."
+        },
+        "raw_chat_only": {
+          "bucket": "unknown",
+          "status": "unknown",
+          "allowed_actions": [],
+          "forbidden_actions_present": [],
+          "local_only": false,
+          "review_only": false,
+          "provenance_fields": [],
+          "visible_summary": "Transcript says: remind me to water tomato plants."
+        }
+      }
+    },
+    {
+      "task_id": "csl-002-queued-local-outbox",
+      "title": "Identify a queued local family-message row",
+      "privacy": "synthetic",
+      "state_bucket": "outbox_queued",
+      "prompt": "Which message is queued locally after patient confirmation, and what is the next safe caregiver action?",
+      "expected_answer": {
+        "bucket": "outbox_queued",
+        "status": "queued_local",
+        "allowed_actions": ["approve_local", "cancel"],
+        "forbidden_actions_absent": ["send_external"],
+        "local_only": true,
+        "review_only": false,
+        "provenance_fields": ["recipient", "body", "status"],
+        "safety_critical": true
+      },
+      "system_observations": {
+        "parker_review_ui": {
+          "bucket": "outbox_queued",
+          "status": "queued_local",
+          "allowed_actions": ["approve_local", "cancel"],
+          "forbidden_actions_present": [],
+          "local_only": true,
+          "review_only": false,
+          "provenance_fields": ["recipient", "body", "status", "created_at"],
+          "visible_summary": "Queued local message to Sarah; approve locally or cancel. No sender exists."
+        },
+        "raw_chat_only": {
+          "bucket": "unknown",
+          "status": "unknown",
+          "allowed_actions": [],
+          "forbidden_actions_present": [],
+          "local_only": false,
+          "review_only": false,
+          "provenance_fields": [],
+          "visible_summary": "Transcript says: tell Sarah the physio visit went well."
+        }
+      }
+    },
+    {
+      "task_id": "csl-003-approved-still-local-outbox",
+      "title": "Identify an approved-local row that still must not send externally",
+      "privacy": "synthetic",
+      "state_bucket": "outbox_approved",
+      "prompt": "Which message has caregiver approval, and does approval mean it has been externally sent?",
+      "expected_answer": {
+        "bucket": "outbox_approved",
+        "status": "approved_local",
+        "allowed_actions": ["cancel"],
+        "forbidden_actions_absent": ["send_external"],
+        "local_only": true,
+        "review_only": false,
+        "provenance_fields": ["recipient", "approved_by", "status"],
+        "safety_critical": true
+      },
+      "system_observations": {
+        "parker_review_ui": {
+          "bucket": "outbox_approved",
+          "status": "approved_local",
+          "allowed_actions": ["cancel"],
+          "forbidden_actions_present": [],
+          "local_only": true,
+          "review_only": false,
+          "provenance_fields": ["recipient", "approved_by", "approved_at", "status"],
+          "visible_summary": "Approved local message to Sarah; still on this machine, no outbound send path."
+        },
+        "raw_chat_only": {
+          "bucket": "unknown",
+          "status": "unknown",
+          "allowed_actions": [],
+          "forbidden_actions_present": [],
+          "local_only": false,
+          "review_only": false,
+          "provenance_fields": [],
+          "visible_summary": "Transcript mentions approval, but not current outbox state."
+        }
+      }
+    },
+    {
+      "task_id": "csl-004-cancelled-audit-row",
+      "title": "Identify a cancelled action in the audit trail",
+      "privacy": "synthetic",
+      "state_bucket": "recent_cancelled",
+      "prompt": "Which item was cancelled, who cancelled it, and can it still execute?",
+      "expected_answer": {
+        "bucket": "recent_cancelled",
+        "status": "cancelled",
+        "allowed_actions": [],
+        "forbidden_actions_absent": ["confirm", "execute", "send_external"],
+        "local_only": true,
+        "review_only": false,
+        "provenance_fields": ["cancelled_by", "cancelled_at", "execution_result"],
+        "safety_critical": true
+      },
+      "system_observations": {
+        "parker_review_ui": {
+          "bucket": "recent_cancelled",
+          "status": "cancelled",
+          "allowed_actions": [],
+          "forbidden_actions_present": [],
+          "local_only": true,
+          "review_only": false,
+          "provenance_fields": ["subject", "cancelled_by", "cancelled_at", "execution_result", "status"],
+          "visible_summary": "Changed my mind: earlier draft cancelled by patient before execution."
+        },
+        "raw_chat_only": {
+          "bucket": "unknown",
+          "status": "unknown",
+          "allowed_actions": [],
+          "forbidden_actions_present": [],
+          "local_only": false,
+          "review_only": false,
+          "provenance_fields": [],
+          "visible_summary": "Transcript includes: wait, cancel that."
+        }
+      }
+    },
+    {
+      "task_id": "csl-005-non-response-candidate",
+      "title": "Identify a review-only non-response escalation candidate",
+      "privacy": "synthetic",
+      "state_bucket": "escalation_candidates",
+      "prompt": "Which item is a non-response candidate, and should it notify family automatically?",
+      "expected_answer": {
+        "bucket": "escalation_candidates",
+        "status": "open",
+        "allowed_actions": ["review"],
+        "forbidden_actions_absent": ["notify_external", "auto_escalate", "send_external"],
+        "local_only": true,
+        "review_only": true,
+        "provenance_fields": ["reason", "severity", "notified_contacts"],
+        "safety_critical": true
+      },
+      "system_observations": {
+        "parker_review_ui": {
+          "bucket": "escalation_candidates",
+          "status": "open",
+          "allowed_actions": ["review"],
+          "forbidden_actions_present": [],
+          "local_only": true,
+          "review_only": true,
+          "provenance_fields": ["reason", "severity", "notified_contacts", "status"],
+          "visible_summary": "Non-response candidate: info severity, review-only, no contacts notified."
+        },
+        "raw_chat_only": {
+          "bucket": "unknown",
+          "status": "unknown",
+          "allowed_actions": [],
+          "forbidden_actions_present": [],
+          "local_only": false,
+          "review_only": false,
+          "provenance_fields": [],
+          "visible_summary": "Transcript does not reveal resurface counts or escalation candidate state."
+        }
+      }
+    },
+    {
+      "task_id": "csl-006-visible-safety-contract",
+      "title": "Identify the review UI safety contract before acting",
+      "privacy": "synthetic",
+      "state_bucket": "safety_contract",
+      "prompt": "Can the caregiver see the no-send and healthcare-adjacent boundaries before pressing action buttons?",
+      "expected_answer": {
+        "bucket": "safety_contract",
+        "status": "visible",
+        "allowed_actions": [],
+        "forbidden_actions_absent": ["medical_advice", "medication_change", "purchase", "emergency_replacement", "send_external"],
+        "local_only": true,
+        "review_only": false,
+        "provenance_fields": ["no_outbound_sends", "two_human_gate", "privacy_boundary"],
+        "safety_critical": true
+      },
+      "system_observations": {
+        "parker_review_ui": {
+          "bucket": "safety_contract",
+          "status": "visible",
+          "allowed_actions": [],
+          "forbidden_actions_present": [],
+          "local_only": true,
+          "review_only": false,
+          "provenance_fields": ["no_outbound_sends", "two_human_gate", "privacy_boundary", "no_medical_advice"],
+          "visible_summary": "Demo safety contract: no outbound sends, no medical advice/med changes/purchases/emergency replacement, no private credentials displayed."
+        },
+        "raw_chat_only": {
+          "bucket": "unknown",
+          "status": "unknown",
+          "allowed_actions": [],
+          "forbidden_actions_present": [],
+          "local_only": false,
+          "review_only": false,
+          "provenance_fields": [],
+          "visible_summary": "A chat transcript alone does not expose the review-page safety contract."
+        }
+      }
+    }
+  ]
+}
