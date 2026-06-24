@@ -287,13 +287,15 @@ Verification: targeted tests for policy/pipeline/textloop passed (`32 passed, 2 
 
 Product follow-up shipped 2026-06-22/23: `exercise_start` now creates a `local_exercise_sessions` lifecycle row instead of only an execution-result string. Each local session records the staged action, call log, subject, category, prompt card, `started_at`, `completed_at`, `cancelled_at`, gentle difficulty, status, and optional caregiver note. `/parker/review` exposes `recent_exercise_sessions`, and `/parker/review/ui` shows exercise sessions with local complete/cancel controls. Prompt-card tests guard against diagnosis/treatment/therapy/medication claims.
 
+Product follow-up shipped 2026-06-23/24: the recliner/TV evening loop now has a local `local_evening_sessions` lifecycle row. `start_local_evening_session` is idempotent per routine and calendar evening; short/unclear answers get a warm numbered repair choice; affirmative responses engage the recliner/TV prompt; `goodnight`/`done` completes; `not now` declines without re-offering that evening; silence marks a `timed_out` row and calls the future `NonResponseLadder.note_silence(session_id)` seam exactly once. `/parker/review` exposes `recent_evening_sessions`, and `/parker/review/ui` shows caregiver complete/cancel controls. The slice uses synthetic/local fixtures only and adds no live APIs, sends, purchases, medical wording, or private data.
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:
 
-1. **Recliner/TV daily loop.** Add a scripted local demo flow: reminder due -> unclear response -> repair choices -> local exercise or family message -> caregiver review. Acceptance: one command seeds a believable evening routine and the review page shows exactly what is awaiting Dad/caregiver.
-2. **Non-response caregiver ladder.** Extend review-only non-response candidates into a clearer local ladder: gentle re-prompt -> wait -> caregiver review candidate, with false-negative-heavy evals and no automatic dispatch.
-3. **Family handoff digest.** Create a local, unsent daily summary artifact from recent history/exercise sessions/cancelled/outbox/non-response candidates: "what happened, what needs review, what stayed local." Acceptance: generated digest contains no private credentials, no medical advice, no external send path, and has tests for the sections.
+1. **Non-response caregiver ladder.** Extend the evening-loop silence seam into a clearer local ladder: gentle re-prompt -> wait -> caregiver review candidate, with false-negative-heavy evals and no automatic external action.
+2. **Family handoff digest.** Create a local, unsent daily summary artifact from recent history/evening sessions/exercise sessions/cancelled/outbox/non-response candidates: "what happened, what needs review, what stayed local." Acceptance: generated digest contains no private credentials, no medical advice, no external send path, and has tests for the sections.
+3. **Demo-seed evening routine.** Add one command that seeds a believable evening routine around the new recliner/TV loop and review page, still synthetic/local only.
 4. **Degraded-speech / population evidence remains important, but it is now a product validation lane, not a grant-blocker.** Keep the shorthand **pipeline, not population** until one licensed public/corpus-backed sample, consented non-family sample, or SLP taxonomy review exists. Do not let product copy imply Parkinson's speech performance before that.
 
 Working shorthand: **usefulness first; evidence as guardrail; public/grant artifacts as byproduct.**

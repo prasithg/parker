@@ -21,7 +21,7 @@ Legacy note: the codebase began as "ParkinsClaw," a scheduled-outbound-call comp
 | Escalate/Coordinate | Notify family per policy; severity routing; candidate escalation when the user does not respond | `backend/app/escalation/` (engine, notifier, models), `backend/app/escalation/candidates.py` | Severity-routed escalation engine exists. The non-response escalation candidates path is candidate-only, review-only, `info` severity, and never auto-dispatched. |
 | Learn | Memory of the user, family, routines, preferences; eval feedback | `backend/app/memory/`, `benchmark/`, `docs/task-taxonomy.md` | Basic memory store + context builder exists. Accountability now comes from 24 synthetic fixtures, task-taxonomy eval, interactivity trace eval, Parker-generated demo trace eval, degraded-input replay, claim→metric overclaim guard, construct-validity matrix guard, and repair-quality spot checks. |
 
-Supporting modules: `backend/app/meds/` (dose tracking + photo-based dose verification), `backend/app/exercises/` (cognitive exercise library plus Parker local exercise-session lifecycle rows), `backend/app/calls/` and `backend/app/voice/stream.py` (legacy Twilio/realtime call scaffolding), and `backend/app/dashboard/` (family/operator API). The v0 demo path is the Parker text/voice/review pipeline above, not the legacy outbound-call loop.
+Supporting modules: `backend/app/meds/` (dose tracking + photo-based dose verification), `backend/app/exercises/` (cognitive exercise library plus Parker local exercise-session lifecycle rows), `backend/app/evening/` (local recliner/TV evening-loop lifecycle rows), `backend/app/calls/` and `backend/app/voice/stream.py` (legacy Twilio/realtime call scaffolding), and `backend/app/dashboard/` (family/operator API). The v0 demo path is the Parker text/voice/review pipeline above, not the legacy outbound-call loop.
 
 ## 2. Capability taxonomy
 
@@ -65,7 +65,7 @@ Protocol rules:
 3. The set of executable action types comes from `policy.executable_v0_action_types()` — never inlined in pipeline code.
 4. Prohibited types are refused at resolution, regardless of confirmation.
 5. Unknown types are treated as irreversible until classified.
-6. "Execute" must produce a local, reversible artifact: reminders resurface locally; exercise starts create `local_exercise_sessions` rows with category, prompt card, started/completed/cancelled state, perceived difficulty, and optional caregiver note; confirmed family messages queue to the local outbox (`outbox_messages`, cancellable via `POST /parker/outbox/{id}/cancel`).
+6. "Execute" must produce a local, reversible artifact: reminders resurface locally; exercise starts create `local_exercise_sessions` rows with category, prompt card, started/completed/cancelled state, perceived difficulty, and optional caregiver note; evening routines create `local_evening_sessions` rows with idempotent one-row-per-evening state, repair/comfort prompt cards, silence timeout evidence, and caregiver complete/cancel controls; confirmed family messages queue to the local outbox (`outbox_messages`, cancellable via `POST /parker/outbox/{id}/cancel`).
 7. Outbound messages carry a two-human gate: the patient confirms (queues to `queued_local`), then a caregiver approves (`POST /parker/outbox/{id}/approve` → `approved_local`, still on-machine). A future sender — which does not exist in v0 — must only ever consider `approved_local` rows behind an explicit config flag.
 
 ## 4. Confirmation policy

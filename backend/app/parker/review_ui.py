@@ -74,6 +74,9 @@ approving marks it reviewed; nothing is ever sent externally from this page.</p>
 <h2 id="h-exercise-sessions">Exercise sessions</h2>
 <div id="exercise-sessions"></div>
 
+<h2 id="h-evening-sessions">Evening loop</h2>
+<div id="evening-sessions"></div>
+
 <h2 id="h-cancelled">Changed my mind (cancelled)</h2>
 <div id="cancelled"></div>
 <div id="cancelled-messages"></div>
@@ -166,6 +169,22 @@ function exerciseSessionCard(s) {
   return card;
 }
 
+function eveningSessionCard(s) {
+  const note = s.caregiver_note ? ` · note: ${s.caregiver_note}` : '';
+  const card = el(`<div class="card"><b>Recliner/TV check-in</b><span class="badge ${s.status}">${s.status}</span>
+    <div class="meta">${s.evening_date} · started ${s.started_at ?? '—'}${note}</div>
+    <div class="meta">Prompt card: ${s.prompt_card}</div></div>`);
+  if (['offered', 'engaged', 'timed_out'].includes(s.status)) {
+    const done = el('<button class="primary">Mark complete</button>');
+    done.onclick = () => post(`/parker/evening/${s.id}/complete`, {caregiver_note: 'completed from review page'});
+    card.appendChild(done);
+    const cancel = el('<button class="danger">Cancel evening loop</button>');
+    cancel.onclick = () => post(`/parker/evening/${s.id}/cancel`, {caregiver_note: 'cancelled from review page'});
+    card.appendChild(cancel);
+  }
+  return card;
+}
+
 function cancelledActionCard(a) {
   const what = a.action_type === 'family_message'
     ? `Message to <b>${a.recipient ?? '(no recipient)'}</b>: “${a.message_text ?? ''}”`
@@ -197,6 +216,7 @@ async function load() {
   fill('escalations', data.open_escalations, escalationCard, 'No open escalations.', 'Other open escalations');
   fill('history', data.recent_history, historyCard, 'Nothing executed yet.', 'Recently done (stayed on this machine)');
   fill('exercise-sessions', data.recent_exercise_sessions, exerciseSessionCard, 'No exercise sessions yet.', 'Exercise sessions');
+  fill('evening-sessions', data.recent_evening_sessions, eveningSessionCard, 'No evening-loop sessions yet.', 'Evening loop');
   const cancelledTotal = data.recent_cancelled.length + data.outbox_cancelled.length;
   fill('cancelled', data.recent_cancelled, cancelledActionCard, cancelledTotal ? '' : 'Nothing cancelled.', null);
   fill('cancelled-messages', data.outbox_cancelled, cancelledMessageCard, '', null);

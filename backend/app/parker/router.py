@@ -13,6 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.db.models import OutboxMessage, StagedAction
+from app.evening.session import (
+    LocalEveningSession,
+    cancel_local_evening_session,
+    complete_local_evening_session,
+    list_recent_local_evening_sessions,
+)
 from app.exercises.session import (
     LocalExerciseSession,
     cancel_local_exercise_session,
@@ -65,6 +71,16 @@ class CompleteExerciseRequest(BaseModel):
 
 
 class CancelExerciseRequest(BaseModel):
+    caregiver_note: str | None = None
+    now: datetime | None = None
+
+
+class CompleteEveningRequest(BaseModel):
+    caregiver_note: str | None = None
+    now: datetime | None = None
+
+
+class CancelEveningRequest(BaseModel):
     caregiver_note: str | None = None
     now: datetime | None = None
 
@@ -202,10 +218,52 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
             _serialize_exercise_session(session)
             for session in list_recent_local_exercise_sessions(db, limit=RECENT_HISTORY_LIMIT)
         ],
+        "recent_evening_sessions": [
+            _serialize_evening_session(session)
+            for session in list_recent_local_evening_sessions(db, limit=RECENT_HISTORY_LIMIT)
+        ],
         "recent_history": [_serialize_action(action) for action in history],
         "recent_cancelled": [_serialize_action(action) for action in cancelled_actions],
         "outbox_cancelled": [_serialize_outbox_message(message) for message in cancelled_messages],
     }
+
+
+@router.post("/evening/{session_id}/complete", dependencies=[Depends(require_dashboard_auth)])
+def complete_evening_session(
+    session_id: int,
+    payload: CompleteEveningRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Caregiver marks a local evening-loop session completed."""
+
+    session = complete_local_evening_session(
+        db,
+        session_id,
+        caregiver_note=payload.caregiver_note,
+        now=payload.now,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Evening session not found: {session_id}")
+    return _serialize_evening_session(session)
+
+
+@router.post("/evening/{session_id}/cancel", dependencies=[Depends(require_dashboard_auth)])
+def cancel_evening_session(
+    session_id: int,
+    payload: CancelEveningRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Caregiver cancels a local evening-loop session."""
+
+    session = cancel_local_evening_session(
+        db,
+        session_id,
+        caregiver_note=payload.caregiver_note,
+        now=payload.now,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Evening session not found: {session_id}")
+    return _serialize_evening_session(session)
 
 
 @router.post("/exercises/{session_id}/complete", dependencies=[Depends(require_dashboard_auth)])
@@ -312,6 +370,26 @@ def _serialize_outbox_message(message: OutboxMessage) -> dict[str, Any]:
         "approved_by": message.approved_by,
         "approved_at": message.approved_at.isoformat() if message.approved_at else None,
         "cancelled_at": message.cancelled_at.isoformat() if message.cancelled_at else None,
+    }
+
+
+def _serialize_evening_session(session: LocalEveningSession) -> dict[str, Any]:
+    return {
+        "id": session.id,
+        "routine_key": session.routine_key,
+        "evening_date": session.evening_date,
+        "status": session.status,
+        "prompt_card": session.prompt_card,
+        "last_response": session.last_response,
+        "caregiver_note": session.caregiver_note,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        "engaged_at": session.engaged_at.isoformat() if session.engaged_at else None,
+        "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+        "declined_at": session.declined_at.isoformat() if session.declined_at else None,
+        "timed_out_at": session.timed_out_at.isoformat() if session.timed_out_at else None,
+        "cancelled_at": session.cancelled_at.isoformat() if session.cancelled_at else None,
+        "silence_noted_at": session.silence_noted_at.isoformat() if session.silence_noted_at else None,
     }
 
 
