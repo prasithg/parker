@@ -17,6 +17,7 @@ def create_tables():
     """Create all tables (v0 — no Alembic migration yet)."""
     from app.db.models import Base  # noqa: F811 — ensure core models imported
     import app.escalation.models  # noqa: F401
+    import app.evening.session  # noqa: F401
     import app.exercises.session  # noqa: F401
     import app.memory.models  # noqa: F401
 

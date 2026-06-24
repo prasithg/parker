@@ -69,6 +69,17 @@ def test_evening_loop_unclear_short_response_offers_numbered_repair_choice(db):
         assert forbidden not in repaired.prompt_card.lower()
 
 
+def test_evening_loop_done_from_offer_completes_repair_option(db):
+    session = start_local_evening_session(db, now="2026-06-23T19:00:00")
+
+    completed = record_evening_response(db, session.id, "done", now="2026-06-23T19:02:00")
+
+    assert completed.status == "completed"
+    assert completed.completed_at is not None
+    assert completed.completed_at.isoformat() == "2026-06-23T19:02:00"
+    assert "quiet night" in completed.prompt_card.lower()
+
+
 def test_evening_loop_engagement_path_completes_without_medical_language(db):
     session = start_local_evening_session(db, now="2026-06-23T19:00:00")
 
@@ -108,6 +119,47 @@ def test_evening_loop_silence_times_out_and_calls_nonresponse_ladder_once(db):
     assert repeated.status == "timed_out"
     assert timed_out.timed_out_at.isoformat() == "2026-06-23T19:05:00"
     assert ladder.calls == [session.id]
+
+
+def test_evening_loop_silence_after_terminal_session_is_noop(db):
+    declined = start_local_evening_session(db, now="2026-06-23T19:00:00")
+    declined = record_evening_response(db, declined.id, "not now", now="2026-06-23T19:01:00")
+    cancelled = start_local_evening_session(db, now="2026-06-24T19:00:00")
+    cancelled = cancel_local_evening_session(db, cancelled.id, now="2026-06-24T19:02:00")
+    assert cancelled is not None
+    completed = start_local_evening_session(db, now="2026-06-25T19:00:00")
+    completed = record_evening_response(db, completed.id, "done", now="2026-06-25T19:01:00")
+    ladder = StubNonResponseLadder()
+
+    for session in (declined, cancelled, completed):
+        before_status = session.status
+        result = note_evening_silence(
+            db,
+            session.id,
+            non_response_ladder=ladder,
+            now="2026-06-26T19:05:00",
+        )
+        assert result.status == before_status
+        assert result.silence_noted_at is None
+
+    assert ladder.calls == []
+
+
+def test_caregiver_complete_declined_evening_session_is_noop(db):
+    session = start_local_evening_session(db, now="2026-06-23T19:00:00")
+    declined = record_evening_response(db, session.id, "not now", now="2026-06-23T19:01:00")
+
+    result = complete_local_evening_session(
+        db,
+        declined.id,
+        caregiver_note="caregiver tried to mark done after decline",
+        now="2026-06-23T19:20:00",
+    )
+
+    assert result is not None
+    assert result.status == "declined"
+    assert result.completed_at is None
+    assert result.caregiver_note is None
 
 
 def test_caregiver_review_surfaces_evening_sessions_and_review_controls(db):
@@ -169,3 +221,12 @@ def test_evening_loop_module_has_no_outbound_network_surface():
     assert "httpx" not in source
     assert "send_message" not in source
     assert "dispatch" not in source
+
+
+def test_create_tables_imports_evening_session_model_directly():
+    import inspect
+    import app.db.database as database
+
+    source = inspect.getsource(database.create_tables)
+
+    assert "app.evening.session" in source

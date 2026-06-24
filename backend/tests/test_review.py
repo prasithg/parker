@@ -144,6 +144,17 @@ def test_review_ui_serves_local_html_page(db):
     assert "https://" not in response.text
 
 
+def test_review_ui_does_not_interpolate_evening_notes_as_html(db):
+    client = TestClient(app)
+
+    page = client.get("/parker/review/ui").text
+
+    assert "${s.caregiver_note}" not in page
+    assert "${s.prompt_card}" not in page
+    assert "textContent = s.caregiver_note" in page
+    assert "textContent = s.prompt_card" in page
+
+
 def test_approved_message_moves_between_review_buckets(db):
     call = _call(db)
     message = _staged(

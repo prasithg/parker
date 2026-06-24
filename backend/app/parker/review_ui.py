@@ -154,10 +154,35 @@ function historyCard(a) {
 }
 
 function exerciseSessionCard(s) {
-  const note = s.caregiver_note ? ` · note: ${s.caregiver_note}` : '';
-  const card = el(`<div class="card"><b>${s.subject}</b><span class="badge ${s.status}">${s.status}</span>
-    <div class="meta">${s.category} · ${s.difficulty} · started ${s.started_at ?? '—'}${note}</div>
-    <div class="meta">Prompt card: ${s.prompt_card}</div></div>`);
+  const card = document.createElement('div');
+  card.className = 'card';
+  const title = document.createElement('b');
+  title.textContent = s.subject;
+  card.appendChild(title);
+  const badge = document.createElement('span');
+  badge.className = `badge ${s.status}`;
+  badge.textContent = s.status;
+  card.appendChild(badge);
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.appendChild(document.createTextNode(`${s.category} · ${s.difficulty} · started ${s.started_at ?? '—'}`));
+  if (s.caregiver_note) {
+    meta.appendChild(document.createTextNode(' · note: '));
+    const noteText = document.createElement('span');
+    noteText.textContent = s.caregiver_note;
+    meta.appendChild(noteText);
+  }
+  card.appendChild(meta);
+
+  const prompt = document.createElement('div');
+  prompt.className = 'meta';
+  prompt.appendChild(document.createTextNode('Prompt card: '));
+  const promptText = document.createElement('span');
+  promptText.textContent = s.prompt_card;
+  prompt.appendChild(promptText);
+  card.appendChild(prompt);
+
   if (s.status === 'started') {
     const done = el('<button class="primary">Mark complete</button>');
     done.onclick = () => post(`/parker/exercises/${s.id}/complete`, {caregiver_note: 'completed from review page'});
@@ -170,10 +195,35 @@ function exerciseSessionCard(s) {
 }
 
 function eveningSessionCard(s) {
-  const note = s.caregiver_note ? ` · note: ${s.caregiver_note}` : '';
-  const card = el(`<div class="card"><b>Recliner/TV check-in</b><span class="badge ${s.status}">${s.status}</span>
-    <div class="meta">${s.evening_date} · started ${s.started_at ?? '—'}${note}</div>
-    <div class="meta">Prompt card: ${s.prompt_card}</div></div>`);
+  const card = document.createElement('div');
+  card.className = 'card';
+  const title = document.createElement('b');
+  title.textContent = 'Recliner/TV check-in';
+  card.appendChild(title);
+  const badge = document.createElement('span');
+  badge.className = `badge ${s.status}`;
+  badge.textContent = s.status;
+  card.appendChild(badge);
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.appendChild(document.createTextNode(`${s.evening_date} · started ${s.started_at ?? '—'}`));
+  if (s.caregiver_note) {
+    meta.appendChild(document.createTextNode(' · note: '));
+    const noteText = document.createElement('span');
+    noteText.textContent = s.caregiver_note;
+    meta.appendChild(noteText);
+  }
+  card.appendChild(meta);
+
+  const prompt = document.createElement('div');
+  prompt.className = 'meta';
+  prompt.appendChild(document.createTextNode('Prompt card: '));
+  const promptText = document.createElement('span');
+  promptText.textContent = s.prompt_card;
+  prompt.appendChild(promptText);
+  card.appendChild(prompt);
+
   if (['offered', 'engaged', 'timed_out'].includes(s.status)) {
     const done = el('<button class="primary">Mark complete</button>');
     done.onclick = () => post(`/parker/evening/${s.id}/complete`, {caregiver_note: 'completed from review page'});

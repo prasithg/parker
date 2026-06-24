@@ -133,7 +133,7 @@ def record_evening_response(
         session.status = "cancelled"
         session.cancelled_at = current
         session.prompt_card = "Okay, I cancelled tonight's local evening check-in."
-    elif session.status == "engaged" and _looks_done(lowered):
+    elif _looks_done(lowered):
         session.status = "completed"
         session.completed_at = current
         session.prompt_card = "All set. Have a quiet night. I'll leave this note for caregiver review."
@@ -161,13 +161,15 @@ def note_evening_silence(
 
     session = _get_session(db, session_id)
     current = _coerce_datetime(now) or datetime.utcnow()
-    if session.status not in _TERMINAL_STATUSES:
-        session.status = "timed_out"
-        session.timed_out_at = current
-        session.prompt_card = (
-            "I did not catch an answer, so I paused tonight's recliner and TV check-in "
-            "and left it here for caregiver review."
-        )
+    if session.status in _TERMINAL_STATUSES:
+        return session
+
+    session.status = "timed_out"
+    session.timed_out_at = current
+    session.prompt_card = (
+        "I did not catch an answer, so I paused tonight's recliner and TV check-in "
+        "and left it here for caregiver review."
+    )
     if session.silence_noted_at is None:
         session.silence_noted_at = current
         if non_response_ladder is not None:
@@ -190,14 +192,16 @@ def complete_local_evening_session(
     session = db.get(LocalEveningSession, session_id)
     if session is None:
         return None
-    if session.status not in {"completed", "cancelled"}:
-        current = _coerce_datetime(now) or datetime.utcnow()
-        session.status = "completed"
-        session.completed_at = current
-        session.caregiver_note = caregiver_note
-        session.updated_at = current
-        db.commit()
-        db.refresh(session)
+    if session.status in {"declined", "completed", "cancelled"}:
+        return session
+
+    current = _coerce_datetime(now) or datetime.utcnow()
+    session.status = "completed"
+    session.completed_at = current
+    session.caregiver_note = caregiver_note
+    session.updated_at = current
+    db.commit()
+    db.refresh(session)
     return session
 
 
