@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-grant-source-citations eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-grant-source-citations eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -64,6 +64,11 @@ eval-construct-validity:
 # of citable quality claims. This is synthetic/static, not human-graded evidence.
 eval-repair-quality-rubric:
 	python3 benchmark/evaluate_repair_quality_rubric_v0.py --write-report
+
+# Audio Autodata repair fixtures: validates metadata-only public/synthetic
+# audio-derived ASR failure cases and their safe repair/confirmation targets.
+eval-audio-autodata:
+	python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report
 
 # Public-source citation guard: keeps grant program facts grounded in public
 # Thinking Machines pages and separate from private/admin fields.

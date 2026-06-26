@@ -96,6 +96,20 @@ CANCEL_ONLY_REVISION_FRAGMENTS = {
     "that note",
     "this note",
 }
+CONTENTLESS_MESSAGE_BODIES = {
+    "",
+    "it",
+    "that",
+    "this",
+    "yet",
+    "not yet",
+    "later",
+    "now",
+    "today",
+    "tomorrow",
+    "tonight",
+    "please",
+}
 
 
 def _build_model_client() -> "Any | None":
@@ -129,6 +143,20 @@ def _looks_like_emergency_substitution(lowered: str) -> bool:
 
 def _looks_like_sensitive_private_disclosure(lowered: str) -> bool:
     return any(word in lowered for word in PRIVATE_DISCLOSURE_WORDS)
+
+
+def _message_body_needs_clarification(body: str) -> bool:
+    """Return true when ASR likely preserved a message cue but lost the body.
+
+    This guards a real audio failure mode from the Autodata lane: a clipped
+    negated utterance like "Do not message Sarah yet" can become
+    "message Sarah yet". That must not create even a local draft; Parker should
+    ask for the actual message body instead.
+    """
+
+    normalized = re.sub(r"[,.!?]+", " ", body).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized in CONTENTLESS_MESSAGE_BODIES or normalized.startswith(("not yet ", "later "))
 
 
 def _looks_like_medical_advice(lowered: str) -> bool:
@@ -271,6 +299,14 @@ class TextSession:
         match = MESSAGE_PATTERN.match(utterance) or SEND_PATTERN.match(utterance)
         if match:
             recipient, body = match.group(1), match.group(2).strip()
+            if _message_body_needs_clarification(body):
+                return {
+                    "kind": "clarify",
+                    "speech": (
+                        f"I heard a message to {recipient}, but not what to say. "
+                        "I won't draft or send anything unless you tell me the message."
+                    ),
+                }
             return self._capture(
                 intent_text=body,
                 requested_action="message",

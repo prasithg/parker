@@ -1,0 +1,396 @@
+"""Audio-derived Parker Autodata fixture evaluator.
+
+This evaluator is intentionally deterministic and metadata-only. It does not
+read raw audio; the nightly Operations lane runs local ASR and stores selected
+public-safe hypotheses here as fixtures. The gate checks whether the data unit
+has the shape Parker needs for audio -> ASR -> repair/confirm -> safe action or
+safe no-action learning.
+
+Usage:
+    python3 benchmark/evaluate_audio_repair_autodata_v0.py
+    python3 benchmark/evaluate_audio_repair_autodata_v0.py --json
+    python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CASES_PATH = REPO_ROOT / "benchmark" / "data" / "audio_repair_autodata_v0.json"
+DEFAULT_REPORTS_DIR = REPO_ROOT / "benchmark" / "reports"
+
+SOURCE_TYPES = {"synthetic_audio_derived", "public_corpus_audio_derived"}
+SAFE_FINAL_ACTIONS = {None, "reminder", "family_message", "exercise_start", "media_playlist"}
+SIDE_EFFECT_ACTIONS = {"reminder", "family_message", "exercise_start", "media_playlist"}
+PROHIBITED_ACTIONS = {"medication_change", "medical_advice", "emergency_response", "privacy_disclosure", "purchase"}
+
+
+@dataclass(frozen=True)
+class AudioAutodataCase:
+    """One audio-derived repair/autodata fixture."""
+
+    case_id: str
+    source_type: str
+    clean_phrase: str
+    asr_hypotheses: list[str]
+    clean_intent: dict[str, Any]
+    weak_current: dict[str, Any]
+    strong_oracle: dict[str, Any]
+    repair_target: dict[str, Any]
+    final_confirmed_action: dict[str, Any]
+    safety: dict[str, Any]
+    judge: dict[str, Any]
+    confusion_pairs: list[str]
+    provenance: dict[str, Any]
+    scenario: dict[str, Any]
+    rubric: dict[str, float]
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> "AudioAutodataCase":
+        required = {
+            "case_id",
+            "source_type",
+            "provenance",
+            "scenario",
+            "clean_phrase",
+            "clean_intent",
+            "asr_hypotheses",
+            "weak_current",
+            "strong_oracle",
+            "repair_target",
+            "final_confirmed_action",
+            "safety",
+            "rubric",
+            "judge",
+            "confusion_pairs",
+        }
+        missing = required - set(row)
+        case_id = str(row.get("case_id", "<unknown>"))
+        if missing:
+            raise ValueError(f"audio-autodata case {case_id} missing fields: {sorted(missing)}")
+        source_type = str(row["source_type"])
+        if source_type not in SOURCE_TYPES:
+            raise ValueError(f"audio-autodata case {case_id} invalid source_type: {source_type}")
+        if not isinstance(row["asr_hypotheses"], list):
+            raise ValueError(f"audio-autodata case {case_id} asr_hypotheses must be a list")
+        if not row["asr_hypotheses"] and row["weak_current"].get("result") != "empty_asr":
+            raise ValueError(f"audio-autodata case {case_id} empty ASR must be labelled result=empty_asr")
+        for object_field in (
+            "provenance",
+            "scenario",
+            "clean_intent",
+            "weak_current",
+            "strong_oracle",
+            "repair_target",
+            "final_confirmed_action",
+            "safety",
+            "judge",
+            "rubric",
+        ):
+            if not isinstance(row[object_field], dict):
+                raise ValueError(f"audio-autodata case {case_id} {object_field} must be an object")
+        if not isinstance(row["confusion_pairs"], list) or not row["confusion_pairs"]:
+            raise ValueError(f"audio-autodata case {case_id} needs confusion_pairs")
+        return cls(
+            case_id=case_id,
+            source_type=source_type,
+            clean_phrase=str(row["clean_phrase"]),
+            asr_hypotheses=[str(item) for item in row["asr_hypotheses"]],
+            clean_intent=row["clean_intent"],
+            weak_current=row["weak_current"],
+            strong_oracle=row["strong_oracle"],
+            repair_target=row["repair_target"],
+            final_confirmed_action=row["final_confirmed_action"],
+            safety=row["safety"],
+            judge=row["judge"],
+            confusion_pairs=[str(item) for item in row["confusion_pairs"]],
+            provenance=row["provenance"],
+            scenario=row["scenario"],
+            rubric={str(key): float(value) for key, value in row["rubric"].items()},
+        )
+
+    @property
+    def accepted(self) -> bool:
+        return bool(self.judge.get("accepted"))
+
+    @property
+    def final_action_type(self) -> str | None:
+        value = self.final_confirmed_action.get("action_type")
+        return None if value is None else str(value)
+
+    @property
+    def safety_label(self) -> str:
+        return str(self.safety.get("label", ""))
+
+
+@dataclass(frozen=True)
+class AudioAutodataEvalResult:
+    """Aggregate audio-autodata fixture gate."""
+
+    cases: list[AudioAutodataCase]
+    validation_failures: list[dict[str, str]]
+
+    def metrics(self) -> dict[str, Any]:
+        total = len(self.cases)
+        accepted = [case for case in self.cases if case.accepted]
+        public = [case for case in self.cases if case.source_type == "public_corpus_audio_derived"]
+        synthetic = [case for case in self.cases if case.source_type == "synthetic_audio_derived"]
+        hard_negative = [
+            case
+            for case in self.cases
+            if "hard_negative" in case.safety_label or case.final_action_type is None
+        ]
+        safety_critical = [
+            case
+            for case in self.cases
+            if "safety_critical" in case.safety_label or "health_adjacent" in case.safety_label
+        ]
+        weak_useful_failures = [case for case in self.cases if case.weak_current.get("useful_failure")]
+        strong_recovered = [
+            case
+            for case in self.cases
+            if case.strong_oracle.get("result") in {"recovered", "safe_no_action"}
+        ]
+        unsafe_accepted = [
+            case
+            for case in accepted
+            if case.final_action_type in PROHIBITED_ACTIONS or case.safety.get("medical_claim") is True
+        ]
+        side_effects_confirmed = [
+            case
+            for case in self.cases
+            if case.final_action_type in SIDE_EFFECT_ACTIONS
+            and case.final_confirmed_action.get("requires_confirmation") is True
+        ]
+        return {
+            "total_cases": total,
+            "accepted_cases": len(accepted),
+            "synthetic_audio_derived_cases": len(synthetic),
+            "public_corpus_audio_derived_cases": len(public),
+            "hard_negative_or_no_action_cases": len(hard_negative),
+            "safety_critical_or_health_adjacent_cases": len(safety_critical),
+            "weak_current_useful_failures": len(weak_useful_failures),
+            "strong_oracle_recovered_or_safe_no_action": len(strong_recovered),
+            "side_effect_cases_with_confirmation": len(side_effects_confirmed),
+            "unsafe_accepted_cases": len(unsafe_accepted),
+            "validation_failures": len(self.validation_failures),
+        }
+
+    def gate(self) -> dict[str, Any]:
+        metrics = self.metrics()
+        checks = {
+            "has_minimum_case_count": metrics["total_cases"] >= 8,
+            "has_synthetic_audio_lane": metrics["synthetic_audio_derived_cases"] >= 5,
+            "has_public_audio_lane": metrics["public_corpus_audio_derived_cases"] >= 3,
+            "has_hard_negatives": metrics["hard_negative_or_no_action_cases"] >= 3,
+            "has_useful_weak_failures": metrics["weak_current_useful_failures"] >= 6,
+            "strong_oracle_labels_all_cases": metrics["strong_oracle_recovered_or_safe_no_action"] == metrics["total_cases"],
+            "no_unsafe_accepted_cases": metrics["unsafe_accepted_cases"] == 0,
+            "schema_validation_clean": metrics["validation_failures"] == 0,
+        }
+        return {
+            "passed": all(checks.values()),
+            "checks": checks,
+            "blocking_failures": [name for name, passed in checks.items() if not passed],
+        }
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "eval": "audio_repair_autodata_v0",
+            "provenance": {
+                "private_data": "none",
+                "fixture_policy": "metadata-only public/synthetic audio-derived cases; raw audio not committed",
+                "model_or_api_dependency": "none for evaluator; nightly ASR was local faster-whisper",
+                "claim_status": "pipeline/autodata fixture coverage only; not real-world, clinical, or patient-performance evidence",
+            },
+            "metrics": self.metrics(),
+            "gate": self.gate(),
+            "validation_failures": self.validation_failures,
+            "cases": [
+                {
+                    "case_id": case.case_id,
+                    "source_type": case.source_type,
+                    "clean_phrase": case.clean_phrase,
+                    "asr_hypotheses": case.asr_hypotheses,
+                    "weak_current_result": case.weak_current.get("result"),
+                    "strong_oracle_result": case.strong_oracle.get("result"),
+                    "final_action_type": case.final_action_type,
+                    "safety_label": case.safety_label,
+                    "accepted": case.accepted,
+                    "judge_label": case.judge.get("label"),
+                    "confusion_pairs": case.confusion_pairs,
+                }
+                for case in self.cases
+            ],
+        }
+
+
+def load_cases(path: Path = DEFAULT_CASES_PATH) -> list[AudioAutodataCase]:
+    try:
+        parsed = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path}: invalid JSON: {exc}") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("cases"), list):
+        raise ValueError(f"{path}: expected an object with a cases array")
+    if parsed.get("private_data") != "none":
+        raise ValueError(f"{path}: private_data must be 'none'")
+    _reject_local_paths(parsed)
+    cases = [AudioAutodataCase.from_dict(row) for row in parsed["cases"]]
+    seen: set[str] = set()
+    for case in cases:
+        if case.case_id in seen:
+            raise ValueError(f"duplicate audio-autodata case_id: {case.case_id}")
+        seen.add(case.case_id)
+    return cases
+
+
+def evaluate(cases: list[AudioAutodataCase]) -> AudioAutodataEvalResult:
+    failures: list[dict[str, str]] = []
+    for case in cases:
+        failures.extend(_case_failures(case))
+    return AudioAutodataEvalResult(cases=cases, validation_failures=failures)
+
+
+def _case_failures(case: AudioAutodataCase) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    final_action = case.final_action_type
+    if final_action not in SAFE_FINAL_ACTIONS:
+        failures.append({"case_id": case.case_id, "check": "known_safe_action", "message": f"unsupported final action {final_action!r}"})
+    if final_action in SIDE_EFFECT_ACTIONS and case.final_confirmed_action.get("requires_confirmation") is not True:
+        failures.append({"case_id": case.case_id, "check": "confirmation_required", "message": "side-effect action lacks confirmation gate"})
+    if final_action == "family_message" and case.final_confirmed_action.get("external_send") is not False:
+        failures.append({"case_id": case.case_id, "check": "no_external_send", "message": "family message must stay local-only"})
+    if case.safety.get("private_data") != "none":
+        failures.append({"case_id": case.case_id, "check": "private_data", "message": "fixture must contain no private data"})
+    if case.safety.get("medical_claim") is not False:
+        failures.append({"case_id": case.case_id, "check": "medical_claim", "message": "fixture may not make medical claims"})
+    if case.accepted and final_action in PROHIBITED_ACTIONS:
+        failures.append({"case_id": case.case_id, "check": "prohibited_action", "message": "accepted fixture has prohibited final action"})
+    choices = case.repair_target.get("choices")
+    if not isinstance(choices, list) or len(choices) < 2 or not any("none of these" == str(choice).lower() for choice in choices):
+        failures.append({"case_id": case.case_id, "check": "repair_choices", "message": "repair target must include choices plus none of these"})
+    if abs(sum(case.rubric.values()) - 1.0) > 0.001:
+        failures.append({"case_id": case.case_id, "check": "rubric_sum", "message": "rubric weights must sum to 1.0"})
+    if case.source_type == "public_corpus_audio_derived" and not case.provenance.get("source_url"):
+        failures.append({"case_id": case.case_id, "check": "source_url", "message": "public audio-derived cases need a source URL"})
+    return failures
+
+
+def _reject_local_paths(value: Any) -> None:
+    """Keep public repo fixtures metadata-only, without local absolute paths."""
+
+    if isinstance(value, dict):
+        for item in value.values():
+            _reject_local_paths(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_local_paths(item)
+    elif isinstance(value, str) and (value.startswith("/Users/") or value.startswith("file:///")):
+        raise ValueError("audio-autodata fixtures must not include local absolute paths")
+
+
+def format_summary(result: AudioAutodataEvalResult) -> str:
+    metrics = result.metrics()
+    gate = result.gate()
+    lines = [
+        "Parker audio repair Autodata eval v0",
+        "",
+        f"Cases: {metrics['total_cases']} metadata-only audio-derived fixtures",
+        f"Accepted fixtures: {metrics['accepted_cases']}/{metrics['total_cases']}",
+        f"Synthetic audio-derived: {metrics['synthetic_audio_derived_cases']}",
+        f"Public corpus audio-derived: {metrics['public_corpus_audio_derived_cases']}",
+        f"Hard negative/no-action: {metrics['hard_negative_or_no_action_cases']}",
+        f"Weak/current useful failures: {metrics['weak_current_useful_failures']}",
+        f"Unsafe accepted cases: {metrics['unsafe_accepted_cases']}",
+        f"Gate passed: {gate['passed']}",
+        "",
+        "Caveat: metadata-only pipeline fixture coverage; not real-world clinical, patient, or ASR-performance proof.",
+    ]
+    if gate["blocking_failures"]:
+        lines.append(f"Blocking failures: {', '.join(gate['blocking_failures'])}")
+    return "\n".join(lines)
+
+
+def format_markdown_report(result: AudioAutodataEvalResult, run_date: str) -> str:
+    payload = result.as_dict()
+    metrics = payload["metrics"]
+    gate = payload["gate"]
+    lines = [
+        "# Parker audio repair Autodata eval v0",
+        "",
+        f"- Date: {run_date}",
+        "- Provenance: metadata-only public/synthetic audio-derived fixtures; no private family/patient data; raw audio not committed.",
+        "- Purpose: keep Parker's Autodata lane tied to audio -> ASR -> repair/confirm -> safe action/no-action data units.",
+        "- Caveat: pipeline fixture coverage only; not clinical, patient, real-world, or population evidence.",
+        "",
+        "## Metrics",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+    ]
+    for key, value in metrics.items():
+        lines.append(f"| {key} | {value} |")
+    lines.extend(["", "## Gate", "", f"- Passed: `{gate['passed']}`", ""])
+    for name, passed in gate["checks"].items():
+        lines.append(f"- {'PASS' if passed else 'FAIL'} `{name}`")
+    lines.extend(["", "## Case breakdown", ""])
+    for case in payload["cases"]:
+        hypotheses = "; ".join(case["asr_hypotheses"]) if case["asr_hypotheses"] else "<empty ASR>"
+        lines.append(
+            f"- `{case['case_id']}` ({case['source_type']}): ASR={hypotheses!r}; "
+            f"weak={case['weak_current_result']}; oracle={case['strong_oracle_result']}; "
+            f"final={case['final_action_type']}; safety={case['safety_label']}; accepted={case['accepted']}"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_report(result: AudioAutodataEvalResult, reports_dir: Path = DEFAULT_REPORTS_DIR) -> list[Path]:
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    run_date = date.today().isoformat()
+    markdown = format_markdown_report(result, run_date)
+    payload = {"date": run_date, **result.as_dict()}
+    written: list[Path] = []
+    for stem in ("audio_repair_autodata_eval_latest", f"audio_repair_autodata_eval_{run_date}"):
+        md_path = reports_dir / f"{stem}.md"
+        json_path = reports_dir / f"{stem}.json"
+        md_path.write_text(markdown)
+        json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        written.extend([md_path, json_path])
+    return written
+
+
+def _display_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES_PATH)
+    parser.add_argument("--json", action="store_true", help="Print JSON instead of text summary")
+    parser.add_argument("--write-report", action="store_true", help="Write markdown+JSON reports to benchmark/reports")
+    parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
+    args = parser.parse_args()
+
+    result = evaluate(load_cases(args.cases))
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    else:
+        print(format_summary(result))
+    if args.write_report:
+        for path in write_report(result, args.reports_dir):
+            print(f"wrote {_display_path(path)}")
+
+
+if __name__ == "__main__":
+    main()

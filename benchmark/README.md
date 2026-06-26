@@ -15,7 +15,7 @@ python benchmark/evaluate_v0.py \
 
 Transcript in → structured intent/slots/safety JSON out.
 
-This is deliberately transcript-first and synthetic-only. No real patient PHI, no diagnosis claims, no public Hugging Face repos until approved.
+This legacy v0 task is deliberately transcript-first and synthetic-only. New audio-derived metadata fixtures live in `audio_repair_autodata_v0` below; raw public/private audio is not committed to the repo.
 
 ## Parker task taxonomy fixtures
 
@@ -53,6 +53,7 @@ make eval-caregiver-state-legibility                       # caregiver review-st
 make eval-claim-metric-map                                 # grant claim→metric overclaim guard
 make eval-construct-validity                               # construct-validity matrix: citable evidence vs research gaps
 make eval-repair-quality-rubric                            # repair-choice proxy rubric: generic fallback must stay non-citable
+make eval-audio-autodata                                   # metadata-only audio-derived ASR/repair Autodata fixtures
 make eval-grant-source-citations                           # public-source citation guard for program facts/admin caveats
 make eval-grant-readiness                                  # one-command proposal evidence/readiness rollup
 ```
@@ -78,6 +79,18 @@ It compares three baselines on the same cases:
 - `parker_repair_protocol`: current deterministic Parker `TextSession` repair-choice path with a one-number user repair selection; current smoke result recovers 3/3 synthetic cases.
 
 This is **not** real Parkinson's audio evidence and should not be overclaimed. It exists to keep the proposal honest: no “Parker improves interactivity” sentence should survive unless it maps to an emitted metric, a baseline, a safety gate, and a caveat.
+
+## Run audio Autodata repair evaluator
+
+`data/audio_repair_autodata_v0.json` is the first repo-side bridge from the nightly audio loop into deterministic evals. It stores **metadata-only** fixtures derived from synthetic Parker command audio and public corpus ASR hypotheses; raw public audio remains in Operations artifacts and is not committed. Each case records source/provenance, ASR hypotheses, clean/oracle intent, weak/current behavior, expected repair choice, final confirmation/no-action target, safety label, and grading rubric.
+
+```bash
+python3 benchmark/evaluate_audio_repair_autodata_v0.py --json
+python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report
+make eval-audio-autodata
+```
+
+Current v0 coverage is 8 fixtures: 5 synthetic audio-derived Parker command cases, 3 public corpus audio-derived ASR failure cases, 3 hard-negative/no-action cases, and one safety-critical lost-negation message regression. This is pipeline/autodata fixture coverage only; it is not clinical evidence, patient evidence, public-data licensing approval, or ASR performance proof.
 
 ## Run claim→metric map evaluator
 

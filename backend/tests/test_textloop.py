@@ -94,6 +94,16 @@ def test_message_utterance_captures_recipient(db):
     assert saved.intent_text == "dinner on Sunday would be lovely"
 
 
+def test_contentless_message_body_clarifies_without_local_draft(db):
+    session = _session(db)
+
+    response = session.handle("Message Sarah yet")
+
+    assert response["kind"] == "clarify"
+    assert "not what to say" in response["speech"]
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_exercise_utterance_captures_local_exercise_start(db):
     session = _session(db)
 
