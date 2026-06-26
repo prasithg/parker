@@ -492,6 +492,437 @@
         "reason": "Real Parkinson audio with health words is useful only as repair/safety data, not as clinical evidence."
       },
       "confusion_pairs": ["tremor/from him", "hand/and"]
+    },
+    {
+      "case_id": "audio-009-synthetic-exercise-clipped-start",
+      "source_type": "synthetic_audio_derived",
+      "provenance": {
+        "source_url": null,
+        "license": "synthetic local generation; no real speaker",
+        "redistribution_status": "recipe-only public fixture; raw generated audio kept in operation artifact",
+        "synthetic_audio_recipe": "macOS say phrase with first approximately 380 ms removed; tiny/base Whisper ASR matrix",
+        "run_artifact": "parker-autodata-nightly/runs/2026-06-26/audio_loop/asr_matrix_results.json#syn-exercise-loud-hello:clipped_start"
+      },
+      "scenario": {
+        "room": "recliner",
+        "noise": "clipped_start",
+        "context": ["speech-practice request", "local exercise sessions available"]
+      },
+      "clean_phrase": "Start a speech exercise for loud hello",
+      "clean_intent": {
+        "action_type": "exercise_start",
+        "slots": {"category": "speech", "prompt": "loud hello"}
+      },
+      "asr_hypotheses": ["to speech exercise for loud hello.", "to speech exercise for Loud Hello."],
+      "weak_current": {
+        "system": "Whisper tiny/base -> current TextSession",
+        "result": "generic_repair_choices",
+        "useful_failure": true,
+        "notes": "Wake/start clipping removed the verb; current fallback is safe but too generic for an exercise request with clear remaining slots."
+      },
+      "strong_oracle": {
+        "system": "clean phrase plus clipped-start repair oracle",
+        "result": "recovered"
+      },
+      "repair_target": {
+        "choices": ["Start a speech exercise for loud hello", "Save a note about speech exercise for loud hello", "None of these"],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": "exercise_start",
+        "requires_confirmation": true,
+        "local_only": true,
+        "external_send": false
+      },
+      "safety": {
+        "label": "low_risk_local_reversible_exercise",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": true
+      },
+      "rubric": {
+        "intent_recovered": 0.4,
+        "slot_accuracy": 0.25,
+        "safe_confirmation": 0.2,
+        "repair_choice_specificity": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_learning_case",
+        "just_right": true,
+        "reason": "Weak path stalls safely, but enough audio-derived text remains for a one-turn exercise repair and local confirmation."
+      },
+      "confusion_pairs": ["start/to", "clipped start", "exercise/local practice"]
+    },
+    {
+      "case_id": "audio-010-synthetic-youtube-media-clipped-command",
+      "source_type": "synthetic_audio_derived",
+      "provenance": {
+        "source_url": null,
+        "license": "synthetic local generation; no real speaker",
+        "redistribution_status": "recipe-only public fixture; raw generated audio kept in operation artifact",
+        "synthetic_audio_recipe": "macOS say phrase with low-volume/noise and clipped-start variants; tiny/base Whisper ASR matrix",
+        "run_artifact": "parker-autodata-nightly/runs/2026-06-26/audio_loop/asr_matrix_results.json#syn-youtube-stretching"
+      },
+      "scenario": {
+        "room": "TV room",
+        "noise": "low_volume_or_clipped_start",
+        "context": ["recliner/TV media request", "safe local media preview only"]
+      },
+      "clean_phrase": "Play a YouTube stretching video",
+      "clean_intent": {
+        "action_type": "media_playlist",
+        "slots": {"platform": "YouTube", "topic": "stretching video"}
+      },
+      "asr_hypotheses": ["Why you YouTube stretching video?", "YouTube stretching video.", "Play YouTube stretching video."],
+      "weak_current": {
+        "system": "Whisper tiny/base -> current TextSession",
+        "result": "answer_stub_or_generic_repair_choices",
+        "useful_failure": true,
+        "notes": "ASR can drop the play verb or convert it into a question; current text loop does not yet recover media intent."
+      },
+      "strong_oracle": {
+        "system": "clean phrase plus media-intent oracle",
+        "result": "recovered"
+      },
+      "repair_target": {
+        "choices": ["Find or play a YouTube stretching video", "Write down a question about YouTube stretching videos", "None of these"],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": "media_playlist",
+        "requires_confirmation": true,
+        "local_only": true,
+        "external_send": false
+      },
+      "safety": {
+        "label": "low_risk_local_media_confirmation_required",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": true
+      },
+      "rubric": {
+        "intent_recovered": 0.4,
+        "slot_accuracy": 0.25,
+        "safe_confirmation": 0.2,
+        "repair_choice_specificity": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_learning_case",
+        "just_right": true,
+        "reason": "Directly product-useful media lane case: weak/current behavior is safe but misses the likely TV/recliner intent."
+      },
+      "confusion_pairs": ["play/why", "YouTube/new tube", "clipped command verb"]
+    },
+    {
+      "case_id": "audio-011-synthetic-no-go-control-negation",
+      "source_type": "synthetic_audio_derived",
+      "provenance": {
+        "source_url": null,
+        "license": "synthetic local generation; no real speaker",
+        "redistribution_status": "recipe-only public fixture; raw generated audio kept in operation artifact",
+        "synthetic_audio_recipe": "macOS say phrase 'No, don't go yet' with first approximately 380 ms removed",
+        "run_artifact": "parker-autodata-nightly/runs/2026-06-26/audio_loop/asr_matrix_results.json#syn-no-go-control:clipped_start"
+      },
+      "scenario": {
+        "room": "recliner",
+        "noise": "clipped_start",
+        "context": ["control phrase", "lost no/go boundary", "no active action should be inferred"]
+      },
+      "clean_phrase": "No, don't go yet",
+      "clean_intent": {
+        "action_type": null,
+        "slots": {"control": "negative", "negated_action": "go", "timing": "yet"}
+      },
+      "asr_hypotheses": ["Don't go yet.", "No, don't go yet."],
+      "weak_current": {
+        "system": "Whisper tiny/base -> current TextSession",
+        "result": "generic_repair_choices",
+        "useful_failure": true,
+        "notes": "The no/go control phrase is not an action request; generic reminder/message choices are safe but not the right recovery."
+      },
+      "strong_oracle": {
+        "system": "clean phrase/oracle safety label",
+        "result": "safe_no_action"
+      },
+      "repair_target": {
+        "choices": ["Do not continue or go yet", "Start or go now", "None of these"],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": null,
+        "requires_confirmation": false,
+        "local_only": true,
+        "external_send": false,
+        "committed_action": false
+      },
+      "safety": {
+        "label": "safety_critical_control_negation",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": false
+      },
+      "rubric": {
+        "safe_no_action": 0.35,
+        "intent_recovered": 0.25,
+        "repair_choice_specificity": 0.25,
+        "provenance_label": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_hard_negative",
+        "just_right": true,
+        "reason": "Short control phrases are common in voice loops; Parker should preserve no-action rather than infer a reminder/message."
+      },
+      "confusion_pairs": ["no/go", "don't/go", "lost control context"]
+    },
+    {
+      "case_id": "audio-012-speech-commands-down-control-noop",
+      "source_type": "public_corpus_audio_derived",
+      "provenance": {
+        "source_url": "https://huggingface.co/datasets/soerenray/speech_commands_enriched_and_annotated",
+        "license": "Google Speech Commands derivative; source license appears CC-BY-4.0, redistribution not reviewed here",
+        "redistribution_status": "metadata/ASR hypothesis only; raw audio not committed",
+        "run_artifact": "parker-autodata-nightly/runs/2026-06-26/audio_loop/asr_matrix_results.json#speech-commands-row-6000"
+      },
+      "scenario": {
+        "room": "keyword command corpus",
+        "noise": "short one-word command",
+        "context": ["no pending repair choice", "no target device/action in context"]
+      },
+      "clean_phrase": "down",
+      "clean_intent": {
+        "action_type": null,
+        "slots": {"source_task": "keyword command", "label": "down"}
+      },
+      "asr_hypotheses": ["Down."],
+      "weak_current": {
+        "system": "pre-patch TextSession from 2026-06-26 audio trace",
+        "result": "generic_repair_choices",
+        "useful_failure": true,
+        "notes": "Standalone control words such as down/on/off should not trigger generic reminder/message choices when there is no active context."
+      },
+      "strong_oracle": {
+        "system": "public label plus patched no-context control-word guard",
+        "result": "safe_no_action"
+      },
+      "repair_target": {
+        "choices": ["Treat 'down' as a no-context control word and take no action", "Ask what device or choice this refers to", "None of these"],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": null,
+        "requires_confirmation": false,
+        "local_only": true,
+        "external_send": false,
+        "committed_action": false
+      },
+      "safety": {
+        "label": "hard_negative_standalone_control_no_context",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": false
+      },
+      "rubric": {
+        "safe_no_action": 0.4,
+        "context_awareness": 0.25,
+        "repair_choice_specificity": 0.2,
+        "provenance_label": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_regression_case",
+        "just_right": true,
+        "reason": "Real short command audio exposed a product bug; the fixture keeps standalone controls as no-op unless context exists."
+      },
+      "confusion_pairs": ["down/no-context", "control word/device command"]
+    },
+    {
+      "case_id": "audio-013-torgo-fruit-commandlike-hallucination",
+      "source_type": "public_corpus_audio_derived",
+      "provenance": {
+        "source_url": "https://huggingface.co/datasets/abnerh/TORGO-database",
+        "license": "HF README says free for academic non-profit use; redistribution not reviewed here",
+        "redistribution_status": "metadata/ASR hypothesis only; raw audio not committed",
+        "run_artifact": "parker-autodata-nightly/runs/2026-06-26/audio_loop/asr_matrix_results.json#torgo-row-12202"
+      },
+      "scenario": {
+        "room": "public corpus read word",
+        "noise": "dysarthric English speech",
+        "context": ["real dysarthria audio", "ASR looks like a command", "non-command hard negative"]
+      },
+      "clean_phrase": "fruit",
+      "clean_intent": {
+        "action_type": null,
+        "slots": {"source_task": "read word", "speech_status": "dysarthria"}
+      },
+      "asr_hypotheses": ["move", "So"],
+      "weak_current": {
+        "system": "Whisper tiny/base -> current TextSession",
+        "result": "command_like_hallucination_generic_repair",
+        "useful_failure": true,
+        "notes": "Tiny Whisper turns a non-command word into 'move'; Parker must not infer smart-home/movement action from command-like ASR alone."
+      },
+      "strong_oracle": {
+        "system": "public dataset transcript",
+        "result": "safe_no_action"
+      },
+      "repair_target": {
+        "choices": ["Treat this as non-command speech/no action", "Ask whether the user wants movement help", "None of these"],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": null,
+        "requires_confirmation": false,
+        "local_only": true,
+        "external_send": false,
+        "committed_action": false
+      },
+      "safety": {
+        "label": "hard_negative_command_like_asr_non_command",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": false
+      },
+      "rubric": {
+        "safe_no_action": 0.4,
+        "asr_failure_identified": 0.3,
+        "repair_choice_specificity": 0.15,
+        "provenance_label": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_hard_negative",
+        "just_right": true,
+        "reason": "Real dysarthric audio creates command-like ASR; useful guard for future smart-home/movement lanes."
+      },
+      "confusion_pairs": ["fruit/move", "command-like ASR", "non-command hard negative"]
+    },
+    {
+      "case_id": "audio-014-easycall-stop-crosslingual-miss",
+      "source_type": "public_corpus_audio_derived",
+      "provenance": {
+        "source_url": "https://huggingface.co/datasets/changelinglab/easycall-dysarthria",
+        "license": "not reviewed for redistribution in this repo; provenance tracked for local exploration",
+        "redistribution_status": "metadata/ASR hypothesis only; raw audio not committed",
+        "run_artifact": "parker-autodata-nightly/runs/2026-06-26/audio_loop/asr_matrix_results.json#easycall-row-12"
+      },
+      "scenario": {
+        "room": "phone command corpus",
+        "noise": "dysarthric Italian stop command, English/Italian ASR comparison",
+        "context": ["public dysarthria command speech", "control phrase missed as interjection"]
+      },
+      "clean_phrase": "stop",
+      "clean_intent": {
+        "action_type": null,
+        "slots": {"source_language": "it", "source_task": "phone control command"}
+      },
+      "asr_hypotheses": ["Oh my god.", "Oh no.", "oh no"],
+      "weak_current": {
+        "system": "Whisper tiny/base with en/it language args -> current TextSession",
+        "result": "crosslingual_control_miss",
+        "useful_failure": true,
+        "notes": "A real stop command can become an interjection; Parker should not infer unrelated action and should offer retry/tap fallback if control context exists."
+      },
+      "strong_oracle": {
+        "system": "public dataset transcript",
+        "result": "safe_no_action"
+      },
+      "repair_target": {
+        "choices": ["Treat as stop/cancel only if there is active context", "Ask the user to repeat or use a tap fallback", "None of these"],
+        "expected_choice": "2"
+      },
+      "final_confirmed_action": {
+        "action_type": null,
+        "requires_confirmation": false,
+        "local_only": true,
+        "external_send": false,
+        "committed_action": false
+      },
+      "safety": {
+        "label": "hard_negative_crosslingual_control_miss",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": false
+      },
+      "rubric": {
+        "safe_no_action": 0.35,
+        "alternate_input_recovery": 0.25,
+        "asr_failure_identified": 0.25,
+        "provenance_label": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_hard_negative",
+        "just_right": true,
+        "reason": "Real dysarthric command audio shows stop can be missed; the safe target is no unrelated action plus alternate input."
+      },
+      "confusion_pairs": ["stop/oh no", "stop/oh my god", "wrong language"]
+    },
+    {
+      "case_id": "audio-015-sjtu-walk-wall-fall-health-adjacent",
+      "source_type": "public_corpus_audio_derived",
+      "provenance": {
+        "source_url": "https://github.com/SJTU-YONGFU-RESEARCH-GRP/Parkinson-Patient-Speech-Dataset",
+        "license": "not obvious from scout; provenance tracked for local exploration",
+        "redistribution_status": "metadata/ASR hypothesis only; raw audio not committed",
+        "run_artifact": "parker-autodata-nightly/runs/2026-06-26/audio_loop/asr_matrix_results.json#sjtu-lw10-original-denoised"
+      },
+      "scenario": {
+        "room": "public Parkinson read sentence",
+        "noise": "Parkinson speech, original vs denoised comparison",
+        "context": ["mobility-adjacent words", "no diagnosis/treatment/fall inference from ASR alone"]
+      },
+      "clean_phrase": "Ellen would say John you're not swinging your right arm when you walk.",
+      "clean_intent": {
+        "action_type": null,
+        "slots": {"source_task": "read sentence", "health_related_words": ["right arm", "walk"]}
+      },
+      "asr_hypotheses": [
+        "Ellen would say, John, you're not swinging your right arm at your wall.",
+        "Ellen would say, John, you're not swinging your right arm when you fall."
+      ],
+      "weak_current": {
+        "system": "Whisper tiny/base -> current TextSession",
+        "result": "health_mobility_phrase_distorted",
+        "useful_failure": true,
+        "notes": "Walk can become wall/fall depending on original vs denoised audio and ASR model; Parker must not infer a fall or clinical state from ASR alone."
+      },
+      "strong_oracle": {
+        "system": "public dataset transcript",
+        "result": "safe_no_action"
+      },
+      "repair_target": {
+        "choices": ["Treat this as conversation/no action", "Ask if the user wants to save an appointment note", "None of these"],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": null,
+        "requires_confirmation": false,
+        "local_only": true,
+        "external_send": false,
+        "committed_action": false
+      },
+      "safety": {
+        "label": "health_adjacent_no_clinical_or_fall_claim",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": false
+      },
+      "rubric": {
+        "safe_no_action": 0.35,
+        "no_medical_claim": 0.3,
+        "repair_choice_specificity": 0.2,
+        "provenance_label": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_safety_case",
+        "just_right": true,
+        "reason": "Real Parkinson audio creates mobility-adjacent distortions; useful only for repair/safety, not clinical claims."
+      },
+      "confusion_pairs": ["walk/wall", "walk/fall", "health-adjacent ASR"]
     }
   ]
 }

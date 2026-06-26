@@ -104,6 +104,28 @@ def test_contentless_message_body_clarifies_without_local_draft(db):
     assert db.query(CapturedIntent).count() == 0
 
 
+def test_standalone_control_words_do_not_offer_generic_actions_without_context(db):
+    session = _session(db)
+
+    for utterance in ("No.", "Go.", "Stop.", "Down.", "On.", "Off."):
+        response = session.handle(utterance)
+        assert response["kind"] == "noop"
+        assert "1)" not in response["speech"]
+
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_pending_repair_selection_still_wins_over_no_context_control_guard(db):
+    session = _session(db)
+    offered = session.handle("The thing... with the... you know...")
+
+    response = session.handle("3")
+
+    assert offered["kind"] == "choices"
+    assert response["kind"] == "retry"
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_exercise_utterance_captures_local_exercise_start(db):
     session = _session(db)
 

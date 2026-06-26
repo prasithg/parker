@@ -110,6 +110,25 @@ CONTENTLESS_MESSAGE_BODIES = {
     "tonight",
     "please",
 }
+NO_CONTEXT_CONTROL_RESPONSES = {
+    "yes": "I heard yes, but there isn't anything waiting for confirmation.",
+    "yeah": "I heard yes, but there isn't anything waiting for confirmation.",
+    "yep": "I heard yes, but there isn't anything waiting for confirmation.",
+    "no": "Okay — I won't do anything.",
+    "nope": "Okay — I won't do anything.",
+    "nah": "Okay — I won't do anything.",
+    "go": "I heard go, but there isn't anything waiting to start.",
+    "stop": "Okay — stopping here. Nothing will run unless you ask again.",
+    "wait": "Okay — waiting. Nothing will run unless you ask again.",
+    "hold on": "Okay — waiting. Nothing will run unless you ask again.",
+    "cancel": "There isn't a current local draft to cancel.",
+    "up": "I heard up, but there isn't a device, choice, or local action waiting.",
+    "down": "I heard down, but there isn't a device, choice, or local action waiting.",
+    "left": "I heard left, but there isn't a device, choice, or local action waiting.",
+    "right": "I heard right, but there isn't a device, choice, or local action waiting.",
+    "on": "I heard on, but there isn't a device or local action waiting.",
+    "off": "I heard off, but there isn't a device or local action waiting.",
+}
 
 
 def _build_model_client() -> "Any | None":
@@ -157,6 +176,23 @@ def _message_body_needs_clarification(body: str) -> bool:
     normalized = re.sub(r"[,.!?]+", " ", body).strip().lower()
     normalized = re.sub(r"\s+", " ", normalized)
     return normalized in CONTENTLESS_MESSAGE_BODIES or normalized.startswith(("not yet ", "later "))
+
+
+def _no_context_control_response(utterance: str) -> dict[str, Any] | None:
+    """Acknowledge standalone control words without inventing an action.
+
+    Public command corpora and real voice sessions produce short one-word
+    hypotheses such as "no", "go", or "stop". When Parker has no pending repair
+    choice, draft, or local outbox item, those words are context controls rather
+    than reminder/message intents. Do not fall through to generic repair choices.
+    """
+
+    normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    speech = NO_CONTEXT_CONTROL_RESPONSES.get(normalized)
+    if speech is None:
+        return None
+    return {"kind": "noop", "speech": speech}
 
 
 def _looks_like_medical_advice(lowered: str) -> bool:
@@ -248,6 +284,9 @@ class TextSession:
         revision = self._handle_changed_mind(utterance, lowered)
         if revision is not None:
             return revision
+        control_response = _no_context_control_response(utterance)
+        if control_response is not None:
+            return control_response
 
         if _looks_like_emergency_substitution(lowered):
             return {

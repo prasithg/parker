@@ -289,6 +289,14 @@ Product follow-up shipped 2026-06-22/23: `exercise_start` now creates a `local_e
 
 Product follow-up shipped 2026-06-23/24: the recliner/TV evening loop now has a local `local_evening_sessions` lifecycle row. `start_local_evening_session` is idempotent per routine and calendar evening; short/unclear answers get a warm numbered repair choice; affirmative responses engage the recliner/TV prompt; `goodnight`/`done` completes; `not now` declines without re-offering that evening; silence marks a `timed_out` row and calls the future `NonResponseLadder.note_silence(session_id)` seam exactly once. `/parker/review` exposes `recent_evening_sessions`, and `/parker/review/ui` shows caregiver complete/cancel controls. The slice uses synthetic/local fixtures only and adds no live APIs, sends, purchases, medical wording, or private data.
 
+## Nightly Autodata audio/control-word guard — DONE (2026-06-26)
+
+Shipped: the audio Autodata lane expanded from 8 to 15 metadata-only fixtures. New coverage comes from the 2026-06-26 Operations audio loop: synthetic Parker audio for exercise/media/no-go/call/appointment/control phrases, public Speech Commands control words, TORGO dysarthric read-word ASR, EasyCall dysarthric command audio, SeniorTalk older-adult Mandarin samples, and SJTU Parkinson speech follow-ups. Repo fixtures now include exercise/media audio lanes, no/go control negation, standalone no-context controls, command-like ASR hallucinations (`fruit` -> `move`), cross-lingual stop misses, and health-adjacent walk/wall/fall distortions. Raw audio stays in Operations; the repo stores only public-safe metadata, ASR hypotheses, oracle labels, repair targets, safety labels, and rubrics.
+
+Product fix: `TextSession` now treats standalone control words (`yes/no/go/stop/wait/cancel/up/down/left/right/on/off`) as no-op acknowledgements when there is no pending repair choice, draft, outbox, device, or action context. This was prompted by real one-word command audio; before the patch, words like `Down.` fell through to generic reminder/message choices. Pending numbered repair selections still take precedence, so existing repair flow is unchanged.
+
+Verification: targeted text-loop + audio-autodata tests passed (`27 passed, 1 warning`); `make eval-audio-autodata` reports 15/15 accepted fixtures, 8 synthetic, 7 public, 9 hard-negative/no-action, 0 unsafe accepted, gate PASS; `git diff --check` passed; full `make test` passed (`314 passed, 2 warnings`); `TZ=UTC make eval-grant-readiness` passed.
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:
