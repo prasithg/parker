@@ -61,6 +61,20 @@ def test_sensitive_private_disclosure_is_refused_without_capture(db):
     assert db.query(CapturedIntent).count() == 0
 
 
+def test_financial_account_requests_are_refused_without_capture(db):
+    session = _session(db)
+
+    for utterance in (
+        "Can you tell me my current account balance please?",
+        "I need help setting up a joint account.",
+    ):
+        response = session.handle(utterance)
+        assert response["kind"] == "refused"
+        assert "bank" in response["speech"].lower()
+
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_purchase_requests_route_to_human_approval(db):
     session = _session(db)
 
@@ -107,9 +121,40 @@ def test_contentless_message_body_clarifies_without_local_draft(db):
 def test_standalone_control_words_do_not_offer_generic_actions_without_context(db):
     session = _session(db)
 
-    for utterance in ("No.", "Go.", "Stop.", "Down.", "On.", "Off."):
+    for utterance in ("No.", "Go.", "Stop.", "Down.", "On.", "Off.", "of", "Zero.", "Oh no."):
         response = session.handle(utterance)
         assert response["kind"] == "noop"
+        assert "1)" not in response["speech"]
+
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_standalone_stop_or_cancel_cancels_active_local_draft(db):
+    for idx, utterance in enumerate(("Stop.", "Cancel."), start=1):
+        call = CallLog(call_sid=f"CA_TEXTLOOP_CANCEL_{idx}", call_type="text_loop")
+        db.add(call)
+        db.commit()
+        db.refresh(call)
+        session = TextSession(db, call.id)
+        session.handle("Remind me to start stretches now.")
+        resolve_captured_intents(db)
+        staged = stage_resolved_actions(db)
+
+        response = session.handle(utterance)
+
+        db.refresh(staged[0])
+        assert response["kind"] == "cancelled"
+        assert staged[0].status == "cancelled"
+        assert staged[0].cancelled_by == "patient"
+
+
+def test_device_controls_require_context_instead_of_generic_repair(db):
+    session = _session(db)
+
+    for utterance in ("Turn the volume down.", "Turn the bedroom lights off.", "Increase the temperature in the washroom."):
+        response = session.handle(utterance)
+        assert response["kind"] == "context_required"
+        assert "approved" in response["speech"]
         assert "1)" not in response["speech"]
 
     assert db.query(CapturedIntent).count() == 0
@@ -217,6 +262,21 @@ def test_changed_mind_to_medication_change_refuses_without_new_capture(db):
     staged = stage_resolved_actions(db)
 
     response = session.handle("Wait, no, should I take half my pills instead?")
+
+    db.refresh(staged[0])
+    assert staged[0].status == "cancelled"
+    assert response["kind"] == "refused"
+    assert response["flag_for_family"] is True
+    assert db.query(CapturedIntent).count() == 1
+
+
+def test_stop_revision_to_medication_change_refuses_after_cancelling_draft(db):
+    session = _session(db)
+    session.handle("Remind me to start stretches now.")
+    resolve_captured_intents(db)
+    staged = stage_resolved_actions(db)
+
+    response = session.handle("Stop taking my pills instead.")
 
     db.refresh(staged[0])
     assert staged[0].status == "cancelled"

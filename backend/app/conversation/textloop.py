@@ -55,6 +55,14 @@ PRIVATE_DISCLOSURE_WORDS = (
     "token",
 )
 PURCHASE_PHRASES = ("order", "buy", "purchase", "card on file")
+FINANCIAL_ACCOUNT_PHRASES = (
+    "account balance",
+    "bank account",
+    "joint account",
+    "current account",
+    "reconcile my account",
+    "reconcile a my account",
+)
 VAGUE_PHRASES = ("you know", "the thing", "the one with", "no the other")
 CHANGED_MIND_PREFIXES = (
     "wait",
@@ -65,7 +73,9 @@ CHANGED_MIND_PREFIXES = (
     "make it",
     "make that",
     "scratch that",
+    "cancel",
     "cancel that",
+    "stop",
     "hold on",
 )
 MESSAGE_PATTERN = re.compile(r"^(?:tell|message|text)\s+([A-Za-z]+)\s+(.+)$", re.IGNORECASE)
@@ -84,6 +94,10 @@ CANCEL_ONLY_REVISION_FRAGMENTS = {
     "it",
     "that",
     "this",
+    "cancel",
+    "stop",
+    "stop it",
+    "stop that",
     "message",
     "the message",
     "that message",
@@ -122,12 +136,17 @@ NO_CONTEXT_CONTROL_RESPONSES = {
     "wait": "Okay — waiting. Nothing will run unless you ask again.",
     "hold on": "Okay — waiting. Nothing will run unless you ask again.",
     "cancel": "There isn't a current local draft to cancel.",
+    "zero": "I heard zero, but there isn't a numbered choice waiting.",
+    "0": "I heard zero, but there isn't a numbered choice waiting.",
     "up": "I heard up, but there isn't a device, choice, or local action waiting.",
     "down": "I heard down, but there isn't a device, choice, or local action waiting.",
     "left": "I heard left, but there isn't a device, choice, or local action waiting.",
     "right": "I heard right, but there isn't a device, choice, or local action waiting.",
     "on": "I heard on, but there isn't a device or local action waiting.",
     "off": "I heard off, but there isn't a device or local action waiting.",
+    "of": "I heard something like off, but there isn't a device or local action waiting.",
+    "oh no": "I heard concern, but I won't start or stop anything without a clearer request.",
+    "oh my god": "I heard concern, but I won't start or stop anything without a clearer request.",
 }
 
 
@@ -164,6 +183,10 @@ def _looks_like_sensitive_private_disclosure(lowered: str) -> bool:
     return any(word in lowered for word in PRIVATE_DISCLOSURE_WORDS)
 
 
+def _looks_like_financial_account_request(lowered: str) -> bool:
+    return any(phrase in lowered for phrase in FINANCIAL_ACCOUNT_PHRASES)
+
+
 def _message_body_needs_clarification(body: str) -> bool:
     """Return true when ASR likely preserved a message cue but lost the body.
 
@@ -195,6 +218,39 @@ def _no_context_control_response(utterance: str) -> dict[str, Any] | None:
     return {"kind": "noop", "speech": speech}
 
 
+def _device_control_without_context_response(utterance: str) -> dict[str, Any] | None:
+    """Clarify multi-word device/media controls when no approved context exists."""
+
+    normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    if not normalized:
+        return None
+    control_words = ("turn", "switch", "increase", "decrease", "raise", "lower", "volume")
+    device_words = (
+        "volume",
+        "temperature",
+        "heating",
+        "heat",
+        "lights",
+        "light",
+        "tv",
+        "television",
+        "language",
+        "bedroom",
+        "bathroom",
+        "washroom",
+    )
+    if any(word in normalized for word in control_words) and any(word in normalized for word in device_words):
+        return {
+            "kind": "context_required",
+            "speech": (
+                "I heard a device or media control, but there isn't an approved TV, room, "
+                "or device context waiting here. I won't change anything without that context."
+            ),
+        }
+    return None
+
+
 def _looks_like_medical_advice(lowered: str) -> bool:
     return any(word in lowered for word in MEDICAL_ADVICE_WORDS) and any(
         phrase in lowered for phrase in MEDICAL_ADVICE_PHRASES
@@ -205,7 +261,7 @@ def _extract_revision_fragment(utterance: str) -> str:
     fragment = utterance.strip().strip(" .!?")
     fragment = re.sub(r"^(?:wait|hold on)[\s,]+", "", fragment, flags=re.IGNORECASE)
     fragment = re.sub(r"^(?:no|nope)[\s,]+", "", fragment, flags=re.IGNORECASE)
-    fragment = re.sub(r"^(?:actually|change that|make it|make that|scratch that|cancel that)[\s,]*", "", fragment, flags=re.IGNORECASE)
+    fragment = re.sub(r"^(?:actually|change that|make it|make that|scratch that|cancel that|cancel|stop)[\s,]*", "", fragment, flags=re.IGNORECASE)
     fragment = re.sub(r"\s+instead$", "", fragment, flags=re.IGNORECASE)
     fragment = fragment.strip(" .!?,")
     return fragment
@@ -306,6 +362,14 @@ class TextSession:
                     "I can help write a safe message that leaves private details out."
                 ),
             }
+        if _looks_like_financial_account_request(lowered):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "I can't access, reveal, or change bank/account information. "
+                    "I can help draft a non-sensitive question for family or remind you to check the official app."
+                ),
+            }
         if _looks_like_medical_advice(lowered):
             return {
                 "kind": "refused",
@@ -332,6 +396,9 @@ class TextSession:
                     "family to approve a purchase."
                 ),
             }
+        device_control = _device_control_without_context_response(utterance)
+        if device_control is not None:
+            return device_control
         if lowered.count("...") >= 2 or any(p in lowered for p in VAGUE_PHRASES):
             return self._offer_choices(utterance)
 
@@ -445,7 +512,8 @@ class TextSession:
 
         prior_subject = (captured.subject or captured.intent_text).strip()
         revision_lower = revision_fragment.lower()
-        if _looks_like_emergency_substitution(revision_lower):
+        safety_text = f"{lowered} {revision_lower}"
+        if _looks_like_emergency_substitution(safety_text):
             return {
                 "kind": "emergency_redirect",
                 "speech": (
@@ -454,14 +522,21 @@ class TextSession:
                 ),
                 "flag_for_family": True,
             }
-        if _looks_like_sensitive_private_disclosure(revision_lower):
+        if _looks_like_sensitive_private_disclosure(safety_text):
             return {
                 "kind": "refused",
                 "speech": (
                     "Cancelled the earlier draft. I can't read or share private credentials or sensitive notes."
                 ),
             }
-        if _looks_like_medical_advice(revision_lower):
+        if _looks_like_financial_account_request(safety_text):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "Cancelled the earlier draft. I can't access, reveal, or change bank/account information."
+                ),
+            }
+        if _looks_like_medical_advice(safety_text):
             return {
                 "kind": "refused",
                 "speech": (
@@ -470,7 +545,7 @@ class TextSession:
                 ),
                 "flag_for_family": True,
             }
-        if any(w in revision_lower for w in MED_WORDS) and any(p in revision_lower for p in MED_CHANGE_PHRASES):
+        if any(w in safety_text for w in MED_WORDS) and any(p in safety_text for p in MED_CHANGE_PHRASES):
             return {
                 "kind": "refused",
                 "speech": (
@@ -479,7 +554,7 @@ class TextSession:
                 ),
                 "flag_for_family": True,
             }
-        if any(p in revision_lower for p in PURCHASE_PHRASES):
+        if any(p in safety_text for p in PURCHASE_PHRASES):
             return {
                 "kind": "needs_human_approval",
                 "speech": (

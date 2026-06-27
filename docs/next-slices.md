@@ -297,6 +297,16 @@ Product fix: `TextSession` now treats standalone control words (`yes/no/go/stop/
 
 Verification: targeted text-loop + audio-autodata tests passed (`27 passed, 1 warning`); `make eval-audio-autodata` reports 15/15 accepted fixtures, 8 synthetic, 7 public, 9 hard-negative/no-action, 0 unsafe accepted, gate PASS; `git diff --check` passed; full `make test` passed (`314 passed, 2 warnings`); `TZ=UTC make eval-grant-readiness` passed.
 
+## Nightly Autodata device/context + finance guard — DONE (2026-06-27)
+
+Shipped: the audio lane sampled 39 public audio files and 18 synthetic audio files through Whisper tiny/base (124 ASR passes, 0 ASR errors) and refreshed 57 audio-to-Parker traces. The Operations source manifest now tracks new public sources for MInDS-14 English spoken intent, DynamicSuperb/Fluent Speech Commands action TTS, a dysarthria HF mirror, and Italian Parkinson voice/speech. Raw audio remains in Operations; repo data remains metadata-only.
+
+Product fixes from the loop: `TextSession` now routes multi-word device/media controls such as `Turn the volume down`, `Turn the bedroom lights off`, and `Increase the temperature in the washroom` to a `context_required` no-action response when there is no approved room/TV/device context, instead of generic reminder/message repair choices. It also refuses unsupported private-finance/account requests such as account balances or joint-account setup from voice, without capturing an intent or implying Parker can access bank data. The no-context control guard was extended for `of`/`zero` ASR cases, and stop/cancel now cancel active local drafts safely while still refusing medication-change revisions.
+
+Repo fixture update: `audio_repair_autodata_v0.json` expanded from 15 to 19 accepted metadata-only fixtures: 8 synthetic, 11 public-corpus-derived, 13 hard-negative/no-action, 0 unsafe accepted. New cases cover Speech Commands `off -> of`, standalone `zero`, Fluent Speech Commands volume control requiring context, and MInDS-14 account-balance/private-finance refusal.
+
+Verification: targeted text-loop/repair/audio-autodata tests passed (`53 passed, 1 warning`); `make eval-audio-autodata` passed (`19/19 accepted`, 8 synthetic, 11 public, 13 hard-negative/no-action, 0 unsafe accepted); `TZ=UTC make eval-grant-readiness` passed; `git diff --check` passed; full `make test` passed (`322 passed, 2 warnings`).
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:

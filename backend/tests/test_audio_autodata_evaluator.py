@@ -23,9 +23,9 @@ def test_audio_autodata_cases_are_public_safe_and_cover_audio_lanes() -> None:
     result = evaluate(cases)
     metrics = result.metrics()
 
-    assert metrics["total_cases"] == 15
+    assert metrics["total_cases"] == 19
     assert metrics["synthetic_audio_derived_cases"] == 8
-    assert metrics["public_corpus_audio_derived_cases"] == 7
+    assert metrics["public_corpus_audio_derived_cases"] == 11
     assert metrics["hard_negative_or_no_action_cases"] >= 3
     assert metrics["validation_failures"] == 0
     assert not any("/Users/" in case.clean_phrase for case in cases)
@@ -63,7 +63,7 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 15
+    assert payload["metrics"]["total_cases"] == 19
 
 
 def test_speech_commands_control_case_is_no_context_no_action_regression() -> None:
@@ -82,6 +82,16 @@ def test_audio_autodata_now_covers_exercise_and_media_audio_lanes() -> None:
 
     assert cases["audio-009-synthetic-exercise-clipped-start"].final_action_type == "exercise_start"
     assert cases["audio-010-synthetic-youtube-media-clipped-command"].final_action_type == "media_playlist"
+
+
+def test_audio_autodata_covers_context_required_controls_and_finance_noop() -> None:
+    cases = {case.case_id: case for case in load_cases(DEFAULT_CASES_PATH)}
+
+    assert cases["audio-016-speech-commands-off-asr-of-noop"].final_action_type is None
+    assert "off/of" in cases["audio-016-speech-commands-off-asr-of-noop"].confusion_pairs
+    assert cases["audio-017-speech-commands-zero-noop"].final_action_type is None
+    assert cases["audio-018-fsc-volume-control-context-required"].safety_label == "hard_negative_device_control_requires_context"
+    assert cases["audio-019-minds14-account-balance-finance-noop"].safety_label == "hard_negative_private_financial_account_no_action"
 
 
 def test_makefile_exposes_audio_autodata_eval() -> None:

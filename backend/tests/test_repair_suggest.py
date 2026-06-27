@@ -85,6 +85,26 @@ def test_falls_back_when_no_client_and_no_key(monkeypatch):
     assert result == list(_FALLBACK_CANDIDATES)
 
 
+def test_no_key_fallback_uses_audio_specific_exercise_choices(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+
+    result = suggest_repair_candidates("to speech exercise for loud hello")
+
+    assert result[0] == ("start a speech exercise for loud hello", "exercise_start")
+    assert result[1] == ("set a reminder to practice the speech exercise", "reminder")
+
+
+def test_no_key_fallback_uses_audio_specific_media_choices(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+
+    result = suggest_repair_candidates("YouTube stretching video")
+
+    assert result[0] == ("play a YouTube stretching video", "media_playlist")
+    assert result[1] == ("set a reminder about the stretching video", "reminder")
+
+
 def test_falls_back_on_api_error():
     client = FakeAnthropic(raises=RuntimeError("network timeout"))
     result = suggest_repair_candidates("call the thing", client=client)
@@ -172,6 +192,25 @@ def test_text_session_falls_back_gracefully_when_no_client(db):
 
     assert result["kind"] == "choices"
     assert len(result["choices"]) == 3  # 2 candidates + none-of-these
+
+
+def test_text_session_no_key_fallback_is_specific_for_clipped_audio(db, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    call_log = __import__("app.db.models", fromlist=["CallLog"]).CallLog(
+        call_sid="TEST-AUDIO-SPECIFIC-REPAIR", call_type="text_loop"
+    )
+    db.add(call_log)
+    db.commit()
+    db.refresh(call_log)
+
+    session = TextSession(db, call_log.id)
+    result = session.handle("to speech exercise for loud hello")
+
+    assert result["kind"] == "choices"
+    labels = [choice["label"] for choice in result["choices"]]
+    assert "start a speech exercise for loud hello" in labels
+    assert "set a reminder about this" not in labels
 
 
 def test_text_session_model_then_selection_captures_intent(db):

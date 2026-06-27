@@ -10,6 +10,7 @@ stage → confirm pipeline gates.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
@@ -114,7 +115,7 @@ pick the right interpretation with a single spoken number.
 Rules:
 - Output ONLY a JSON array, no explanation, no markdown.
 - Exactly 2 elements. Each element: {"label": "...", "action_type": "..."}
-- action_type must be "reminder" or "family_message" — nothing else.
+- action_type must be one of "reminder", "family_message", "exercise_start", "media_playlist", or "appointment_note".
 - Labels ≤ 80 characters, phrased as Parker confirming what to do (e.g. \
 "remind you to call Dr Smith", "send Priya a message about this").
 - Labels must be specific to the utterance — never generic \
@@ -134,6 +135,57 @@ _FALLBACK_CANDIDATES: list[tuple[str, str]] = [
     ("set a reminder about this", "reminder"),
     ("send a family message about this", "family_message"),
 ]
+
+
+def _specific_fallback_candidates(utterance: str) -> list[tuple[str, str | None]] | None:
+    """Return deterministic, audio-failure-aware candidates when no model is available.
+
+    The nightly audio Autodata lane surfaced clipped starts like ``to speech
+    exercise...``, ``YouTube stretching video``, and ``down from my appointment``.
+    These have enough signal for a useful repair question, but the old no-key
+    fallback always offered generic reminder/message choices. Keep this narrow:
+    it should improve common local audio failures without pretending to solve all
+    unclear speech.
+    """
+
+    normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    if not normalized:
+        return None
+
+    if "speech exercise" in normalized or "voice exercise" in normalized:
+        detail = _after_marker(normalized, "exercise") or "short practice"
+        detail = _tidy_detail(detail)
+        return [
+            (f"start a speech exercise for {detail}"[:MAX_LABEL_LENGTH], "exercise_start"),
+            ("set a reminder to practice the speech exercise", "reminder"),
+        ]
+
+    if "youtube" in normalized or "you tube" in normalized or "new tube" in normalized:
+        topic = "stretching video" if "stretch" in normalized else "video"
+        return [
+            (f"play a YouTube {topic}", "media_playlist"),
+            (f"set a reminder about the {topic}", "reminder"),
+        ]
+
+    if "appointment" in normalized and normalized.startswith(("down ", "write down", "this down")):
+        when = "tomorrow" if "tomorrow" in normalized else "appointment"
+        return [
+            (f"write this down for the appointment {when}", "appointment_note"),
+            (f"set a reminder about the appointment {when}", "reminder"),
+        ]
+
+    return None
+
+
+def _after_marker(text: str, marker: str) -> str:
+    _, _, tail = text.partition(marker)
+    return tail.strip(" :;-.")
+
+
+def _tidy_detail(text: str) -> str:
+    detail = re.sub(r"^(?:for|about|called)\s+", "", text).strip()
+    return detail or "short practice"
 
 
 def suggest_repair_candidates(
@@ -166,6 +218,9 @@ def suggest_repair_candidates(
 
     def _fallback(reason: str) -> list[tuple[str, str | None]]:
         log.debug("suggest_repair_candidates fallback (%s)", reason)
+        specific = _specific_fallback_candidates(utterance)
+        if specific is not None:
+            return specific
         return list(_FALLBACK_CANDIDATES)
 
     if client is None:
