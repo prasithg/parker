@@ -63,6 +63,15 @@ FINANCIAL_ACCOUNT_PHRASES = (
     "reconcile my account",
     "reconcile a my account",
 )
+# MInDS-14 public audio exposed a safety-relevant ASR erasure:
+# "joint account" -> "joining town". Parker cannot see the source label at
+# runtime, so keep this narrow to the unsupported-finance request frame rather
+# than treating every mention of a town as financial.
+FINANCIAL_ACCOUNT_ASR_ERASURE_PHRASES = (
+    "setting up a joining town",
+    "set up a joining town",
+    "setup a joining town",
+)
 VAGUE_PHRASES = ("you know", "the thing", "the one with", "no the other")
 CHANGED_MIND_PREFIXES = (
     "wait",
@@ -184,7 +193,79 @@ def _looks_like_sensitive_private_disclosure(lowered: str) -> bool:
 
 
 def _looks_like_financial_account_request(lowered: str) -> bool:
-    return any(phrase in lowered for phrase in FINANCIAL_ACCOUNT_PHRASES)
+    return any(phrase in lowered for phrase in FINANCIAL_ACCOUNT_PHRASES) or any(
+        phrase in lowered for phrase in FINANCIAL_ACCOUNT_ASR_ERASURE_PHRASES
+    )
+
+
+def _control_negation_response(utterance: str) -> dict[str, Any] | None:
+    """Preserve no-action control phrases such as "don't go yet".
+
+    The audio Autodata lane produced a synthetic control phrase where Parker's
+    weak path offered generic reminder/message choices for "No, don't go yet".
+    In a no-context voice loop this is a stop/hold control, not a request to
+    create a new action.
+    """
+
+    normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    if re.search(r"\b(?:no\s+)?(?:do\s+not|don't|dont)\s+go(?:\s+yet)?\b", normalized):
+        return {
+            "kind": "noop",
+            "speech": "I heard not to go yet. I won't start or continue anything from that.",
+        }
+    return None
+
+
+def _looks_like_media_request_question(lowered: str) -> bool:
+    """Detect question-shaped ASR for a clipped local media request.
+
+    Low-volume synthetic Parker audio turned "Play a YouTube stretching video"
+    into "Why you YouTube stretching video?". That should get a specific repair
+    prompt, not the generic research-answer stub.
+    """
+
+    normalized = re.sub(r"[,.!?]+", " ", lowered).strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    has_media = "youtube" in normalized or "you tube" in normalized or "new tube" in normalized
+    return has_media and normalized.startswith(("why you ", "why youtube", "why you youtube"))
+
+
+def _repetitive_asr_hallucination_response(utterance: str) -> dict[str, Any] | None:
+    """No-op long repetitive ASR from no-transcript dysarthria stress audio.
+
+    Public no-transcript dysarthria rows can make Whisper emit fluent-looking
+    loops such as "I'll be happy" dozens of times. Those are useful stress
+    signals, but Parker should not turn them into reminder/message choices.
+    """
+
+    normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    words = normalized.split()
+    if len(words) < 18:
+        return None
+    if len(set(words)) / max(len(words), 1) <= 0.25:
+        return {
+            "kind": "noop",
+            "speech": (
+                "I heard unclear repeated audio, so I won't turn it into a reminder or message. "
+                "Please try again or use the screen choices."
+            ),
+        }
+    for ngram_size in (1, 2, 3, 4):
+        grams = [tuple(words[i : i + ngram_size]) for i in range(0, len(words) - ngram_size + 1)]
+        if not grams:
+            continue
+        most_common_count = max(grams.count(gram) for gram in set(grams))
+        if most_common_count >= 5 and (most_common_count * ngram_size) / len(words) >= 0.45:
+            return {
+                "kind": "noop",
+                "speech": (
+                    "I heard unclear repeated audio, so I won't turn it into a reminder or message. "
+                    "Please try again or use the screen choices."
+                ),
+            }
+    return None
 
 
 def _message_body_needs_clarification(body: str) -> bool:
@@ -343,6 +424,9 @@ class TextSession:
         control_response = _no_context_control_response(utterance)
         if control_response is not None:
             return control_response
+        control_negation = _control_negation_response(utterance)
+        if control_negation is not None:
+            return control_negation
 
         if _looks_like_emergency_substitution(lowered):
             return {
@@ -399,6 +483,9 @@ class TextSession:
         device_control = _device_control_without_context_response(utterance)
         if device_control is not None:
             return device_control
+        repeated_hallucination = _repetitive_asr_hallucination_response(utterance)
+        if repeated_hallucination is not None:
+            return repeated_hallucination
         if lowered.count("...") >= 2 or any(p in lowered for p in VAGUE_PHRASES):
             return self._offer_choices(utterance)
 
@@ -448,6 +535,8 @@ class TextSession:
                     "I'll confirm before it starts."
                 ),
             )
+        if _looks_like_media_request_question(lowered):
+            return self._offer_choices(utterance)
         if "?" in utterance or lowered.startswith(("what", "how", "who", "when", "where")):
             return {
                 "kind": "answer",

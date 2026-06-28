@@ -67,6 +67,7 @@ def test_financial_account_requests_are_refused_without_capture(db):
     for utterance in (
         "Can you tell me my current account balance please?",
         "I need help setting up a joint account.",
+        "Please, I need help setting up a joining town.",
     ):
         response = session.handle(utterance)
         assert response["kind"] == "refused"
@@ -126,6 +127,41 @@ def test_standalone_control_words_do_not_offer_generic_actions_without_context(d
         assert response["kind"] == "noop"
         assert "1)" not in response["speech"]
 
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_control_negation_audio_phrase_noops_without_context(db):
+    session = _session(db)
+
+    for utterance in ("No, don't go yet.", "Don't go yet."):
+        response = session.handle(utterance)
+        assert response["kind"] == "noop"
+        assert "not to go" in response["speech"].lower()
+        assert "1)" not in response["speech"]
+
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_question_shaped_youtube_asr_gets_media_repair_choices(db):
+    session = _session(db)
+
+    response = session.handle("Why you YouTube stretching video?")
+
+    assert response["kind"] == "choices"
+    assert "YouTube stretching video" in response["speech"]
+    assert response["choices"][0]["action_type"] == "media_playlist"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_repetitive_no_transcript_asr_hallucination_noops(db):
+    session = _session(db)
+    utterance = "I'll be happy, " * 12
+
+    response = session.handle(utterance)
+
+    assert response["kind"] == "noop"
+    assert "repeated audio" in response["speech"]
+    assert "1)" not in response["speech"]
     assert db.query(CapturedIntent).count() == 0
 
 

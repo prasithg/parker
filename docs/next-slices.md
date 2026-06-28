@@ -307,6 +307,16 @@ Repo fixture update: `audio_repair_autodata_v0.json` expanded from 15 to 19 acce
 
 Verification: targeted text-loop/repair/audio-autodata tests passed (`53 passed, 1 warning`); `make eval-audio-autodata` passed (`19/19 accepted`, 8 synthetic, 11 public, 13 hard-negative/no-action, 0 unsafe accepted); `TZ=UTC make eval-grant-readiness` passed; `git diff --check` passed; full `make test` passed (`322 passed, 2 warnings`).
 
+## Nightly Autodata ASR-erasure + hallucination guard — DONE (2026-06-28)
+
+Shipped: the audio lane ran 18 synthetic Parker audio files plus 36 public audio files through local Whisper tiny/base after retrying around Hugging Face 429s (114 ASR passes, 0 ASR errors) and refreshed 54 audio-to-Parker traces. The Operations source manifest now also tracks `charleslwang/torgo-dysarthric` as a transcript-backed dysarthric TORGO mirror, plus gated/scout-only German dysarthria and Frisian health-dialogue sources. Raw audio remains in Operations; repo data remains metadata-only.
+
+Product fixes from the loop: `TextSession` now routes question-shaped media ASR like `Why you YouTube stretching video?` to specific media repair choices instead of the generic answer stub; no-context control negation such as `No, don't go yet` no-ops instead of offering reminder/message choices; repeated no-transcript ASR hallucinations such as `I'll be happy...` no-op instead of generating action choices; and the MInDS-14 `joint account -> joining town` ASR-erasure path is refused as unsupported private finance without implying Parker has bank/account capabilities.
+
+Repo fixture update: `audio_repair_autodata_v0.json` expanded from 19 to 22 accepted metadata-only fixtures: 8 synthetic, 14 public-corpus-derived, 16 hard-negative/no-action, 0 unsafe accepted. New cases cover MInDS-14 `joint account -> joining town`, dysarthria no-transcript repetitive hallucination no-op, and transcript-backed charleslwang/TORGO dysarthric read-sentence no-action.
+
+Verification: targeted text-loop/audio-autodata tests passed (`36 passed, 1 warning`); `make eval-audio-autodata` passed (`22/22 accepted`, 8 synthetic, 14 public, 16 hard-negative/no-action, 0 unsafe accepted); `TZ=UTC make eval-grant-readiness` passed; `git diff --check` passed; full `make test` passed (`326 passed, 2 warnings`).
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:
