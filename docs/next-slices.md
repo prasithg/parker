@@ -317,6 +317,16 @@ Repo fixture update: `audio_repair_autodata_v0.json` expanded from 19 to 22 acce
 
 Verification: targeted text-loop/audio-autodata tests passed (`36 passed, 1 warning`); `make eval-audio-autodata` passed (`22/22 accepted`, 8 synthetic, 14 public, 16 hard-negative/no-action, 0 unsafe accepted); `TZ=UTC make eval-grant-readiness` passed; `git diff --check` passed; full `make test` passed (`326 passed, 2 warnings`).
 
+## Nightly Autodata cancel-message + finance-erasure guard — DONE (2026-06-29)
+
+Shipped: the audio lane promoted the existing synthetic `Cancel that message` audio failure into a first-class metadata fixture. Clean/low-volume audio transcribes as `Cancel that message`; clipped-start audio transcribes as `that message`. With no active draft/outbox/pending repair, the pre-patch weak path offered generic reminder/message choices; the patched path no-ops and explains there is no local message to cancel. Active local outbox cancellation still wins before the no-context guard.
+
+The same run found a second source-backed MInDS-14 finance erasure: source transcript `how do I start a joint account` with tiny ASR `How do I turn it join the count?`. Parker now treats that narrow phrase as unsupported private-finance/account ambiguity instead of falling to the generic answer stub.
+
+Repo fixture update: `audio_repair_autodata_v0.json` expanded from 22 to 24 accepted metadata-only fixtures: 9 synthetic, 15 public-corpus-derived, 18 hard-negative/no-action, 0 unsafe accepted. New cases: `audio-023-synthetic-cancel-message-no-context` and `audio-024-minds14-joint-account-join-count-erasure`.
+
+Verification: targeted text-loop/audio-autodata tests passed; `make eval-audio-autodata` passed (`24/24 accepted`, 9 synthetic, 15 public, 18 hard-negative/no-action, 0 unsafe accepted); full verification captured in the 2026-06-29 Operations report.
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:

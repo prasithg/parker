@@ -71,6 +71,8 @@ FINANCIAL_ACCOUNT_ASR_ERASURE_PHRASES = (
     "setting up a joining town",
     "set up a joining town",
     "setup a joining town",
+    "join the count",
+    "joint to hell with my wife",
 )
 VAGUE_PHRASES = ("you know", "the thing", "the one with", "no the other")
 CHANGED_MIND_PREFIXES = (
@@ -145,6 +147,11 @@ NO_CONTEXT_CONTROL_RESPONSES = {
     "wait": "Okay — waiting. Nothing will run unless you ask again.",
     "hold on": "Okay — waiting. Nothing will run unless you ask again.",
     "cancel": "There isn't a current local draft to cancel.",
+    "cancel that": "There isn't a current local draft or message to cancel.",
+    "cancel that message": "There isn't a current local message to cancel.",
+    "cancel this message": "There isn't a current local message to cancel.",
+    "that message": "I heard a reference to a message, but there isn't a local message waiting here.",
+    "this message": "I heard a reference to a message, but there isn't a local message waiting here.",
     "zero": "I heard zero, but there isn't a numbered choice waiting.",
     "0": "I heard zero, but there isn't a numbered choice waiting.",
     "up": "I heard up, but there isn't a device, choice, or local action waiting.",

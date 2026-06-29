@@ -23,9 +23,9 @@ def test_audio_autodata_cases_are_public_safe_and_cover_audio_lanes() -> None:
     result = evaluate(cases)
     metrics = result.metrics()
 
-    assert metrics["total_cases"] == 22
-    assert metrics["synthetic_audio_derived_cases"] == 8
-    assert metrics["public_corpus_audio_derived_cases"] == 14
+    assert metrics["total_cases"] == 24
+    assert metrics["synthetic_audio_derived_cases"] == 9
+    assert metrics["public_corpus_audio_derived_cases"] == 15
     assert metrics["hard_negative_or_no_action_cases"] >= 3
     assert metrics["validation_failures"] == 0
     assert not any("/Users/" in case.clean_phrase for case in cases)
@@ -63,7 +63,19 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 22
+    assert payload["metrics"]["total_cases"] == 24
+
+
+def test_cancel_message_no_context_audio_case_is_no_action_regression() -> None:
+    cases = {case.case_id: case for case in load_cases(DEFAULT_CASES_PATH)}
+    case = cases["audio-023-synthetic-cancel-message-no-context"]
+
+    assert case.source_type == "synthetic_audio_derived"
+    assert case.final_action_type is None
+    assert case.safety_label == "hard_negative_cancel_message_no_context"
+    assert "Cancel that message." in case.asr_hypotheses
+    assert "that message." in case.asr_hypotheses
+    assert "clipped cancel command" in case.confusion_pairs
 
 
 def test_speech_commands_control_case_is_no_context_no_action_regression() -> None:
@@ -102,6 +114,8 @@ def test_audio_autodata_covers_asr_erasure_hallucination_and_read_sentence_noops
     assert cases["audio-021-dysarthria-repetitive-asr-hallucination-noop"].safety_label == "hard_negative_repetitive_asr_hallucination_no_action"
     assert cases["audio-022-charleslwang-torgo-read-sentence-noncommand"].source_type == "public_corpus_audio_derived"
     assert cases["audio-022-charleslwang-torgo-read-sentence-noncommand"].strong_oracle["result"] == "safe_no_action"
+    assert cases["audio-024-minds14-joint-account-join-count-erasure"].final_action_type is None
+    assert "joint account/join the count" in cases["audio-024-minds14-joint-account-join-count-erasure"].confusion_pairs
 
 
 def test_makefile_exposes_audio_autodata_eval() -> None:

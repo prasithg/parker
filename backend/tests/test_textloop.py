@@ -68,6 +68,7 @@ def test_financial_account_requests_are_refused_without_capture(db):
         "Can you tell me my current account balance please?",
         "I need help setting up a joint account.",
         "Please, I need help setting up a joining town.",
+        "How do I turn it join the count?",
     ):
         response = session.handle(utterance)
         assert response["kind"] == "refused"
@@ -116,6 +117,18 @@ def test_contentless_message_body_clarifies_without_local_draft(db):
 
     assert response["kind"] == "clarify"
     assert "not what to say" in response["speech"]
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_no_context_cancel_message_audio_phrase_noops_without_generic_choices(db):
+    session = _session(db)
+
+    for utterance in ("Cancel that message.", "that message."):
+        response = session.handle(utterance)
+        assert response["kind"] == "noop"
+        assert "message" in response["speech"].lower()
+        assert "1)" not in response["speech"]
+
     assert db.query(CapturedIntent).count() == 0
 
 
