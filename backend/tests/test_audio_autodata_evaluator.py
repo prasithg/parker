@@ -23,9 +23,11 @@ def test_audio_autodata_cases_are_public_safe_and_cover_audio_lanes() -> None:
     result = evaluate(cases)
     metrics = result.metrics()
 
-    assert metrics["total_cases"] == 24
+    assert metrics["total_cases"] == 27
     assert metrics["synthetic_audio_derived_cases"] == 9
-    assert metrics["public_corpus_audio_derived_cases"] == 15
+    assert metrics["public_corpus_audio_derived_cases"] == 18
+    assert metrics["source_oracle_cases"] == 3
+    assert metrics["runtime_vs_source_oracle_disagreements"] == 3
     assert metrics["hard_negative_or_no_action_cases"] >= 3
     assert metrics["validation_failures"] == 0
     assert not any("/Users/" in case.clean_phrase for case in cases)
@@ -63,7 +65,7 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 24
+    assert payload["metrics"]["total_cases"] == 27
 
 
 def test_cancel_message_no_context_audio_case_is_no_action_regression() -> None:
@@ -116,6 +118,29 @@ def test_audio_autodata_covers_asr_erasure_hallucination_and_read_sentence_noops
     assert cases["audio-022-charleslwang-torgo-read-sentence-noncommand"].strong_oracle["result"] == "safe_no_action"
     assert cases["audio-024-minds14-joint-account-join-count-erasure"].final_action_type is None
     assert "joint account/join the count" in cases["audio-024-minds14-joint-account-join-count-erasure"].confusion_pairs
+
+
+def test_audio_autodata_covers_source_oracle_public_audio_lane() -> None:
+    cases = {case.case_id: case for case in load_cases(DEFAULT_CASES_PATH)}
+
+    emergency = cases["audio-025-easycall-emergency-source-oracle-noop"]
+    assert emergency.final_action_type is None
+    assert emergency.source_oracle["source_intent_class"] == "emergency_call_command"
+    assert emergency.source_oracle["oracle_target"] == "safe_no_action_alternate_input"
+    assert emergency.source_oracle["runtime_text_guard_allowed"] is False
+    assert "chiama emergenza/I'm a man" in emergency.confusion_pairs
+
+    cancel = cases["audio-026-easycall-cancel-source-oracle-noop"]
+    assert cancel.final_action_type is None
+    assert cancel.source_oracle["source_intent_class"] == "cancel_command"
+    assert cancel.source_oracle["runtime_text_guard_allowed"] is False
+    assert "cancella/I'm here" in cancel.confusion_pairs
+
+    finance = cases["audio-027-minds14-joint-account-source-oracle-hold"]
+    assert finance.final_action_type is None
+    assert finance.source_oracle["source_intent_class"] == "private_finance_joint_account"
+    assert finance.source_oracle["runtime_text_guard_allowed"] is False
+    assert "joint account/set up what I'm going to help with my wife" in finance.confusion_pairs
 
 
 def test_makefile_exposes_audio_autodata_eval() -> None:

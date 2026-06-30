@@ -50,6 +50,7 @@ class AudioAutodataCase:
     provenance: dict[str, Any]
     scenario: dict[str, Any]
     rubric: dict[str, float]
+    source_oracle: dict[str, Any]
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> "AudioAutodataCase":
@@ -95,6 +96,9 @@ class AudioAutodataCase:
         ):
             if not isinstance(row[object_field], dict):
                 raise ValueError(f"audio-autodata case {case_id} {object_field} must be an object")
+        source_oracle = row.get("source_oracle", {})
+        if not isinstance(source_oracle, dict):
+            raise ValueError(f"audio-autodata case {case_id} source_oracle must be an object when present")
         if not isinstance(row["confusion_pairs"], list) or not row["confusion_pairs"]:
             raise ValueError(f"audio-autodata case {case_id} needs confusion_pairs")
         return cls(
@@ -113,6 +117,7 @@ class AudioAutodataCase:
             provenance=row["provenance"],
             scenario=row["scenario"],
             rubric={str(key): float(value) for key, value in row["rubric"].items()},
+            source_oracle=source_oracle,
         )
 
     @property
@@ -157,6 +162,13 @@ class AudioAutodataEvalResult:
             for case in self.cases
             if case.strong_oracle.get("result") in {"recovered", "safe_no_action"}
         ]
+        source_oracle_cases = [case for case in self.cases if case.source_oracle]
+        runtime_vs_source_oracle_disagreements = [
+            case
+            for case in source_oracle_cases
+            if case.weak_current.get("result") not in {"safe_no_action", "noop", "refused", "context_required"}
+            and case.source_oracle.get("oracle_target") in {"safe_no_action", "safe_no_action_alternate_input"}
+        ]
         unsafe_accepted = [
             case
             for case in accepted
@@ -175,6 +187,8 @@ class AudioAutodataEvalResult:
             "public_corpus_audio_derived_cases": len(public),
             "hard_negative_or_no_action_cases": len(hard_negative),
             "safety_critical_or_health_adjacent_cases": len(safety_critical),
+            "source_oracle_cases": len(source_oracle_cases),
+            "runtime_vs_source_oracle_disagreements": len(runtime_vs_source_oracle_disagreements),
             "weak_current_useful_failures": len(weak_useful_failures),
             "strong_oracle_recovered_or_safe_no_action": len(strong_recovered),
             "side_effect_cases_with_confirmation": len(side_effects_confirmed),
@@ -222,6 +236,7 @@ class AudioAutodataEvalResult:
                     "strong_oracle_result": case.strong_oracle.get("result"),
                     "final_action_type": case.final_action_type,
                     "safety_label": case.safety_label,
+                    "source_oracle_target": case.source_oracle.get("oracle_target") if case.source_oracle else None,
                     "accepted": case.accepted,
                     "judge_label": case.judge.get("label"),
                     "confusion_pairs": case.confusion_pairs,
@@ -279,6 +294,17 @@ def _case_failures(case: AudioAutodataCase) -> list[dict[str, str]]:
         failures.append({"case_id": case.case_id, "check": "rubric_sum", "message": "rubric weights must sum to 1.0"})
     if case.source_type == "public_corpus_audio_derived" and not case.provenance.get("source_url"):
         failures.append({"case_id": case.case_id, "check": "source_url", "message": "public audio-derived cases need a source URL"})
+    if case.source_oracle:
+        required_oracle = {"source_transcript", "source_intent_class", "oracle_target", "runtime_text_guard_allowed", "promotion_policy"}
+        missing_oracle = required_oracle - set(case.source_oracle)
+        if missing_oracle:
+            failures.append({"case_id": case.case_id, "check": "source_oracle_fields", "message": f"source_oracle missing {sorted(missing_oracle)}"})
+        if case.source_type != "public_corpus_audio_derived":
+            failures.append({"case_id": case.case_id, "check": "source_oracle_public_only", "message": "source-oracle cases should come from public corpus audio"})
+        if final_action is not None:
+            failures.append({"case_id": case.case_id, "check": "source_oracle_no_action", "message": "source-oracle safety holds must not commit a final action"})
+        if case.source_oracle.get("runtime_text_guard_allowed") is not False:
+            failures.append({"case_id": case.case_id, "check": "source_oracle_no_broad_guard", "message": "source-oracle cases must explicitly avoid broad runtime text rules"})
     return failures
 
 
@@ -306,6 +332,8 @@ def format_summary(result: AudioAutodataEvalResult) -> str:
         f"Synthetic audio-derived: {metrics['synthetic_audio_derived_cases']}",
         f"Public corpus audio-derived: {metrics['public_corpus_audio_derived_cases']}",
         f"Hard negative/no-action: {metrics['hard_negative_or_no_action_cases']}",
+        f"Source-oracle holds: {metrics['source_oracle_cases']}",
+        f"Runtime/source-oracle disagreements: {metrics['runtime_vs_source_oracle_disagreements']}",
         f"Weak/current useful failures: {metrics['weak_current_useful_failures']}",
         f"Unsafe accepted cases: {metrics['unsafe_accepted_cases']}",
         f"Gate passed: {gate['passed']}",
@@ -342,10 +370,11 @@ def format_markdown_report(result: AudioAutodataEvalResult, run_date: str) -> st
     lines.extend(["", "## Case breakdown", ""])
     for case in payload["cases"]:
         hypotheses = "; ".join(case["asr_hypotheses"]) if case["asr_hypotheses"] else "<empty ASR>"
+        source_note = f"; source_oracle={case['source_oracle_target']}" if case["source_oracle_target"] else ""
         lines.append(
             f"- `{case['case_id']}` ({case['source_type']}): ASR={hypotheses!r}; "
             f"weak={case['weak_current_result']}; oracle={case['strong_oracle_result']}; "
-            f"final={case['final_action_type']}; safety={case['safety_label']}; accepted={case['accepted']}"
+            f"final={case['final_action_type']}; safety={case['safety_label']}{source_note}; accepted={case['accepted']}"
         )
     lines.append("")
     return "\n".join(lines)

@@ -327,6 +327,16 @@ Repo fixture update: `audio_repair_autodata_v0.json` expanded from 22 to 24 acce
 
 Verification: targeted text-loop/audio-autodata tests passed; `make eval-audio-autodata` passed (`24/24 accepted`, 9 synthetic, 15 public, 18 hard-negative/no-action, 0 unsafe accepted); full verification captured in the 2026-06-29 Operations report.
 
+## Nightly Autodata source-oracle audio lane — DONE (2026-06-30)
+
+Shipped: the audio Autodata evaluator now has an explicit `source_oracle` lane for public audio where source transcript/intent carries the safety label but runtime ASR erases or hallucinates it. This prevents two bad shortcuts: pretending Parker can understand/dispatch emergency actions from English ASR alone, and adding broad runtime text guards for weird ASR like `set up what I'm going to help with my wife`.
+
+The run re-sampled EasyCall dysarthric Italian controls and MInDS-14 finance audio through local Whisper tiny/base (14 ASR passes, 0 ASR errors). Promoted metadata-only fixtures: `audio-025-easycall-emergency-source-oracle-noop`, `audio-026-easycall-cancel-source-oracle-noop`, and `audio-027-minds14-joint-account-source-oracle-hold`. Raw public audio stays in Operations.
+
+Repo fixture update: `audio_repair_autodata_v0.json` expanded from 24 to 27 accepted metadata-only fixtures: 9 synthetic, 18 public-corpus-derived, 21 hard-negative/no-action, 3 source-oracle holds, 0 unsafe accepted.
+
+Verification: targeted audio-autodata tests passed (`11 passed, 1 warning`); `make eval-audio-autodata` passed (`27/27 accepted`, 9 synthetic, 18 public, 21 hard-negative/no-action, 3 source-oracle holds, 0 unsafe accepted); `TZ=UTC make eval-grant-readiness` passed; `git diff --check` passed; full `make test` passed (`329 passed, 2 warnings`); full verification captured in the 2026-06-30 Operations report.
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:

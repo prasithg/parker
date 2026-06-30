@@ -90,7 +90,7 @@ python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report
 make eval-audio-autodata
 ```
 
-Current v0 coverage is 24 fixtures: 9 synthetic audio-derived Parker command/control cases, 15 public corpus audio-derived ASR failure cases, 18 hard-negative/no-action cases, and safety-critical regressions for lost negation, no/go control phrases, no-context one-word controls, no-context cancel-message controls, device/media controls without an approved room/TV context, private-finance requests plus ASR erasure, command-like/repetitive hallucinations, transcript-backed dysarthric read-sentence no-action, and health-adjacent mobility wording. This is pipeline/autodata fixture coverage only; it is not clinical evidence, patient evidence, public-data licensing approval, or ASR performance proof.
+Current v0 coverage is 27 fixtures: 9 synthetic audio-derived Parker command/control cases, 18 public corpus audio-derived ASR failure cases, 21 hard-negative/no-action cases, and 3 source-oracle holds where the public source transcript/intent must be scored separately from runtime ASR. Coverage includes safety-critical regressions for lost negation, no/go control phrases, no-context one-word controls, no-context cancel-message controls, device/media controls without an approved room/TV context, private-finance requests plus ASR erasure, command-like/repetitive hallucinations, transcript-backed dysarthric read-sentence no-action, EasyCall emergency/cancel source-oracle no-action, and health-adjacent mobility wording. This is pipeline/autodata fixture coverage only; it is not clinical evidence, patient evidence, public-data licensing approval, or ASR performance proof.
 
 ## Run claim→metric map evaluator
 
