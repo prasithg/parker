@@ -23,6 +23,7 @@ from . import BACKEND_ROOT  # noqa: F401 — ensures backend is importable
 from app.conversation.textloop import TextSession  # noqa: E402
 from app.db.database import Base  # noqa: E402
 from app.db.models import CallLog, CapturedIntent  # noqa: E402
+import app.conversation.repair_events  # noqa: F401, E402 — register tables
 import app.escalation.models  # noqa: F401, E402 — register tables
 import app.evening.session  # noqa: F401, E402
 import app.exercises.session  # noqa: F401, E402
@@ -66,12 +67,21 @@ def _memory_session() -> Iterator[Session]:
         engine.dispose()
 
 
-def _collect(db: Session, session: TextSession, lines: list[str], *, targets: list[dict[str, Any]] | None) -> Outcome:
+def _collect(
+    db: Session,
+    session: TextSession,
+    lines: list[str],
+    *,
+    targets: list[dict[str, Any]] | None,
+    alternates: list[str] | None = None,
+) -> Outcome:
     outcome = Outcome()
-    queue = list(lines)
+    # Original utterances carry the alternate hypotheses; simulated digit
+    # selections inserted mid-stream do not.
+    queue: list[tuple[str, list[str]]] = [(line, alternates or []) for line in lines]
     while queue:
-        line = queue.pop(0)
-        response = session.handle(line)
+        line, line_alternates = queue.pop(0)
+        response = session.handle(line, alternates=line_alternates)
         outcome.kinds.append(response["kind"])
         if response["kind"] == "choices":
             choices = response.get("choices") or []
@@ -82,7 +92,7 @@ def _collect(db: Session, session: TextSession, lines: list[str], *, targets: li
                 )
                 if match is not None:
                     outcome.repair_selections += 1
-                    queue.insert(0, str(match["position"]))
+                    queue.insert(0, (str(match["position"]), []))
     for row in db.query(CapturedIntent).all():
         outcome.captured.append(
             {
@@ -95,8 +105,15 @@ def _collect(db: Session, session: TextSession, lines: list[str], *, targets: li
     return outcome
 
 
-def route_lines(lines: list[str], *, targets: list[dict[str, Any]] | None = None, call_sid: str = "AUDIO-HARNESS") -> Outcome:
-    """Replay lines in a fresh DB. With ``targets``, act on matching repair choices."""
+def route_lines(
+    lines: list[str],
+    *,
+    targets: list[dict[str, Any]] | None = None,
+    alternates: list[str] | None = None,
+    call_sid: str = "AUDIO-HARNESS",
+) -> Outcome:
+    """Replay lines in a fresh DB. With ``targets``, act on matching repair
+    choices; with ``alternates``, offer n-best hypotheses to the session."""
 
     with _memory_session() as db:
         call = CallLog(call_sid=call_sid, call_type="text_loop")
@@ -104,4 +121,4 @@ def route_lines(lines: list[str], *, targets: list[dict[str, Any]] | None = None
         db.commit()
         db.refresh(call)
         session = TextSession(db, call.id)
-        return _collect(db, session, lines, targets=targets)
+        return _collect(db, session, lines, targets=targets, alternates=alternates)

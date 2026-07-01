@@ -20,6 +20,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.conversation.repair import suggest_repair_candidates
+from app.conversation.repair_events import record_repair_event
 from app.conversation.tools import execute_tool
 
 MED_WORDS = ("pill", "pills", "medication", "meds", "dose")
@@ -449,6 +450,79 @@ def _intent_text_for_revision(requested_action: str, subject: str) -> str:
     return subject
 
 
+# Safety lists an alternate ASR hypothesis must clear before it may be
+# offered as a repair choice. Over-blocking is fine here: a blocked probe
+# only means one fewer suggested interpretation, never a lost guard.
+_PROBE_BLOCKED_PHRASES: tuple[tuple[str, ...], ...] = (
+    MED_WORDS,
+    MEDICAL_ADVICE_WORDS,
+    MEDICAL_ADVICE_PHRASES,
+    MEDICAL_INSTRUCTION_MARKERS,
+    MEDICAL_INSTRUCTION_PHRASES,
+    EMERGENCY_WORDS,
+    EMERGENCY_SUBSTITUTION_PHRASES,
+    PRIVATE_DISCLOSURE_WORDS,
+    PURCHASE_PHRASES,
+    FINANCIAL_ACCOUNT_PHRASES,
+)
+
+
+def probe_direct_intent(utterance: str) -> dict[str, Any] | None:
+    """Parse an alternate ASR hypothesis against the direct-capture patterns.
+
+    Pure and side-effect free: used to turn n-best/alternate transcripts
+    into concrete repair choices ("send Sarah a message: ...") that carry
+    their parsed recipient/subject, so a selection captures a complete
+    intent instead of the degraded primary transcript. Any utterance that
+    trips a safety phrase is never probed — alternates must not become a
+    side door around the refusal guards.
+    """
+
+    candidate = utterance.strip()
+    if not candidate:
+        return None
+    lowered = candidate.lower()
+    if any(phrase in lowered for group in _PROBE_BLOCKED_PHRASES for phrase in group):
+        return None
+    match = MESSAGE_PATTERN.match(candidate) or SEND_PATTERN.match(candidate)
+    if match:
+        recipient, body = match.group(1), match.group(2).strip().rstrip(".")
+        if not body or _message_body_needs_clarification(body):
+            return None
+        return {
+            "label": f"send {recipient} a message: “{body[:60]}”",
+            "action_type": "family_message",
+            "recipient": recipient,
+            "subject": f"message {recipient}",
+            "intent_text": body,
+        }
+    match = REMIND_PATTERN.match(candidate)
+    if match:
+        subject = match.group(1).strip().rstrip(".")
+        if not subject:
+            return None
+        return {
+            "label": f"a reminder to {subject[:60]}",
+            "action_type": "reminder",
+            "recipient": None,
+            "subject": subject,
+            "intent_text": candidate,
+        }
+    match = EXERCISE_PATTERN.match(candidate)
+    if match:
+        exercise_type = (match.group(1) or "speech").lower()
+        details = (match.group(2) or "short practice").strip().rstrip(".")
+        subject = f"{exercise_type} exercise: {details}"
+        return {
+            "label": f"start a {subject}",
+            "action_type": "exercise_start",
+            "recipient": None,
+            "subject": subject,
+            "intent_text": candidate,
+        }
+    return None
+
+
 class TextSession:
     """One conversational text session bound to a call log."""
 
@@ -462,11 +536,21 @@ class TextSession:
         # Passed to suggest_repair_candidates on the next offer so the model can
         # generate genuinely different alternatives instead of repeating itself.
         self._prior_offered_labels: Optional[list[str]] = None
+        # Alternate ASR hypotheses for the utterance currently being handled,
+        # and for the utterance whose repair choices are pending selection.
+        self._current_alternates: list[str] = []
+        self._pending_alternates: list[str] = []
 
-    def handle(self, text: str) -> dict[str, Any]:
-        """Route one utterance and return {kind, speech, ...}."""
+    def handle(self, text: str, *, alternates: Optional[list[str]] = None) -> dict[str, Any]:
+        """Route one utterance and return {kind, speech, ...}.
+
+        ``alternates`` are additional ASR hypotheses for the same audio
+        (n-best or a second model's transcript). They are never routed
+        directly — they only enrich repair choices via safe probing.
+        """
 
         utterance = text.strip()
+        self._current_alternates = [a for a in (alternates or []) if a.strip() and a.strip() != utterance]
         if not utterance:
             return {"kind": "noop", "speech": "I'm listening."}
         if self._pending_choices is not None:
@@ -783,20 +867,46 @@ class TextSession:
         )
 
     def _offer_choices(self, utterance: str) -> dict[str, Any]:
+        # Alternate ASR hypotheses that parse to a concrete safe intent become
+        # evidence-based choices, listed before the generic suggestions. They
+        # carry recipient/subject so a selection captures a complete intent.
+        probed: list[dict[str, Any]] = []
+        for alternate in self._current_alternates[:2]:
+            intent = probe_direct_intent(alternate)
+            if intent is not None and all(intent["label"] != p["label"] for p in probed):
+                probed.append(intent)
         raw = suggest_repair_candidates(
             utterance,
             client=self._model_client,
             prior_choices=self._prior_offered_labels,
         )
-        candidates = [{"label": lbl, "action_type": at} for lbl, at in raw]
+        candidates = probed + [
+            {"label": lbl, "action_type": at}
+            for lbl, at in raw
+            if all(lbl != p["label"] for p in probed)
+        ]
+        candidates = candidates[:3]
         result = execute_tool(
             self.db,
             self.call_log_id,
             "offer_repair_choices",
             {"candidates": candidates},
         )
+        # The tool layer validates and returns bare {position,label,action_type}
+        # choices; re-attach the probed enrichment by label so selection can
+        # capture the parsed recipient/subject.
+        enriched_by_label = {p["label"]: p for p in probed}
+        for choice in result["choices"]:
+            extra = enriched_by_label.get(choice["label"])
+            if extra is not None:
+                choice.update(
+                    recipient=extra["recipient"],
+                    subject=extra["subject"],
+                    intent_text=extra["intent_text"],
+                )
         self._pending_choices = result["choices"]
         self._pending_utterance = utterance
+        self._pending_alternates = list(self._current_alternates)
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
 
     def _handle_selection(self, utterance: str) -> dict[str, Any]:
@@ -808,21 +918,45 @@ class TextSession:
             return {"kind": "choices", "speech": speech, "choices": choices}
         choice = choices[int(utterance) - 1]
         source = self._pending_utterance or choice["label"]
+        alternates = self._pending_alternates
         self._pending_choices = None
         self._pending_utterance = None
+        self._pending_alternates = []
         if choice["action_type"] is None:
             # Save the rejected labels so the next offer can generate different alternatives.
             self._prior_offered_labels = [
                 c["label"] for c in choices if c["action_type"] is not None
             ]
+            record_repair_event(
+                self.db,
+                call_log_id=self.call_log_id,
+                utterance=source,
+                alternates=alternates,
+                choices=choices,
+                selected_position=choice["position"],
+                selected_label=choice["label"],
+                selected_action_type=None,
+            )
             return {"kind": "retry", "speech": "Okay, none of those. Tell me again in your own words."}
-        return self._capture(
-            intent_text=source,
+        response = self._capture(
+            intent_text=choice.get("intent_text") or source,
             requested_action=choice["action_type"],
-            subject=source[:120],
-            recipient=None,
+            subject=choice.get("subject") or source[:120],
+            recipient=choice.get("recipient"),
             speech=f"Got it — I'll treat that as: {choice['label']}. I'll confirm before anything runs.",
         )
+        record_repair_event(
+            self.db,
+            call_log_id=self.call_log_id,
+            utterance=source,
+            alternates=alternates,
+            choices=choices,
+            selected_position=choice["position"],
+            selected_label=choice["label"],
+            selected_action_type=choice["action_type"],
+            captured_intent_id=response.get("captured_intent_id"),
+        )
+        return response
 
     def _capture(
         self,

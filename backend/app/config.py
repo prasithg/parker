@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     # Anthropic (model-driven repair choices; falls back to hardcoded when unset)
     anthropic_api_key: str = ""
 
+    # Learning flywheel v0 (both default OFF / empty; consent is explicit)
+    # When consented, each repair exchange (hypotheses, offered choices, the
+    # user's selection) is stored locally as a labeled example. Never audio.
+    repair_event_capture_consented: bool = False
+    # Comma-separated names/words Parker should be biased toward hearing
+    # (family names, medication-free daily vocabulary). Used as the local
+    # ASR initial prompt and available to repair candidate generation.
+    personal_lexicon: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

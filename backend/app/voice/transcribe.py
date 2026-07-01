@@ -42,8 +42,33 @@ VOICE_DEPS_HINT = (
 )
 
 
-def load_local_transcriber(model_size: str = "tiny", language: str | None = "en") -> Transcriber:
-    """Build a transcriber backed by a local faster-whisper model."""
+def lexicon_initial_prompt() -> str | None:
+    """Whisper bias prompt from the family-configured personal lexicon.
+
+    ``PERSONAL_LEXICON`` holds comma-separated names and everyday words the
+    speaker actually uses (family names, places, routines). Whisper treats
+    the initial prompt as preceding context, nudging recognition toward
+    these words — the cheapest rung of the per-user adaptation ladder.
+    """
+
+    from app.config import settings
+
+    words = [w.strip() for w in settings.personal_lexicon.split(",") if w.strip()]
+    if not words:
+        return None
+    return "Words and names likely in this speech: " + ", ".join(words) + "."
+
+
+def load_local_transcriber(
+    model_size: str = "tiny",
+    language: str | None = "en",
+    initial_prompt: str | None = None,
+) -> Transcriber:
+    """Build a transcriber backed by a local faster-whisper model.
+
+    ``initial_prompt`` defaults to the personal-lexicon bias prompt when the
+    family has configured one.
+    """
 
     try:
         from faster_whisper import WhisperModel
@@ -51,9 +76,10 @@ def load_local_transcriber(model_size: str = "tiny", language: str | None = "en"
         raise RuntimeError(VOICE_DEPS_HINT) from exc
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    prompt = initial_prompt if initial_prompt is not None else lexicon_initial_prompt()
 
     def _transcribe(audio_path: Path) -> list[str]:
-        segments, _info = model.transcribe(str(audio_path), language=language)
+        segments, _info = model.transcribe(str(audio_path), language=language, initial_prompt=prompt)
         return [segment.text for segment in segments]
 
     return _transcribe

@@ -42,9 +42,24 @@ DEFAULT_REPORTS_DIR = REPO_ROOT / "benchmark" / "reports"
 REPORT_STEM = "audio_real_eval"
 
 
-def evaluate_model(model: str, clips: list[Any], cache_root: Path, *, beam_size: int, initial_prompt: str | None) -> dict[str, Any]:
+def evaluate_model(
+    model: str,
+    clips: list[Any],
+    cache_root: Path,
+    *,
+    beam_size: int,
+    initial_prompt: str | None,
+    nbest_with: str | None = None,
+) -> dict[str, Any]:
     config = ASRConfig(model_size=model, beam_size=beam_size, initial_prompt=initial_prompt)
     asr = CachedASR(config, cache_root)
+    # Alternate hypotheses come from a second, cheaper model's transcript of
+    # the same audio — cross-model disagreement as a poor man's n-best.
+    nbest_asr = (
+        CachedASR(ASRConfig(model_size=nbest_with, beam_size=beam_size), cache_root)
+        if nbest_with and nbest_with != model
+        else None
+    )
     rows: list[dict[str, Any]] = []
     clean_cache: dict[str, Any] = {}
     for clip in clips:
@@ -60,6 +75,12 @@ def evaluate_model(model: str, clips: list[Any], cache_root: Path, *, beam_size:
         else:
             with_repair = norepair
         verdict = classify(clean, norepair, with_repair)
+        verdict["repair_nbest"] = verdict["repair"]
+        if nbest_asr is not None and clean.captured and verdict["repair"] not in ("exact",):
+            alternates = split_utterances(nbest_asr.transcribe(clip).segments)
+            if alternates and alternates != lines:
+                with_nbest = route_lines(lines, targets=clean.captured, alternates=alternates)
+                verdict["repair_nbest"] = classify(clean, norepair, with_nbest)["repair"]
         rows.append(
             {
                 "clip_id": clip.clip_id,
@@ -70,6 +91,7 @@ def evaluate_model(model: str, clips: list[Any], cache_root: Path, *, beam_size:
                 "lane": verdict["lane"],
                 "norepair": verdict["norepair"],
                 "repair": verdict["repair"],
+                "repair_nbest": verdict["repair_nbest"],
                 "wer": round(wer(clip.oracle, result.text), 4),
                 "asr_runtime_sec": round(result.runtime_sec, 3),
                 "asr_empty": not result.text,
@@ -90,9 +112,10 @@ def _recovery(rows: list[dict[str, Any]], mode: str) -> dict[str, Any]:
 
 def summarize(model_result: dict[str, Any]) -> dict[str, Any]:
     rows = model_result["rows"]
-    by_mode = {mode: _recovery(rows, mode) for mode in ("norepair", "repair")}
+    by_mode = {mode: _recovery(rows, mode) for mode in ("norepair", "repair", "repair_nbest")}
     unsafe = {
-        mode: sum(1 for r in rows if r[mode] == "unsafe_capture") for mode in ("norepair", "repair")
+        mode: sum(1 for r in rows if r[mode] == "unsafe_capture")
+        for mode in ("norepair", "repair", "repair_nbest")
     }
     breakdowns: dict[str, Any] = {}
     for dim in ("condition", "language", "dataset"):
@@ -114,7 +137,8 @@ def summarize(model_result: dict[str, Any]) -> dict[str, Any]:
         "recovery": by_mode,
         "unsafe_capture": unsafe,
         "category_counts": {
-            mode: dict(Counter(r[mode] for r in rows)) for mode in ("norepair", "repair")
+            mode: dict(Counter(r[mode] for r in rows))
+            for mode in ("norepair", "repair", "repair_nbest")
         },
         # Mean WER is dominated by Whisper hallucination loops on hard clips
         # (WER >> 1 when a one-word oracle gets a paragraph of noise); median
@@ -134,15 +158,16 @@ def format_markdown(payload: dict[str, Any]) -> str:
         f"Clips scored: {payload['clips_scored']} (excluded: {payload['excluded']})  ",
         "Oracle: self-referential — route(oracle transcript) vs route(ASR transcript).",
         "",
-        "| model | intent clips | recovery (no repair) | recovery (with repair) | unsafe (repair) | median WER | mean WER | s/clip |",
-        "|---|---|---|---|---|---|---|---|",
+        "| model | intent clips | recovery (no repair) | recovery (repair) | recovery (repair+n-best) | unsafe (worst mode) | median WER | mean WER | s/clip |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for summary in payload["models"]:
         rec = summary["recovery"]
         lines.append(
             f"| {summary['model']} | {rec['repair']['intent_lane_clips']} "
             f"| {rec['norepair']['recovery_rate']} | {rec['repair']['recovery_rate']} "
-            f"| {summary['unsafe_capture']['repair']} | {summary['median_wer']} "
+            f"| {rec['repair_nbest']['recovery_rate']} "
+            f"| {max(summary['unsafe_capture'].values())} | {summary['median_wer']} "
             f"| {summary['mean_wer']} | {summary['mean_asr_runtime_sec']} |"
         )
     lines += [
@@ -154,7 +179,7 @@ def format_markdown(payload: dict[str, Any]) -> str:
         "are both included; treat dysarthric-English coverage caveats in the",
         "breakdowns as binding when citing numbers.",
         "",
-        f"Gate (0 unsafe captures with repair, all models): "
+        f"Gate (0 unsafe captures in every mode, all models): "
         f"{'PASS' if payload['gate']['passed'] else 'FAIL'}",
     ]
     return "\n".join(lines) + "\n"
@@ -166,6 +191,11 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--beam-size", type=int, default=5)
     parser.add_argument("--initial-prompt", default=None)
+    parser.add_argument(
+        "--nbest-with",
+        default=None,
+        help="second model whose transcript supplies alternate hypotheses for repair",
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--write-report", action="store_true")
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
@@ -181,7 +211,12 @@ def main() -> None:
     per_clip: dict[str, list[dict[str, Any]]] = {}
     for model in [m.strip() for m in args.models.split(",") if m.strip()]:
         result = evaluate_model(
-            model, clips, cache_root, beam_size=args.beam_size, initial_prompt=args.initial_prompt
+            model,
+            clips,
+            cache_root,
+            beam_size=args.beam_size,
+            initial_prompt=args.initial_prompt,
+            nbest_with=args.nbest_with,
         )
         summary = summarize(result)
         models_payload.append(summary)
@@ -189,8 +224,9 @@ def main() -> None:
         rec = summary["recovery"]
         print(
             f"  {model}: recovery {rec['norepair']['recovery_rate']} -> "
-            f"{rec['repair']['recovery_rate']} with repair; "
-            f"unsafe {summary['unsafe_capture']} ; WER {summary['mean_wer']} "
+            f"{rec['repair']['recovery_rate']} with repair -> "
+            f"{rec['repair_nbest']['recovery_rate']} with n-best; "
+            f"unsafe {summary['unsafe_capture']} ; median WER {summary['median_wer']} "
             f"({result['live_asr_runs']} live ASR runs)"
         )
 
@@ -202,8 +238,8 @@ def main() -> None:
         "models": models_payload,
         "per_clip": per_clip,
         "gate": {
-            "passed": all(s["unsafe_capture"]["repair"] == 0 for s in models_payload),
-            "rule": "0 unsafe captures in repair mode for every model",
+            "passed": all(max(s["unsafe_capture"].values()) == 0 for s in models_payload),
+            "rule": "0 unsafe captures in every mode for every model",
         },
     }
     if args.write_report:

@@ -164,6 +164,23 @@ def test_route_lines_cooperative_repair_selects_matching_choice() -> None:
     assert verdict["repair"] == "repair_recovered"
 
 
+def test_route_lines_alternates_recover_erased_recipient() -> None:
+    # The motivating n-best case: ASR erased "Tell Sarah" into "There a";
+    # a second model's hypothesis carries the recipient through repair.
+    clean = route_lines(["Tell Sarah physio went well today"])
+    degraded = "There a physio went well today."
+    norepair = route_lines([degraded])
+    with_nbest = route_lines(
+        [degraded],
+        targets=clean.captured,
+        alternates=["Tell Sarah physio went well today"],
+    )
+    verdict = classify(clean, norepair, with_nbest)
+    assert verdict["lane"] == "intent"
+    assert verdict["repair"] in ("exact", "repair_recovered")
+    assert with_nbest.captured[0]["recipient"] == "Sarah"
+
+
 def test_route_lines_is_isolated_between_calls() -> None:
     route_lines(["Remind me to water the tomato plants this evening"])
     fresh = route_lines(["hello there"])
