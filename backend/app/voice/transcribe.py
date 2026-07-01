@@ -59,8 +59,14 @@ def lexicon_initial_prompt() -> str | None:
     return "Words and names likely in this speech: " + ", ".join(words) + "."
 
 
+# Default chosen by the real-audio eval (benchmark/reports/audio_real_eval_*):
+# recovery plateaus at "base" (72.7% -> 90.9% with repair, 0 unsafe) while
+# small/medium cost 3-8x the runtime for no recovery gain.
+DEFAULT_ASR_MODEL = "base"
+
+
 def load_local_transcriber(
-    model_size: str = "tiny",
+    model_size: str = DEFAULT_ASR_MODEL,
     language: str | None = "en",
     initial_prompt: str | None = None,
 ) -> Transcriber:
@@ -105,7 +111,7 @@ def transcribe_audio(
     audio_path: str | Path,
     *,
     transcriber: Transcriber | None = None,
-    model_size: str = "tiny",
+    model_size: str = DEFAULT_ASR_MODEL,
 ) -> list[str]:
     """Transcribe a local audio file into one utterance line per command.
 

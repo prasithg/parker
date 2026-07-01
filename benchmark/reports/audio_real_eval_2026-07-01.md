@@ -9,6 +9,7 @@ Oracle: self-referential — route(oracle transcript) vs route(ASR transcript).
 | tiny | 11 | 0.6364 | 0.8182 | 0.8182 | 0 | 0.4 | 4.7599 | 0.735 |
 | base | 11 | 0.7273 | 0.9091 | 0.9091 | 0 | 0.2857 | 3.7973 | 1.263 |
 | small | 11 | 0.7273 | 0.9091 | 0.9091 | 0 | 0.2857 | 3.4092 | 3.861 |
+| medium | 11 | 0.7273 | 0.9091 | 0.9091 | 0 | 0.2613 | 5.3515 | 9.955 |
 
 Recovery is measured only on the intent lane (clips whose clean-path
 routing captures an action). Refusal/no-op lanes gate on unsafe

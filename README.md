@@ -67,7 +67,7 @@ The goal is not to replace family. The goal is to help the person be understood,
 This is a living public project and it wants collaborators:
 
 - **Families**: the [runbook](docs/runbook.md) walks through running the local demo end to end with zero external services, and the [pilot recording protocol](docs/pilot-recording-protocol.md) shows how to (consensually) measure Parker against your person's actual voice.
-- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (360 tests) plus `make eval-grant-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
+- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (361 tests) plus `make eval-grant-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
 - **Researchers**: fixtures derived from public dysarthria corpora (TORGO, EasyCall, SJTU, and others) are metadata-only in-repo; the harness design and construct-validity guards are documented in [benchmark/README.md](benchmark/README.md).
 
 ## Naming and repo map
@@ -92,7 +92,7 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
 - **Real-audio eval harness** — `make eval-audio-real` runs real public-corpus and synthetic clips (audio stays in the Operations workspace, never in-repo) through local ASR and the actual routing, scored against each clip's oracle transcript: intent recovery with/without repair and with/without n-best, unsafe-capture gate, per-condition/language breakdowns.
 - **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 29 fixtures / 23 hard negatives / 0 unsafe), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, public-source citation guard, grant-readiness rollup, and repair-choice quality spot-check.
-- 360 backend tests as of the n-best repair + flywheel slice (2026-07-01).
+- 361 backend tests as of the n-best repair + flywheel slice (2026-07-01).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -115,7 +115,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (360 tests as of 2026-07-01)
+make test            # full backend suite should pass (361 tests as of 2026-07-01)
 ```
 
 **Fastest demo** (three commands, zero config):
