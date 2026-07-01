@@ -4,13 +4,15 @@ You are working in `~/Development/personal/parkinsons-assistant`.
 
 ## Product vision
 
-Parker is a family-aware, room-aware, action-capable home assistant for people whose speech, routines, movement, and support needs are changing.
+Parker is a personal assistant that actually understands people with Parkinson's — and gets real things done for them, with family curating what it can do.
 
-One-line pitch:
+Role split (load-bearing): the person with Parkinson's is the *user* — voice is their whole interface, zero configuration. Family members are the *administrators and skill builders* — they connect accounts, curate/approve skills, and own guardrails through the review surfaces. Think OpenClaw-style agent, family-administered.
 
-Parker helps people with effortful speech be understood, stay connected, and get useful things done at home — with family-aware safeguards and an OpenClaw/Hermes-style action layer.
+North Star metric: understood on the first try or after one repair question ≥90% of the time (stock voice assistants sit near 50% for the pilot user). Measured by the real-audio eval harness (`make eval-audio-real`), later on consented pilot voice samples.
 
-Voice is the main interface and the first wedge. Parker's broader thesis is variable-speech understanding, repair under uncertainty, safe action, follow-through, family coordination, and eval-backed usefulness.
+Voice is the main interface and the first wedge. Parker's broader thesis is variable-speech understanding, repair under uncertainty, safe action, follow-through, family coordination, per-user learning from consented local usage data, and eval-backed usefulness. The project's trajectory is public: attract other families and developers so more deployment and more usage improve the shared harness, evals, and skills — never a central model trained on anyone's voice without consent.
+
+Live-loop direction: local-first ASR stays the default; families may opt into frontier realtime speech models (OpenAI Realtime / gpt-realtime family) for the conversational loop as an explicit administrator choice.
 
 Core loop:
 

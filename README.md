@@ -1,40 +1,58 @@
 # Parker
 
-Parker is a family-aware, at-home, action-capable assistant for people whose speech, routines, movement, and support needs are changing.
+**Parker is a personal assistant that actually understands people with Parkinson's — and gets real things done for them, with family curating what it can do.**
 
-The first private user is one family member. The long-term project is bigger: learn what actually helps at home, then turn those lessons into safety-minded tools, evals, and open patterns for other families.
+My dad uses his voice for almost everything — typing is hard, and getting harder. His Google Home understands him about half the time and can't hold a conversation. Parker is the assistant he deserves: it understands him on his hard days, asks instead of guessing when it isn't sure, and does real things — reminders, messages to family, playlists, research — while his family adds skills and keeps guardrails. Think of it as an OpenClaw-style agent setup where the family are the administrators and he is simply the user.
 
-## One-line pitch
+The first user is one family member. The goal is bigger: every person with Parkinson's should be able to have a personal agent that learns *their* voice and *their* mannerisms — locally, with consent — and gets better the more they use it. If this works for one family, the same harness, evals, and patterns should work for yours.
 
-Parker helps people with effortful speech be understood, stay connected, and get useful things done at home — with family-aware safeguards and an OpenClaw/Hermes-style action layer.
+## Who does what
 
-## The product thesis
+- **The user** talks. That's the whole interface. No configuration, no dashboards, no typing.
+- **The family administrator** curates: connects accounts, adds and approves skills, reviews anything risky on the caregiver page, and owns the guardrails.
+- **Parker** understands, repairs, and confirms — then acts only within what the administrator has enabled.
 
-Voice is the main interface and the first wedge, because being understood is the daily pain.
+## The North Star
 
-Parker's thesis is broader: understand variable speech, repair uncertainty, confirm intent, help with safe follow-through, coordinate with family/caregivers, and measure whether the system actually helps.
+> Understood on the first try, or after one repair question, **at least 90% of the time** — versus roughly 50% for a stock voice assistant today.
 
-Parker is a system:
+This is measured, not vibes: a real-audio eval harness runs recorded dysarthric and Parkinson's speech through the actual pipeline and reports intent recovery with and without Parker's repair protocol (`make eval-audio-real`). Current numbers live in [benchmark/reports/](benchmark/reports/).
+
+## The core loop
 
 ```text
 Understand -> Confirm -> Act -> Follow up -> Escalate/Coordinate -> Learn
 ```
 
-It should eventually combine:
+The product advantage is not perfect recognition. The advantage is what Parker does when recognition is imperfect:
 
-- voice-first interaction for people with variable or effortful speech;
-- repair under uncertainty instead of forcing endless repetition;
-- simple visual/TV confirmation cards when voice alone is not enough;
-- room/context awareness with explicit privacy boundaries;
-- family/caregiver routing and escalation;
-- useful actions through an OpenClaw/Hermes-style tool layer;
-- structured evals that measure whether the system actually helps.
+- "I heard two possibilities. Did you mean A or B?"
+- "I'm not sure enough to send that. Can I show choices?"
+- Never acting on ambiguous input; confirming before anything runs; keeping every v0 action reversible.
+
+## What using Parker should feel like
+
+Today (working locally): "Remind me to water the plants this evening." "Tell Sarah the physio visit went well." "Start my speech exercise." — captured, confirmed, staged for family approval where appropriate.
+
+Where it's headed (family-curated skills): "What's this video about? Make me a playlist like it." "I want to look at homes in the Leander area — find a few and open them on my computer." "When is my next appointment, and what should I remember to ask?"
+
+## How Parker learns (the flywheel)
+
+Every repair exchange is a naturally labeled example: what ASR heard, what Parker offered, what the person confirmed. With explicit consent (off by default, pinned off by test), Parker stores those exchanges **locally** and climbs the [adaptation ladder](docs/adaptation-ladder.md):
+
+1. a **personal lexicon** (family names, daily words) that biases speech recognition immediately;
+2. **n-best repair choices** — alternate hypotheses become concrete options, so "Tell Sarah…" survives being misheard as "There a…";
+3. few-shot exemplars from that person's history, and eventually a per-user fine-tune corpus.
+
+No raw audio is ever stored. The person's data stays in their house. Deploying Parker to more people improves the shared harness, evals, and skills — not a central model trained on anyone's voice without asking.
+
+## Powering the voice loop
+
+Local-first is the default: on-device Whisper (faster-whisper), no cloud required, transcripts as the only artifact. For the live conversational experience, families can opt into frontier realtime speech models (e.g., the OpenAI Realtime / gpt-realtime family — a bridge already exists in `voice/stream.py`) when latency and conversational quality matter more than full local processing. That is an explicit administrator choice with documented trade-offs, never a silent default; stored data stays local either way.
 
 ## Why this matters
 
-Most assistants assume the user speaks clearly, holds a phone, looks at a screen, and can easily correct mistakes.
-
-Parker assumes a different reality:
+Most assistants assume the user speaks clearly, holds a phone, looks at a screen, and can easily correct mistakes. Parker assumes a different reality:
 
 - speech may be soft, delayed, slurred, quiet, inconsistent, or tiring;
 - the person may be in a recliner, near a TV, or far from a screen;
@@ -42,114 +60,23 @@ Parker assumes a different reality:
 - the assistant has to follow through, not merely answer;
 - uncertainty needs repair, confirmation, and sometimes escalation.
 
-The goal is not to replace family. The goal is to help the person be understood, support routines, reduce avoidable family load, and make useful actions easier.
+The goal is not to replace family. The goal is to help the person be understood, support routines, reduce avoidable family load, and keep life interesting — playlists, research, hobbies, and messages, not just medication-adjacent chores.
 
-## What Parker should do
+## For developers and families
 
-### 1. Understand effortful speech
+This is a living public project and it wants collaborators:
 
-Parker listens for intent, not just clean dictation.
-
-When uncertain, it repairs:
-
-- “I heard two possibilities. Did you mean A or B?”
-- “Do you want me to message family, remind you later, or write this down?”
-- “I’m not sure enough to send that. Can I show choices?”
-
-The product advantage is not perfect recognition. The advantage is what Parker does when recognition is imperfect.
-
-### 2. Confirm before acting
-
-Parker should not act on ambiguous input.
-
-Before sending a message, escalating to family, changing a schedule, or starting a non-trivial task, Parker should confirm the intent in a low-friction way.
-
-For v0, only reversible or low-risk actions should be executable without a human/operator step.
-
-### 3. Take useful actions
-
-Parker builds on the OpenClaw/Hermes idea: an assistant with context, tools, and a purpose.
-
-Useful action classes include:
-
-- create reminders;
-- prepare appointment notes;
-- send confirmed family/caregiver messages;
-- start speech or movement exercises;
-- launch YouTube videos or playlists;
-- research a topic and summarize it;
-- look up items on Amazon or similar sites, without purchasing;
-- check calendars and routines;
-- trigger approved smart-home actions;
-- log completed routines;
-- escalate when behavior/non-response suggests help may be needed.
-
-### 4. Understand home context carefully
-
-A future Parker may use camera/room context, but only with explicit family-approved settings, minimal retention, and clear purpose.
-
-Possible context signals:
-
-- the user is in the recliner;
-- the TV is on;
-- a reminder has not received a response;
-- the user may be trying to get up;
-- the user is near the medication area;
-- the user is engaged with or ignoring a prompt.
-
-This must be privacy-first. No surveillance theater. No hidden data collection.
-
-### 5. Coordinate with family
-
-Parker is not single-player software.
-
-It should model:
-
-- primary user;
-- spouse/caregiver;
-- children/support people;
-- emergency contacts;
-- escalation preferences;
-- who can see what;
-- who gets notified for which situations;
-- which actions require confirmation.
-
-Longer term, Parker should be able to coordinate with other family agents, including Pras’s Hermes/OpenClaw-style assistants.
-
-### 6. Keep life interesting
-
-Usefulness is not only safety/routines.
-
-Parker should help with fun and agency:
-
-- make a YouTube playlist;
-- play music;
-- find a speech exercise video;
-- research a subject the user is curious about;
-- help with hobbies;
-- prepare a story, message, or question for family;
-- suggest a low-friction activity at the right time.
+- **Families**: the [runbook](docs/runbook.md) walks through running the local demo end to end with zero external services, and the [pilot recording protocol](docs/pilot-recording-protocol.md) shows how to (consensually) measure Parker against your person's actual voice.
+- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (360 tests) plus `make eval-grant-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
+- **Researchers**: fixtures derived from public dysarthria corpora (TORGO, EasyCall, SJTU, and others) are metadata-only in-repo; the harness design and construct-validity guards are documented in [benchmark/README.md](benchmark/README.md).
 
 ## Naming and repo map
 
-Working product name:
-
-```text
-Parker
-```
-
-Legacy/internal name, now fully retired from the codebase (only historical docs mention it):
-
-```text
-ParkinsClaw
-```
-
-Useful related project areas:
+Working product name: **Parker**. (An earlier prototype was called ParkinsClaw; that name and its scheduled-call/cloned-voice framing are retired — only historical docs mention them.)
 
 - Parker application/prototype: this repo;
-- public eval/tooling candidates: future focused repos such as `variable-speech-agent-evals` or `assistive-agent-evals-*`;
-- research and pitch notes: kept outside the public code repo until they are ready to publish;
-- run logs/manifests/reviews: operational artifacts, not public product docs.
+- research and pitch notes: kept outside the public code repo until ready to publish;
+- run logs/manifests/audio artifacts: operational workspace, never committed here.
 
 ## Current repo state (v0, pilot-ready)
 
@@ -157,13 +84,15 @@ The local v0 loop works end to end with no external services and no real sends:
 
 - **Input ladder** — typed (`make repl`), scripted demo (`make demo`), audio file (`make demo-voice AUDIO=…`), live microphone (`make talk`), continuous voice conversation (`make talk-loop`). Voice transcription is fully on-device (faster-whisper); no audio is retained beyond the input file.
 - **Capture → resolve → stage → confirm → execute pipeline** — every action confirmed before execution; v0's executable surface is reminders, local exercise sessions, and *local-only* family messages.
-- **Repair under uncertainty** — ambiguous effortful speech gets 2 numbered choices plus "none of these". With `ANTHROPIC_API_KEY` set, choices are model-generated and grounded in the utterance (claude-haiku); without it, a deterministic fallback keeps everything working.
-- **Local recliner/TV evening loop** — one `local_evening_sessions` row per calendar evening; optional offer/decline, unclear-response repair choices, engaged/completed/timed-out states, a future non-response ladder hook, and caregiver review complete/cancel controls.
+- **Repair under uncertainty** — ambiguous effortful speech gets 2 numbered choices plus "none of these". With `ANTHROPIC_API_KEY` set, choices are model-generated and grounded in the utterance (claude-haiku); without it, a deterministic fallback keeps everything working. Alternate ASR hypotheses (n-best) become evidence-based choices that carry their parsed recipient/subject.
+- **Learning flywheel v0** — consent-gated repair-event capture (`REPAIR_EVENT_CAPTURE_CONSENTED`, default off), personal lexicon ASR biasing (`PERSONAL_LEXICON`), documented in [docs/adaptation-ladder.md](docs/adaptation-ladder.md).
+- **Local recliner/TV evening loop** — one `local_evening_sessions` row per calendar evening; optional offer/decline, unclear-response repair choices, engaged/completed/timed-out states, and caregiver review controls.
 - **Family message outbox with two human gates** — patient confirms → `queued_local` → caregiver approves → `approved_local`. There is **no send path in the codebase at all**; cancel works from either state.
-- **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with confirm/execute/cancel/approve buttons, local exercise-session complete/cancel controls, local recliner/TV evening-loop review controls, and opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
+- **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
-- **Eval harness** — task-taxonomy eval (`make eval-tasks`, 24 synthetic fixtures / 0 safety-critical misses, including safety red-team cases for medical advice, medication changes, emergency substitution, private-data disclosure, purchases, and confirmation-bypass attempts), interactivity trace eval (`make eval-interactivity`, 7 synthetic scenarios / 0 unsafe misses), Parker-generated demo trace eval (`make eval-demo-interactivity`, 7/7 current-product synthetic scenarios / 0 unsafe misses after cancel-only draft/outbox steering landed), degraded-input replay eval (`make eval-degraded-input-replay`, Parker repair recovered 3/3 intended actions vs. 0/3 for the pre-registered no-repair baseline and vs. 2/3 for a stronger one-shot keyword baseline on synthetic held-out transcript fixtures), audio Autodata eval (`make eval-audio-autodata`, 29 metadata-only audio-derived public/synthetic ASR→repair fixtures, including 23 hard-negative/no-action cases and 3 source-oracle holds, exercise/media audio lanes, lost-negation/control-word/cancel-message regressions, device-control context gating, private-finance refusal plus ASR erasure, medical-ASR diagnosis/treatment/medication-instruction hard negatives, command-like/repetitive hallucinations, transcript-backed dysarthric read-sentence no-action, and health-adjacent no-claim cases; raw audio is not committed), caregiver-state legibility proxy (`make eval-caregiver-state-legibility`, Parker review UI 6/6 vs. raw chat-only 0/6 on synthetic state-identification tasks / 0 unsafe misses), claim→metric overclaim guard (`make eval-claim-metric-map`, 4 grant-facing claims / 16 metric assertions / 0 failures), construct-validity matrix guard (`make eval-construct-validity`, 4 citable synthetic/local constructs / 2 explicitly non-citable research gaps / 14 assertions / 0 failures), public-source citation guard (`make eval-grant-source-citations`, 4 public Thinking Machines sources / 11 required facts / no private-admin inference), grant-readiness rollup (`make eval-grant-readiness`, one-command safe-claim/caveat evidence checklist), and repair-choice quality spot-check (`make eval-repair`).
-- 331 backend tests as of the medical-ASR audio Autodata guard slice (2026-07-01).
+- **Real-audio eval harness** — `make eval-audio-real` runs real public-corpus and synthetic clips (audio stays in the Operations workspace, never in-repo) through local ASR and the actual routing, scored against each clip's oracle transcript: intent recovery with/without repair and with/without n-best, unsafe-capture gate, per-condition/language breakdowns.
+- **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 29 fixtures / 23 hard negatives / 0 unsafe), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, public-source citation guard, grant-readiness rollup, and repair-choice quality spot-check.
+- 360 backend tests as of the n-best repair + flywheel slice (2026-07-01).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -172,13 +101,13 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 | Layer | v0 (shipped) | Possible later |
 | --- | --- | --- |
 | Backend | Python 3.11 / FastAPI | — |
-| Storage | SQLite (`backend/parker.db`) | — |
-| Speech-to-text | faster-whisper, fully on-device, optional dep | voice-activity end-pointing |
-| Repair choices | claude-haiku (opt-in via `ANTHROPIC_API_KEY`), deterministic fallback | multi-turn grounding |
-| Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer dashboard |
-| Eval harness | task-taxonomy eval + reference/Parker-generated interactivity trace evals + degraded-input replay + caregiver-state legibility proxy + claim→metric overclaim guard + construct-validity matrix guard + public-source citation guard + repair-quality spot-check | human-graded repair content + caregiver state-legibility study |
-| Voice/calls | none in v0 (no send path exists) | Twilio, realtime models |
-| TTS/voice clone | none in v0 | optional, consent-gated only |
+| Storage | SQLite (`backend/parker.db`), all local | — |
+| Speech-to-text | faster-whisper on-device, personal-lexicon biasing, optional dep | realtime cloud speech (family opt-in), voice-activity end-pointing |
+| Repair choices | n-best hypothesis probing + claude-haiku (opt-in), deterministic fallback | few-shot from consented repair history |
+| Learning | consent-gated repair-event capture, personal lexicon | mined lexicon suggestions, per-user fine-tunes |
+| Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer admin/skills dashboard |
+| Eval harness | real-audio harness + full synthetic suite (see above) | pilot-voice longitudinal tracking, human-graded repair quality |
+| Voice out / live loop | none in v0 (no send path exists) | TTS, wake/VAD, realtime models (gpt-realtime family) |
 
 ## Setup
 
@@ -186,7 +115,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (331 tests as of 2026-07-01)
+make test            # full backend suite should pass (360 tests as of 2026-07-01)
 ```
 
 **Fastest demo** (three commands, zero config):
@@ -215,7 +144,7 @@ Ready-to-publish work should include:
 - tests or evals that prove the changed behavior;
 - README/docs updates that describe the real current state;
 - safety notes for any new action surface;
-- public-facing language suitable for Pras to talk about in posts, demos, and grant/research conversations.
+- public-facing language suitable for posts, demos, and grant/research conversations.
 
 ## Safety boundaries
 
@@ -250,28 +179,27 @@ Parker should be evaluated by usefulness, not demo sparkle.
 
 Important eval categories:
 
-- effortful-speech intent understanding;
-- uncertainty calibration;
-- clarification quality;
+- effortful-speech intent understanding (now measured on real audio);
+- uncertainty calibration and clarification quality;
 - confirmation-before-action behavior;
 - changed-mind/interruption handling;
 - latency/turn budget under safety gates;
 - caregiver/operator state legibility;
 - family escalation precision/noise;
 - reminder follow-through;
-- appointment-note quality;
-- YouTube/research/action relevance;
+- action relevance (playlists, research, appointments);
 - privacy/safety boundary adherence;
 - whether the user wants to use it again.
 
-Synthetic data first. No real patient audio or private family data in public artifacts without explicit approval.
+Synthetic and public-corpus data first. No real patient audio or private family data in public artifacts without explicit approval; pilot voice samples follow the consent terms in [docs/pilot-recording-protocol.md](docs/pilot-recording-protocol.md).
 
 ## Where to start reading
 
 - [docs/runbook.md](docs/runbook.md) — scripted walkthrough of everything v0 does, plus pilot setup.
+- [docs/adaptation-ladder.md](docs/adaptation-ladder.md) — how Parker learns a person's voice, and what it refuses to collect.
 - [docs/next-slices.md](docs/next-slices.md) — the implementation log: every shipped slice with rationale and what was deliberately deferred.
 - `AGENTS.md` and `CLAUDE.md` — read before running coding agents in this repo.
 
 ## License
 
-Personal project. Not licensed for distribution.
+Not yet licensed for distribution. Open-sourcing for other families and developers is the stated goal; a license will be chosen before the public launch.
