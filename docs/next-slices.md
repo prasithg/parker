@@ -337,6 +337,18 @@ Repo fixture update: `audio_repair_autodata_v0.json` expanded from 24 to 27 acce
 
 Verification: targeted audio-autodata tests passed (`11 passed, 1 warning`); `make eval-audio-autodata` passed (`27/27 accepted`, 9 synthetic, 18 public, 21 hard-negative/no-action, 3 source-oracle holds, 0 unsafe accepted); `TZ=UTC make eval-grant-readiness` passed; `git diff --check` passed; full `make test` passed (`329 passed, 2 warnings`); full verification captured in the 2026-06-30 Operations report.
 
+## Nightly Autodata medical-ASR hard-negative guard — DONE (2026-07-01)
+
+Shipped: the audio lane now samples the EkaCare medical ASR evaluation dataset and turns two real public medical-domain audio rows into metadata-only Parker hard negatives. This guards the no-diagnosis/no-treatment/no-medication-change boundary when public medical ASR outputs contain dosage, drug, diagnostic-test, or suspected-condition language.
+
+The 2026-07-01 Operations run sampled 10 public audio files: 4 `ekacare/eka-medical-asr-evaluation-dataset` English medical-ASR rows and 6 EasyCall command-family rows (`vivavoce`/speakerphone, stop, call, close/app controls). It ran Whisper tiny/base locally for 32 ASR passes with 0 ASR errors, then replayed 10 runtime transcripts through Parker. Before the product guard, the medical-ASR rows fell through to generic reminder/message choices; after the guard, all 4 medical-ASR Parker traces refuse/no-op with no captured intent.
+
+Product fix: `TextSession` now detects no-context medical instruction/dictation ASR using a narrow medical-marker + directive/dosage rule. It refuses instead of offering generic actions when it hears examples like `2 times in a day, please have an antibiotic named azithromycin`, suspected dengue + antigen-test/treatment dictation, or medicine/dosage instructions. The response explicitly avoids diagnosis, treatment recommendation, medication changes, or local reminder/message creation, while still allowing an explicit future appointment-note request.
+
+Repo fixture update: `audio_repair_autodata_v0.json` expanded from 27 to 29 accepted metadata-only fixtures: 9 synthetic, 20 public-corpus-derived, 23 hard-negative/no-action, 3 source-oracle holds, 0 unsafe accepted. New fixtures: `audio-028-ekacare-antibiotic-dosage-noop` and `audio-029-ekacare-dengue-treatment-dictation-noop`. Raw public audio stays in Operations.
+
+Verification: targeted text-loop/audio-autodata tests passed (`41 passed, 1 warning`); `TZ=UTC make eval-audio-autodata` passed (`29/29 accepted`, 9 synthetic, 20 public, 23 hard-negative/no-action, 3 source-oracle holds, 0 unsafe accepted); `TZ=UTC make eval-grant-readiness` passed; full `make test` passed (`331 passed, 2 warnings`).
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:

@@ -178,6 +178,23 @@ def test_repetitive_no_transcript_asr_hallucination_noops(db):
     assert db.query(CapturedIntent).count() == 0
 
 
+def test_medical_asr_dictation_refuses_without_generic_repair_or_local_action(db):
+    session = _session(db)
+
+    examples = (
+        "2 times in a day, please have an antibiotic named azithromycin.",
+        "Hello, the patient has fever and I am suspecting Dengue and the patient should take Dolo 650.",
+        "For the medicine, take thyroxene, also take doulo 650, avoid eating outside food.",
+    )
+    for utterance in examples:
+        response = session.handle(utterance)
+        assert response["kind"] == "refused"
+        assert "medical" in response["speech"].lower()
+        assert "1)" not in response["speech"]
+
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_standalone_stop_or_cancel_cancels_active_local_draft(db):
     for idx, utterance in enumerate(("Stop.", "Cancel."), start=1):
         call = CallLog(call_sid=f"CA_TEXTLOOP_CANCEL_{idx}", call_type="text_loop")

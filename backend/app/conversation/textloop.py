@@ -41,6 +41,35 @@ MEDICAL_ADVICE_PHRASES = (
     "is getting worse",
     "does this mean",
 )
+MEDICAL_INSTRUCTION_MARKERS = (
+    "antibiotic",
+    "azithromycin",
+    "dolo",
+    "pantop",
+    "thyroxine",
+    "thiroxine",
+    "thyroxene",
+    "tablet",
+    "mcg",
+    " mg",
+    "dengue",
+    "antigen test",
+)
+MEDICAL_INSTRUCTION_PHRASES = (
+    "please have",
+    "should take",
+    "patient should take",
+    "recommend to give",
+    "recommend him to do",
+    "recommend him",
+    "i recommend",
+    "want to give",
+    "prescribe",
+    "suspecting",
+    "patient has",
+    "for the medicine",
+    "take proper bed rest",
+)
 EMERGENCY_WORDS = ("911", "emergency", "ambulance", "can't breathe", "cant breathe", "chest pain", "fell")
 EMERGENCY_SUBSTITUTION_PHRASES = ("instead of calling", "handle it instead", "can't get up", "cant get up")
 PRIVATE_DISCLOSURE_WORDS = (
@@ -345,6 +374,25 @@ def _looks_like_medical_advice(lowered: str) -> bool:
     )
 
 
+def _looks_like_medical_instruction_dictation(lowered: str) -> bool:
+    """Detect no-context medical dictation/instruction ASR as a safety boundary.
+
+    The audio Autodata lane sampled public medical-ASR audio where source
+    transcripts and Whisper output contained dosage, drug, diagnosis-like, and
+    treatment-instruction language. In a generic Parker voice loop, those should
+    not fall through to reminder/message repair choices. Keep the rule anchored
+    to medical markers plus directive/context phrases so ordinary appointment
+    notes can still be requested explicitly.
+    """
+
+    normalized = re.sub(r"[,.!?$]+", " ", lowered).strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    has_marker = any(marker in normalized for marker in MEDICAL_INSTRUCTION_MARKERS)
+    has_directive = any(phrase in normalized for phrase in MEDICAL_INSTRUCTION_PHRASES)
+    has_dosage = bool(re.search(r"\b\d+\s*(?:mg|mcg|times?\s+in\s+a\s+day|days?)\b", normalized))
+    return has_marker and (has_directive or has_dosage)
+
+
 def _extract_revision_fragment(utterance: str) -> str:
     fragment = utterance.strip().strip(" .!?")
     fragment = re.sub(r"^(?:wait|hold on)[\s,]+", "", fragment, flags=re.IGNORECASE)
@@ -460,6 +508,16 @@ class TextSession:
                     "I can't access, reveal, or change bank/account information. "
                     "I can help draft a non-sensitive question for family or remind you to check the official app."
                 ),
+            }
+        if _looks_like_medical_instruction_dictation(lowered):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "I heard medical or medication instructions. I won't diagnose, recommend treatment, "
+                    "change medication, or turn that into a reminder/message from unclear audio. "
+                    "If you want, ask me to write an appointment note for family or your doctor."
+                ),
+                "flag_for_family": True,
             }
         if _looks_like_medical_advice(lowered):
             return {
@@ -631,6 +689,15 @@ class TextSession:
                 "speech": (
                     "Cancelled the earlier draft. I can't access, reveal, or change bank/account information."
                 ),
+            }
+        if _looks_like_medical_instruction_dictation(safety_text):
+            return {
+                "kind": "refused",
+                "speech": (
+                    "Cancelled the earlier draft. I heard medical or medication instructions. "
+                    "I won't diagnose, recommend treatment, change medication, or turn that into an action."
+                ),
+                "flag_for_family": True,
             }
         if _looks_like_medical_advice(safety_text):
             return {
