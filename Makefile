@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-grant-source-citations eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-grant-source-citations eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -69,6 +69,13 @@ eval-repair-quality-rubric:
 # audio-derived ASR failure cases and their safe repair/confirmation targets.
 eval-audio-autodata:
 	python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report
+
+# Real-audio eval: run manifest audio through local ASR and TextSession
+# routing, scored against each clip's oracle-transcript path. Audio lives in
+# the Operations artifacts dir (never this repo); reports are aggregate-only.
+PARKER_AUDIO_ARTIFACTS_DIR ?= $(HOME)/Operations/parker-autodata-nightly
+eval-audio-real: backend-venv
+	PARKER_AUDIO_ARTIFACTS_DIR=$(PARKER_AUDIO_ARTIFACTS_DIR) $(BACKEND_PYTHON) benchmark/audio_harness/run.py --models $(or $(MODELS),tiny) --write-report
 
 # Public-source citation guard: keeps grant program facts grounded in public
 # Thinking Machines pages and separate from private/admin fields.

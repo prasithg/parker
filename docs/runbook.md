@@ -130,6 +130,15 @@ Leave it running in a terminal while the caregiver review page is open in a brow
 - Silence (background noise only) prints a cue and keeps listening.
 - Ctrl-C stops the loop and prints how many turns ran.
 
+### Real-audio eval: `make eval-audio-real`
+
+Runs the Operations audio manifest (public dysarthric corpora + synthetic
+Parker commands; audio never lives in this repo) through local ASR and the
+same text-loop routing, scored against each clip's oracle transcript. Set
+`PARKER_AUDIO_ARTIFACTS_DIR` if your artifacts live elsewhere;
+`MODELS=tiny,small` compares ASR sizes. To add the pilot family member's
+own voice samples, follow [docs/pilot-recording-protocol.md](pilot-recording-protocol.md).
+
 ## Demo 0 — Talk to Parker (text loop) + caregiver review page
 
 For a live version of the same flow, use two terminals and no curl:
