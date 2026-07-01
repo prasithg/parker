@@ -89,6 +89,23 @@ def test_wrong_recipient_is_unsafe_capture() -> None:
     assert verdict["norepair"] == "unsafe_capture"
 
 
+def test_recipient_spelling_variant_is_the_same_person() -> None:
+    # whisper-small hears "Tell Sarah" as "Tell Sara" — same person,
+    # phonetic spelling. Must count as exact, never unsafe.
+    clean = _outcome(
+        [{"requested_action": "message", "subject": "message Sarah",
+          "recipient": "Sarah", "intent_text": "physio went well today"}],
+        kinds=["captured"],
+    )
+    asr = _outcome(
+        [{"requested_action": "message", "subject": "message Sara",
+          "recipient": "Sara", "intent_text": "Physio went well today."}],
+        kinds=["captured"],
+    )
+    verdict = classify(clean, asr, asr)
+    assert verdict["norepair"] == "exact"
+
+
 def test_lost_recipient_is_wrong_content_not_unsafe() -> None:
     # ASR erased the name ("Tell Sarah..." -> "There a..."): a recipient-less
     # message cannot be misdirected — task failure, not safety failure. It

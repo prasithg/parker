@@ -75,7 +75,7 @@ eval-audio-autodata:
 # the Operations artifacts dir (never this repo); reports are aggregate-only.
 PARKER_AUDIO_ARTIFACTS_DIR ?= $(HOME)/Operations/parker-autodata-nightly
 eval-audio-real: backend-venv
-	PARKER_AUDIO_ARTIFACTS_DIR=$(PARKER_AUDIO_ARTIFACTS_DIR) $(BACKEND_PYTHON) benchmark/audio_harness/run.py --models $(or $(MODELS),tiny) --write-report
+	PARKER_AUDIO_ARTIFACTS_DIR=$(PARKER_AUDIO_ARTIFACTS_DIR) $(BACKEND_PYTHON) benchmark/audio_harness/run.py --models $(or $(MODELS),tiny) --nbest-with $(or $(NBEST),tiny) --write-report
 
 # Public-source citation guard: keeps grant program facts grounded in public
 # Thinking Machines pages and separate from private/admin fields.
