@@ -57,6 +57,24 @@ class Settings(BaseSettings):
     # ASR initial prompt and available to repair candidate generation.
     personal_lexicon: str = ""
 
+    # Capability administration (app/parker/contacts.py). Comma-separated
+    # family/caregiver contact names the admin has enabled for messages.
+    # Within this allowlist the patient's own confirmation releases a message
+    # (recorded as capability policy, visible in review); off-allowlist
+    # recipients stay caregiver-approval-gated. Contacts also feed the ASR
+    # bias lexicon so the allowlist and recognition never drift apart.
+    # Empty (default): nothing auto-releases; behavior is unchanged.
+    parker_family_contacts: str = ""
+
+    # OpenClaw gateway (docs/brain-adapters.md v1). URL of the family's
+    # patient-identity OpenClaw instance, e.g. http://127.0.0.1:18789.
+    # Empty (default): no gateway — the brain falls back to Claude/stub and
+    # gateway-backed action types are neither proposable nor executable.
+    # The token maps to the gateway's OPENCLAW_GATEWAY_TOKEN; leave empty
+    # for loopback dev gateways without auth.
+    parker_openclaw_gateway_url: str = ""
+    parker_openclaw_gateway_token: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

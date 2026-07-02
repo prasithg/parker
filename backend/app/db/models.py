@@ -186,12 +186,22 @@ class StagedAction(Base):
 class OutboxMessage(Base):
     """A confirmed family message queued locally.
 
-    Status chain encodes the two-human gate: ``queued_local`` (patient
-    confirmed; awaiting caregiver) → ``approved_local`` (caregiver approved;
-    still on this machine) → ``sent`` (reserved — no sender exists in v0 and
-    a future one must only ever consider ``approved_local`` rows behind an
-    explicit config flag). Rows are cancellable from either live state,
-    which is what makes the v0 execution artifact reversible.
+    Status chain encodes the capability trust model:
+
+    - ``queued_local`` — patient confirmed, recipient NOT on the admin's
+      family-contact allowlist (or no allowlist configured): awaiting a
+      per-message caregiver approval, the edge-case gate.
+    - ``released_local`` — patient confirmed a message to an ALLOWLISTED
+      contact: released by capability policy (``released_by`` records it),
+      no per-message approval needed. Family sees it in review — a rearview
+      mirror, not an approval queue.
+    - ``approved_local`` — caregiver approved a queued row by hand.
+    - ``sent`` — reserved. No send transport exists in v0; a future sender
+      must only ever consider ``approved_local``/``released_local`` rows
+      behind an explicit config flag.
+
+    Rows are cancellable from every live state, which is what makes the
+    execution artifact reversible while everything stays on this machine.
     """
 
     __tablename__ = "outbox_messages"
@@ -205,6 +215,7 @@ class OutboxMessage(Base):
     status: Mapped[str] = mapped_column(
         Enum(
             "queued_local",
+            "released_local",
             "approved_local",
             "cancelled",
             "sent",
@@ -217,6 +228,8 @@ class OutboxMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     approved_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    released_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    released_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

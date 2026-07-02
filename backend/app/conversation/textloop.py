@@ -562,20 +562,17 @@ def probe_direct_intent(utterance: str) -> dict[str, Any] | None:
 
 
 def _lexicon_names() -> list[str]:
-    """Names from the family-configured personal lexicon.
+    """Names Parker recognizes as people.
 
-    A lexicon entry counts as a name when it is a single capitalized word
-    ("Sarah", not "physio" or "tomato plants"). The lexicon spelling is
+    Derived in ``app.parker.contacts`` from the admin-configured family
+    contacts plus single capitalized-word ``PERSONAL_LEXICON`` entries
+    ("Sarah", not "physio" or "tomato plants"). The configured spelling is
     canonical — ASR variants resolve back to it.
     """
 
-    from app.config import settings
+    from app.parker.contacts import lexicon_names
 
-    return [
-        entry.strip()
-        for entry in settings.personal_lexicon.split(",")
-        if entry.strip() and " " not in entry.strip() and entry.strip()[0].isupper()
-    ]
+    return list(lexicon_names())
 
 
 # Clipped-start fragments with one high-precision reading. ASR loses the

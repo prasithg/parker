@@ -243,7 +243,17 @@ def execute_staged_action(db: Session, staged_action_id: int, now: datetime | No
 
 
 def _execute_family_message(db: Session, action: StagedAction, now: datetime | None = None) -> None:
-    """Queue a confirmed family message to the local outbox (never sends)."""
+    """Write a confirmed family message to the local outbox (never sends).
+
+    Capability trust model: a recipient on the admin's family-contact
+    allowlist releases on the patient's confirmation alone — the row is
+    created ``released_local`` with the capability policy recorded, visible
+    in review. Anyone else (or no allowlist configured) stays
+    ``queued_local`` behind the per-message caregiver approval gate. Either
+    way nothing leaves the machine: v0 has no send transport at all.
+    """
+
+    from app.parker.contacts import RELEASED_BY_CAPABILITY_POLICY, is_allowlisted_recipient
 
     payload = _json_payload(action.action_payload)
     recipient = (payload.get("recipient") or "").strip()
@@ -252,12 +262,25 @@ def _execute_family_message(db: Session, action: StagedAction, now: datetime | N
         action.status = "blocked"
         action.execution_result = "Family message requires a recipient and message text."
         return
+    moment = now or datetime.utcnow()
     message = OutboxMessage(staged_action_id=action.id, recipient=recipient, body=body)
+    if is_allowlisted_recipient(recipient):
+        message.status = "released_local"
+        message.released_at = moment
+        message.released_by = RELEASED_BY_CAPABILITY_POLICY
     db.add(message)
     db.flush()
     action.status = "executed"
-    action.executed_at = now or datetime.utcnow()
-    action.execution_result = f"family message queued locally for {recipient} (outbox {message.id})"
+    action.executed_at = moment
+    if message.status == "released_local":
+        action.execution_result = (
+            f"family message released for {recipient} (family-contact capability; "
+            f"outbox {message.id}; no send transport exists in v0 — it stays local)"
+        )
+    else:
+        action.execution_result = (
+            f"family message queued locally for {recipient} (outbox {message.id}; awaiting family approval)"
+        )
 
 
 def list_outbox_messages(db: Session, status: str | None = None) -> list[OutboxMessage]:
@@ -278,8 +301,10 @@ def approve_outbox_message(
 ) -> OutboxMessage | None:
     """Caregiver-approve a queued message; it still never leaves the machine.
 
-    Second human gate after the patient's confirmation. A future sender
-    (which does not exist in v0) must only ever consider approved rows.
+    The per-message gate for OFF-allowlist recipients (allowlisted ones
+    release by capability policy and never wait here). A future sender
+    (which does not exist in v0) must only ever consider approved/released
+    rows behind an explicit config flag.
     """
 
     message = db.get(OutboxMessage, message_id)
@@ -295,12 +320,12 @@ def approve_outbox_message(
 
 
 def cancel_outbox_message(db: Session, message_id: int, now: datetime | None = None) -> OutboxMessage | None:
-    """Cancel a queued or approved message; the reversibility story for v0 messages."""
+    """Cancel a queued/released/approved message; the reversibility story for v0 messages."""
 
     message = db.get(OutboxMessage, message_id)
     if message is None:
         return None
-    if message.status in {"queued_local", "approved_local"}:
+    if message.status in {"queued_local", "released_local", "approved_local"}:
         message.status = "cancelled"
         message.cancelled_at = now or datetime.utcnow()
         db.commit()

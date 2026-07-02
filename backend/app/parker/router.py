@@ -179,6 +179,7 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
         .all()
     )
     queued = list_outbox_messages(db, status="queued_local")
+    released = list_outbox_messages(db, status="released_local")
     approved = list_outbox_messages(db, status="approved_local")
     escalations = [serialize_escalation(item) for item in get_open_escalations(db)]
     candidates = [
@@ -211,6 +212,7 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
     return {
         "pending_actions": [_serialize_action(action) for action in pending],
         "outbox_queued": [_serialize_outbox_message(message) for message in queued],
+        "outbox_released": [_serialize_outbox_message(message) for message in released],
         "outbox_approved": [_serialize_outbox_message(message) for message in approved],
         "escalation_candidates": candidates,
         "open_escalations": others,
@@ -369,6 +371,8 @@ def _serialize_outbox_message(message: OutboxMessage) -> dict[str, Any]:
         "created_at": message.created_at.isoformat() if message.created_at else None,
         "approved_by": message.approved_by,
         "approved_at": message.approved_at.isoformat() if message.approved_at else None,
+        "released_by": message.released_by,
+        "released_at": message.released_at.isoformat() if message.released_at else None,
         "cancelled_at": message.cancelled_at.isoformat() if message.cancelled_at else None,
     }
 

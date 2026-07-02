@@ -316,7 +316,11 @@ def test_review_ui_surfaces_demo_safety_contract(db):
     page = client.get("/parker/review/ui").text
 
     assert "Demo safety contract" in page
-    assert "Patient confirms → caregiver approves → still local" in page
+    # Capability trust model (2026-07): messages to admin-enabled contacts
+    # release on the patient's own confirmation — this page shows them but
+    # does not gate them; per-message approval survives for the edges.
+    assert "release on the patient's own confirmation" in page
+    assert "Messages to anyone else still wait here for your per-message approval" in page
     assert "No medical advice, medication changes, purchases, or emergency-service replacement." in page
     assert "No private credentials or sensitive notes are displayed or sent." in page
     assert "No outbound sends exist in v0" in page

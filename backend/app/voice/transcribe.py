@@ -43,17 +43,19 @@ VOICE_DEPS_HINT = (
 
 
 def lexicon_initial_prompt() -> str | None:
-    """Whisper bias prompt from the family-configured personal lexicon.
+    """Whisper bias prompt from family contacts + the personal lexicon.
 
-    ``PERSONAL_LEXICON`` holds comma-separated names and everyday words the
-    speaker actually uses (family names, places, routines). Whisper treats
+    ``PARKER_FAMILY_CONTACTS`` (the message-capability allowlist) and
+    ``PERSONAL_LEXICON`` (everyday words the speaker actually uses — places,
+    routines) are merged in ``app.parker.contacts.asr_bias_words``: enabling
+    a contact automatically primes recognition for that name. Whisper treats
     the initial prompt as preceding context, nudging recognition toward
     these words — the cheapest rung of the per-user adaptation ladder.
     """
 
-    from app.config import settings
+    from app.parker.contacts import asr_bias_words
 
-    words = [w.strip() for w in settings.personal_lexicon.split(",") if w.strip()]
+    words = asr_bias_words()
     if not words:
         return None
     return "Words and names likely in this speech: " + ", ".join(words) + "."

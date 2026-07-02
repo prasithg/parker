@@ -24,7 +24,7 @@ REVIEW_PAGE_HTML = """<!doctype html>
   button.danger { background: #fff; color: #a33; border-color: #a33; }
   .badge { display: inline-block; font-size: .75rem; padding: .1rem .5rem; border-radius: 10px; background: #eee; margin-left: .5rem; }
   .badge.staged, .badge.queued_local { background: #fff3cd; }
-  .badge.confirmed, .badge.approved_local { background: #d4edda; }
+  .badge.confirmed, .badge.approved_local, .badge.released_local { background: #d4edda; }
   .badge.executed { background: #e2e3e5; }
   .badge.cancelled { background: #f0e6e6; color: #844; }
   .badge.info { background: #d6e4f0; }
@@ -44,8 +44,10 @@ approving marks it reviewed; nothing is ever sent externally from this page.</p>
 <section class="safety" aria-label="Demo safety contract">
   <strong>Demo safety contract</strong>
   <ul>
-    <li>Patient confirms → caregiver approves → still local. This page is the second human gate.</li>
-    <li>No outbound sends exist in v0; approved messages remain on this machine.</li>
+    <li>Messages to family contacts the admin enabled release on the patient's own confirmation —
+        this page shows them (rearview mirror), it does not gate them.</li>
+    <li>Messages to anyone else still wait here for your per-message approval — the edge-case gate.</li>
+    <li>No outbound sends exist in v0; released and approved messages alike remain on this machine.</li>
     <li>No medical advice, medication changes, purchases, or emergency-service replacement.</li>
     <li>No private credentials or sensitive notes are displayed or sent.</li>
     <li>Non-response items are candidates for review only — no notifications are dispatched here.</li>
@@ -58,6 +60,9 @@ approving marks it reviewed; nothing is ever sent externally from this page.</p>
 
 <h2 id="h-outbox">Outbox — awaiting your approval, never sent</h2>
 <div id="outbox"></div>
+
+<h2 id="h-released">Released to family contacts — patient-confirmed, still local only</h2>
+<div id="released"></div>
 
 <h2 id="h-approved">Approved — reviewed by you, still local only</h2>
 <div id="approved"></div>
@@ -116,8 +121,9 @@ function actionCard(a) {
 
 function outboxCard(m) {
   const approvedMeta = m.approved_at ? ` · approved by ${m.approved_by} at ${m.approved_at}` : '';
+  const releasedMeta = m.released_at ? ` · released ${m.released_at} by ${m.released_by}` : '';
   const card = el(`<div class="card">To <b>${m.recipient}</b>: “${m.body}”<span class="badge ${m.status}">${m.status}</span>
-    <div class="meta">queued ${m.created_at}${approvedMeta}</div></div>`);
+    <div class="meta">queued ${m.created_at}${approvedMeta}${releasedMeta}</div></div>`);
   if (m.status === 'queued_local') {
     const a = el('<button class="primary">Approve (stays local)</button>');
     a.onclick = () => post(`/parker/outbox/${m.id}/approve`, {approved_by: 'caregiver'});
@@ -261,6 +267,7 @@ async function load() {
   const data = await (await fetch('/parker/review')).json();
   fill('pending', data.pending_actions, actionCard, 'Nothing waiting.', 'Pending actions');
   fill('outbox', data.outbox_queued, outboxCard, 'Outbox is empty.', 'Outbox — awaiting your approval, never sent');
+  fill('released', data.outbox_released, outboxCard, 'Nothing released by capability policy yet.', 'Released to family contacts — patient-confirmed, still local only');
   fill('approved', data.outbox_approved, outboxCard, 'Nothing approved yet.', 'Approved — reviewed by you, still local only');
   fill('candidates', data.escalation_candidates, escalationCard, 'No non-response candidates.', 'Non-response escalation candidates');
   fill('escalations', data.open_escalations, escalationCard, 'No open escalations.', 'Other open escalations');
