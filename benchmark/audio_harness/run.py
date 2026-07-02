@@ -189,6 +189,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", default="tiny")
     parser.add_argument("--manifest", type=Path, default=None)
+    parser.add_argument(
+        "--extra-manifest",
+        type=Path,
+        action="append",
+        default=[],
+        help="additional manifest file(s) in the artifacts dir to merge in",
+    )
     parser.add_argument("--beam-size", type=int, default=5)
     parser.add_argument("--initial-prompt", default=None)
     parser.add_argument(
@@ -202,9 +209,18 @@ def main() -> None:
     args = parser.parse_args()
 
     clips, excluded = load_clips(args.manifest)
+    cache_root = artifacts_dir()
+    seen_hashes = {clip.sha256 for clip in clips}
+    for extra in args.extra_manifest:
+        extra_path = extra if extra.is_absolute() else cache_root / extra
+        extra_clips, extra_excluded = load_clips(extra_path)
+        fresh = [c for c in extra_clips if c.sha256 not in seen_hashes]
+        seen_hashes.update(c.sha256 for c in fresh)
+        clips.extend(fresh)
+        for key, count in extra_excluded.items():
+            excluded[key] = excluded.get(key, 0) + count
     if args.limit:
         clips = clips[: args.limit]
-    cache_root = artifacts_dir()
     print(f"Scoring {len(clips)} clips (excluded: {excluded})")
 
     models_payload = []

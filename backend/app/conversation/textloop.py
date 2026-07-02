@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from difflib import SequenceMatcher
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -489,6 +490,9 @@ def probe_direct_intent(utterance: str) -> dict[str, Any] | None:
         recipient, body = match.group(1), match.group(2).strip().rstrip(".")
         if not body or _message_body_needs_clarification(body):
             return None
+        recipient, known = canonicalize_recipient(recipient)
+        if not known:
+            return None  # never offer a choice toward an unrecognized name
         return {
             "label": f"send {recipient} a message: “{body[:60]}”",
             "action_type": "family_message",
@@ -538,6 +542,30 @@ def _lexicon_names() -> list[str]:
         for entry in settings.personal_lexicon.split(",")
         if entry.strip() and " " not in entry.strip() and entry.strip()[0].isupper()
     ]
+
+
+def canonicalize_recipient(name: str) -> tuple[str, bool]:
+    """Resolve an ASR-heard recipient against the personal lexicon.
+
+    ASR mangles names ("Priya" -> "pre", "Anna" -> "an"), and a message
+    captured toward a nonexistent person is the misdirection failure the
+    eval flags as unsafe. With a lexicon configured, a close match snaps
+    to the canonical spelling and anything unrecognized is (known=False)
+    — the caller must clarify instead of capturing. Without a lexicon,
+    v0 behavior is unchanged: (name, True).
+    """
+
+    names = _lexicon_names()
+    if not names:
+        return name, True
+    lowered = name.strip().lower()
+    for candidate in names:
+        if candidate.lower() == lowered:
+            return candidate, True
+    best = max(names, key=lambda c: SequenceMatcher(None, c.lower(), lowered).ratio())
+    if SequenceMatcher(None, best.lower(), lowered).ratio() >= 0.6:
+        return best, True
+    return name, False
 
 
 def name_prefix_candidate(utterance: str) -> dict[str, Any] | None:
@@ -691,6 +719,15 @@ class TextSession:
         match = MESSAGE_PATTERN.match(utterance) or SEND_PATTERN.match(utterance)
         if match:
             recipient, body = match.group(1), match.group(2).strip()
+            recipient, known = canonicalize_recipient(recipient)
+            if not known:
+                return {
+                    "kind": "clarify",
+                    "speech": (
+                        f"I heard a message, but I don't recognize the name “{recipient}”. "
+                        "Who should it go to?"
+                    ),
+                }
             if _message_body_needs_clarification(body):
                 return {
                     "kind": "clarify",

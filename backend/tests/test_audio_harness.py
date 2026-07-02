@@ -229,6 +229,60 @@ def test_cache_key_distinguishes_configs(tmp_path: Path) -> None:
     assert len(list((tmp_path / "asr_cache").glob("*.json"))) == 3
 
 
+# --------------------------------------------------- synthetic generator
+
+def test_degradations_are_dysarthria_shaped() -> None:
+    from benchmark.audio_harness.generate_synthetic import (
+        degrade_clipped_start,
+        degrade_ellipsis,
+        degrade_faded_ending,
+        degrade_verb_dropped,
+    )
+
+    cmd = "Tell Sarah the physio visit went well today"
+    assert degrade_verb_dropped(cmd) == "Sarah the physio visit went well today"
+    assert degrade_verb_dropped("Remind me to take my walk") == "to take my walk"
+    assert "..." in degrade_ellipsis(cmd)
+    assert degrade_clipped_start(cmd) == "the physio visit went well today"
+    assert degrade_faded_ending(cmd) == "Tell Sarah the physio visit went"
+    # short utterances are left alone rather than degraded to nothing
+    assert degrade_clipped_start("Stop") == "Stop"
+    assert degrade_faded_ending("Stop") == "Stop"
+    # a faded negation stays a negation — a valuable hard negative
+    assert degrade_faded_ending("No, don't send that yet") == "No, don't send"
+
+
+def test_generator_manifest_schema_is_loadable(tmp_path: Path) -> None:
+    from benchmark.audio_harness.generate_synthetic import COMMANDS, DATASET
+
+    audio = tmp_path / "cmd00_clean.wav"
+    audio.write_bytes(b"RIFF-fake")
+    manifest = tmp_path / "m.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "dataset": DATASET,
+                "clips": [
+                    {
+                        "sha256": "c" * 64,
+                        "canonical_path": str(audio),
+                        "dataset": DATASET,
+                        "language": "en",
+                        "speaker_condition": "synthetic",
+                        "provenance": "synthetic",
+                        "oracle_label": COMMANDS[0],
+                        "duration_sec": None,
+                    }
+                ],
+            }
+        )
+    )
+    clips, excluded = load_clips(manifest)
+    assert len(clips) == 1
+    assert clips[0].oracle == COMMANDS[0]
+    assert sum(excluded.values()) == 0
+
+
 # ------------------------------------------------------------- manifest
 
 def test_load_clips_excludes_unlabeled_and_unknown_provenance(tmp_path: Path) -> None:

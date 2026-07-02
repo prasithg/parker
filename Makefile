@@ -73,9 +73,18 @@ eval-audio-autodata:
 # Real-audio eval: run manifest audio through local ASR and TextSession
 # routing, scored against each clip's oracle-transcript path. Audio lives in
 # the Operations artifacts dir (never this repo); reports are aggregate-only.
+# PERSONAL_LEXICON defaults to the synthetic corpus's family names because a
+# configured lexicon is standard pilot setup (see docs/runbook.md); pass
+# PERSONAL_LEXICON="" for the no-lexicon ablation.
 PARKER_AUDIO_ARTIFACTS_DIR ?= $(HOME)/Operations/parker-autodata-nightly
+PERSONAL_LEXICON ?= Sarah, Michael, Priya, Anna
 eval-audio-real: backend-venv
-	PARKER_AUDIO_ARTIFACTS_DIR=$(PARKER_AUDIO_ARTIFACTS_DIR) $(BACKEND_PYTHON) benchmark/audio_harness/run.py --models $(or $(MODELS),tiny) --nbest-with $(or $(NBEST),tiny) --write-report
+	PARKER_AUDIO_ARTIFACTS_DIR=$(PARKER_AUDIO_ARTIFACTS_DIR) PERSONAL_LEXICON="$(PERSONAL_LEXICON)" $(BACKEND_PYTHON) benchmark/audio_harness/run.py --models $(or $(MODELS),tiny) --nbest-with $(or $(NBEST),tiny) $(if $(EXTRA_MANIFEST),--extra-manifest $(EXTRA_MANIFEST),) --write-report
+
+# Generate the degraded synthetic command corpus (macOS say; audio lands in
+# the Operations artifacts dir, never this repo). Deterministic re-runs.
+gen-synthetic-commands: backend-venv
+	PARKER_AUDIO_ARTIFACTS_DIR=$(PARKER_AUDIO_ARTIFACTS_DIR) $(BACKEND_PYTHON) benchmark/audio_harness/generate_synthetic.py
 
 # Public-source citation guard: keeps grant program facts grounded in public
 # Thinking Machines pages and separate from private/admin fields.

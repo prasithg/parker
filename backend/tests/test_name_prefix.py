@@ -71,6 +71,52 @@ def test_verb_erased_message_offers_choice_and_captures_canonically(db, monkeypa
     assert captured.intent_text == "physio went well today"
 
 
+def test_close_recipient_mangle_snaps_to_lexicon_spelling(db, monkeypatch):
+    # ASR: "Send Anna a message..." -> "Send an a message..." — a close
+    # mangle snaps to the canonical lexicon name.
+    monkeypatch.setattr(settings, "personal_lexicon", "Priya, Anna, Sarah")
+    session = _session(db)
+
+    response = session.handle("Send an a message that I'm feeling much better today")
+
+    assert response["kind"] == "captured"
+    captured = db.query(CapturedIntent).one()
+    assert captured.recipient == "Anna"
+
+
+def test_badly_mangled_recipient_clarifies_never_captures(db, monkeypatch):
+    # "Message Priya that..." -> "Message pre of that..." — "pre" is too
+    # far from any known name to guess. Asking beats misdirecting; a
+    # message must never be captured toward a nonexistent person.
+    monkeypatch.setattr(settings, "personal_lexicon", "Priya, Anna, Sarah")
+    session = _session(db)
+
+    response = session.handle("Message pre of that the new chair arrived")
+
+    assert response["kind"] == "clarify"
+    assert "pre" in response["speech"]
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_unknown_recipient_clarifies_instead_of_capturing(db, monkeypatch):
+    monkeypatch.setattr(settings, "personal_lexicon", "Priya, Anna")
+    session = _session(db)
+
+    response = session.handle("Tell Zorblax the meeting moved")
+
+    assert response["kind"] == "clarify"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_no_lexicon_keeps_v0_recipient_behavior(db):
+    session = _session(db)
+
+    response = session.handle("Tell Zorblax the meeting moved to Tuesday")
+
+    assert response["kind"] == "captured"
+    assert db.query(CapturedIntent).one().recipient == "Zorblax"
+
+
 def test_talking_about_a_person_can_be_declined(db, monkeypatch):
     monkeypatch.setattr(settings, "personal_lexicon", "Sarah")
     session = _session(db)
