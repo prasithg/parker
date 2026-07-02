@@ -588,7 +588,7 @@
       "weak_current_result": "generic_repair_choices"
     }
   ],
-  "date": "2026-07-01",
+  "date": "2026-07-02",
   "eval": "audio_repair_autodata_v0",
   "gate": {
     "blocking_failures": [],

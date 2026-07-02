@@ -191,6 +191,51 @@ same text-loop routing, scored against each clip's oracle transcript. Set
 `MODELS=tiny,small` compares ASR sizes. To add the pilot family member's
 own voice samples, follow [docs/pilot-recording-protocol.md](pilot-recording-protocol.md).
 
+### Local raw-audio validation lane (private, never committed)
+
+Families and developers can reality-check Parker against audio that must
+never leave the machine — the pilot user's own recordings, or public web
+audio whose speakers never consented to redistribution. The harness has a
+dedicated path for this:
+
+1. Keep the audio and a harness-schema manifest in a private directory
+   outside the repo (the Operations workspace), with each clip's
+   `provenance` set to `"web-private"` or `"pilot-consented"`. Those two
+   provenance classes are excluded from every default run by
+   `benchmark/audio_harness/manifest.py` — "this is never released" is
+   enforced mechanically, not by memory.
+2. Score them explicitly:
+
+   ```bash
+   PARKER_AUDIO_ARTIFACTS_DIR=~/path/to/private-lane \
+     backend/.venv/bin/python benchmark/audio_harness/run.py \
+     --models tiny,base --manifest ~/path/to/private-lane/manifest.json \
+     --include-private --write-report
+   ```
+
+   A run that saw private data may not write into the repo: reports are
+   force-redirected to `reports_private/` inside the artifacts dir, and the
+   report itself carries `contains_private_data: true` so it can never
+   back a public claim (the claim map requires `false`).
+3. Clips without a human-confirmed `oracle_label` are excluded from
+   scoring (counted, never silent). For monologue/ambient clips the safety
+   lane only needs "expected: no action", so a weak candidate oracle —
+   e.g. cross-model consensus between tiny and base — is enough to run the
+   0-unsafe-capture gate while a human ear is pending.
+4. What comes back to the repo is pattern SHAPES only: failure-class
+   names, degradation parameters, counts, safety labels — catalogued in
+   `benchmark/data/private_audio_pattern_notes_v0.json`, whose tests
+   mechanically reject URLs, filesystem paths, and content hashes. No
+   verbatim transcript quotes: a distinctive quote is identifying. Keep a
+   full review note (transcripts, per-clip verdicts, proposed fixes) next
+   to the audio in the private lane instead.
+
+This is the sim2real loop: real private audio validates or refutes the
+synthetic degradations, the generator gets recalibrated from the pattern
+notes, and the public eval numbers stay grounded without a single byte of
+private audio entering the repo. Shorthand: **real audio local-only;
+synthetic in repo; evidence as guardrail; pipeline not population.**
+
 ## Demo 0 — Talk to Parker (text loop) + caregiver review page
 
 For a live version of the same flow, use two terminals and no curl:

@@ -1,9 +1,9 @@
 {
   "assertion_results": [
     {
-      "actual": 250,
+      "actual": 333,
       "claim_id": "claim-001-real-audio-repair-recovery",
-      "expected": 250,
+      "expected": 333,
       "json_path": "clips_scored",
       "message": null,
       "operator": "gte",
@@ -173,7 +173,7 @@
   ],
   "claims": [
     {
-      "baseline": "norepair lane of the same harness on the same 250-clip manifest (whisper-base 49.5% recovery without repair vs 82.4% with the repair protocol)",
+      "baseline": "norepair lane of the same harness on the same 333-clip manifest (whisper-base 58.3% recovery without repair vs 76.3% with the repair protocol, 82.0% with n-best)",
       "capability": "real_audio_repair_recovery",
       "caveat": "Public-corpus and degraded synthetic-command audio only; not real consented pilot Parkinson's command audio, no private family data, and pipeline-not-population for any Parkinson's-specific performance claim.",
       "claim_id": "claim-001-real-audio-repair-recovery",
@@ -183,7 +183,7 @@
         "unsafe_capture_count",
         "clips_scored"
       ],
-      "public_claim": "On the 250-clip real-audio manifest (public dysarthric/control corpora plus degraded synthetic Parker commands), Parker's repair protocol lifts whisper-base intent recovery from 49.5% without repair to 82.4% with repair, with 0 unsafe captures in every mode.",
+      "public_claim": "On the 333-clip real-audio manifest (public dysarthric/control corpora plus degraded synthetic Parker commands, including reality-grounded word-repeat, mid-word-cutoff, and filler-restart variants from the private validation lane), Parker's repair protocol lifts whisper-base intent recovery from 58.3% without repair to 76.3% with repair and 82.0% with n-best, with 0 unsafe captures in every mode.",
       "public_private_scope": "public_synthetic_only",
       "release_criterion": "headline_metric",
       "report_paths": [
@@ -191,7 +191,7 @@
       ],
       "required_assertions": [
         {
-          "expected": 250,
+          "expected": 333,
           "json_path": "clips_scored",
           "operator": "gte",
           "report_path": "benchmark/reports/audio_real_eval_latest.json"

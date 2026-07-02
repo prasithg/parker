@@ -21,7 +21,7 @@
 
 | Claim | Capability | Criterion | Metrics | Baseline | Caveat |
 | --- | --- | --- | --- | --- | --- |
-| claim-001-real-audio-repair-recovery | real_audio_repair_recovery | headline_metric | intent_recovery_rate_norepair, intent_recovery_rate_repair, unsafe_capture_count, clips_scored | norepair lane of the same harness on the same 250-clip manifest (whisper-base 49.5% recovery without repair vs 82.4% with the repair protocol) | Public-corpus and degraded synthetic-command audio only; not real consented pilot Parkinson's command audio, no private family data, and pipeline-not-population for any Parkinson's-specific performance claim. |
+| claim-001-real-audio-repair-recovery | real_audio_repair_recovery | headline_metric | intent_recovery_rate_norepair, intent_recovery_rate_repair, unsafe_capture_count, clips_scored | norepair lane of the same harness on the same 333-clip manifest (whisper-base 58.3% recovery without repair vs 76.3% with the repair protocol, 82.0% with n-best) | Public-corpus and degraded synthetic-command audio only; not real consented pilot Parkinson's command audio, no private family data, and pipeline-not-population for any Parkinson's-specific performance claim. |
 | claim-002-brain-lane-keyless-safety | conversational_brain_safety_boundaries | safety | red_team_total, unsafe_count, tts_bound_failures, brain_lane_gate | keyless deterministic guard layer (pre-model routing plus post-response guard); no live model or ANTHROPIC_API_KEY required for the red-team gate | Synthetic conversational red-team fixtures only; not real conversation logs, not clinical safety validation, and no private family/medical data. |
 | claim-003-audio-autodata-pipeline | audio_autodata_fixture_pipeline | data_pipeline | total_cases, unsafe_accepted_cases, hard_negative_or_no_action_cases, strong_oracle_recovered_or_safe_no_action | weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (28/29 fixtures document a useful current failure) | Metadata-only public/synthetic audio-derived fixtures; raw audio is never committed, and this is pipeline coverage only — not real clinical evidence, not patient evidence, and no private data. |
 | claim-004-caregiver-state-legibility | caregiver_state_legibility | family_legibility | caregiver_state_legibility_task_success_rate, raw_chat_only_task_success_rate, delta_vs_raw_chat, unsafe_miss_count, legibility_gate_passed | raw_chat_only baseline on the same six synthetic caregiver state-identification tasks | Synthetic local review-state proxy only; not a caregiver usability study and no private family data. |
@@ -35,7 +35,7 @@
 
 ## Assertion results
 
-- **PASS** `claim-001-real-audio-repair-recovery` `benchmark/reports/audio_real_eval_latest.json` `clips_scored` gte `250` (actual `250`)
+- **PASS** `claim-001-real-audio-repair-recovery` `benchmark/reports/audio_real_eval_latest.json` `clips_scored` gte `333` (actual `333`)
 - **PASS** `claim-001-real-audio-repair-recovery` `benchmark/reports/audio_real_eval_latest.json` `gate.passed` eq `True` (actual `True`)
 - **PASS** `claim-001-real-audio-repair-recovery` `benchmark/reports/audio_real_eval_latest.json` `gate.rule` eq `0 unsafe captures in every mode for every model` (actual `0 unsafe captures in every mode for every model`)
 - **PASS** `claim-001-real-audio-repair-recovery` `benchmark/reports/audio_real_eval_latest.json` `contains_private_data` eq `False` (actual `False`)
