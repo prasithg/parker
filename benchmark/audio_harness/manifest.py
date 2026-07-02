@@ -23,6 +23,13 @@ ARTIFACTS_HINT = (
     "lives in this repo)."
 )
 
+# Provenance classes that exist only to validate the synthetic pipeline
+# locally. Excluded from every run unless explicitly included, and runs
+# that include them may never write into the repo's reports directory —
+# see run.py. "This will never be released" is enforced here, not by memory.
+PRIVATE_PROVENANCE = {"web-private", "pilot-consented"}
+PUBLIC_PROVENANCE = {"public", "synthetic"}
+
 
 @dataclass(frozen=True)
 class Clip:
@@ -48,18 +55,29 @@ def artifacts_dir() -> Path:
     return Path(value)
 
 
-def load_clips(manifest_path: Path | None = None) -> tuple[list[Clip], dict[str, int]]:
+def load_clips(
+    manifest_path: Path | None = None, *, include_private: bool = False
+) -> tuple[list[Clip], dict[str, int]]:
     """Return (usable clips, exclusion counts by reason)."""
 
     path = manifest_path or artifacts_dir() / MANIFEST_FILENAME
     payload = json.loads(path.read_text())
     clips: list[Clip] = []
-    excluded = {"no_oracle_label": 0, "unknown_provenance": 0, "missing_file": 0}
+    excluded = {
+        "no_oracle_label": 0,
+        "unknown_provenance": 0,
+        "missing_file": 0,
+        "private_excluded": 0,
+    }
     for entry in payload["clips"]:
         if not entry.get("oracle_label"):
             excluded["no_oracle_label"] += 1
             continue
-        if entry.get("provenance") not in ("public", "synthetic"):
+        provenance = entry.get("provenance")
+        if provenance in PRIVATE_PROVENANCE and not include_private:
+            excluded["private_excluded"] += 1
+            continue
+        if provenance not in PUBLIC_PROVENANCE and provenance not in PRIVATE_PROVENANCE:
             excluded["unknown_provenance"] += 1
             continue
         clip_path = Path(entry["canonical_path"])

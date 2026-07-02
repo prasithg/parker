@@ -206,14 +206,27 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--write-report", action="store_true")
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
+    parser.add_argument(
+        "--include-private",
+        action="store_true",
+        help=(
+            "include private-provenance clips (web-private, pilot-consented); "
+            "forces reports into the Operations artifacts dir, never the repo"
+        ),
+    )
     args = parser.parse_args()
 
-    clips, excluded = load_clips(args.manifest)
     cache_root = artifacts_dir()
+    if args.include_private:
+        # A run that saw private data may not write into the repo. Ever.
+        args.reports_dir = cache_root / "reports_private"
+        print(f"[private run] reports redirected to {args.reports_dir}")
+
+    clips, excluded = load_clips(args.manifest, include_private=args.include_private)
     seen_hashes = {clip.sha256 for clip in clips}
     for extra in args.extra_manifest:
         extra_path = extra if extra.is_absolute() else cache_root / extra
-        extra_clips, extra_excluded = load_clips(extra_path)
+        extra_clips, extra_excluded = load_clips(extra_path, include_private=args.include_private)
         fresh = [c for c in extra_clips if c.sha256 not in seen_hashes]
         seen_hashes.update(c.sha256 for c in fresh)
         clips.extend(fresh)
@@ -250,6 +263,7 @@ def main() -> None:
     payload = {
         "date": date,
         "clips_scored": len(clips),
+        "contains_private_data": args.include_private,
         "excluded": excluded,
         "models": models_payload,
         "per_clip": per_clip,

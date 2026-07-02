@@ -313,8 +313,49 @@ def test_load_clips_excludes_unlabeled_and_unknown_provenance(tmp_path: Path) ->
     )
     clips, excluded = load_clips(manifest)
     assert len(clips) == 1
-    assert excluded == {"no_oracle_label": 1, "unknown_provenance": 1, "missing_file": 1}
+    assert excluded == {
+        "no_oracle_label": 1,
+        "unknown_provenance": 1,
+        "missing_file": 1,
+        "private_excluded": 0,
+    }
     assert clips[0].clip_id == f"corpus:{'b' * 12}"
+
+
+def test_private_provenance_is_excluded_unless_explicitly_included(tmp_path: Path) -> None:
+    # web-private (Hermes local validation scrape) and pilot-consented
+    # (family recordings) never enter a default run — the "this is never
+    # released" promise is enforced mechanically, not by memory.
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"RIFF-fake")
+    manifest = tmp_path / "manifest.json"
+    base = {
+        "sha256": "d" * 64,
+        "canonical_path": str(audio),
+        "dataset": "web-scout/validation",
+        "language": "en",
+        "speaker_condition": "parkinsons",
+        "oracle_label": "hello there",
+        "duration_sec": 1.0,
+    }
+    manifest.write_text(
+        json.dumps(
+            {
+                "clips": [
+                    {**base, "provenance": "web-private"},
+                    {**base, "sha256": "e" * 64, "provenance": "pilot-consented"},
+                    {**base, "sha256": "f" * 64, "provenance": "public"},
+                ]
+            }
+        )
+    )
+    clips, excluded = load_clips(manifest)
+    assert [c.provenance for c in clips] == ["public"]
+    assert excluded["private_excluded"] == 2
+
+    clips, excluded = load_clips(manifest, include_private=True)
+    assert len(clips) == 3
+    assert excluded["private_excluded"] == 0
 
 
 def test_reports_never_contain_filesystem_paths(tmp_path: Path) -> None:
