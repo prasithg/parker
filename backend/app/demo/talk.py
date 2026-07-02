@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
 from sqlalchemy.orm import Session
 
+from app.brain.claude import build_brain_adapter
 from app.conversation.textloop import TextSession, _build_model_client
 from app.db.models import CallLog
 from app.demo.replay import replay_transcript
@@ -37,13 +39,20 @@ def _record_one(
     record: Recorder,
     transcriber: Optional[Transcriber],
     seconds: float,
-) -> list[str]:
-    """Record one window into a temp file, transcribe, delete. Returns lines."""
+) -> tuple[list[str], float]:
+    """Record one window into a temp file, transcribe, delete.
+
+    Returns (lines, asr_seconds) — transcription time only, excluding the
+    recording window itself, so the latency line measures what Parker adds
+    after the person stops talking.
+    """
     with tempfile.TemporaryDirectory(prefix="parker-talk-") as tmpdir:
         recording = Path(tmpdir) / "utterance.wav"
         try:
             record(recording, seconds)
-            return transcribe_audio(recording, transcriber=transcriber)
+            started = time.monotonic()
+            lines = transcribe_audio(recording, transcriber=transcriber)
+            return lines, time.monotonic() - started
         finally:
             recording.unlink(missing_ok=True)
 
@@ -59,7 +68,7 @@ def run_talk(
     """Record one utterance, transcribe it locally, replay it; keep no audio."""
 
     record = recorder or load_local_recorder()
-    lines = _record_one(record, transcriber, seconds)
+    lines, _ = _record_one(record, transcriber, seconds)
     if not lines:
         return []
     return replay_transcript(db, script=lines, call_sid=call_sid)
@@ -96,7 +105,9 @@ def run_talk_loop(
         db.commit()
         db.refresh(call)
 
-    session = TextSession(db, call.id, model_client=_build_model_client())
+    session = TextSession(
+        db, call.id, model_client=_build_model_client(), brain=build_brain_adapter()
+    )
     all_exchanges: list[dict[str, Any]] = []
     turn = 0
 
@@ -105,7 +116,7 @@ def run_talk_loop(
             if on_turn_start:
                 on_turn_start(turn)
 
-            lines = _record_one(record, transcriber, seconds)
+            lines, asr_seconds = _record_one(record, transcriber, seconds)
             turn += 1
 
             if not lines:
@@ -114,8 +125,20 @@ def run_talk_loop(
                 continue
 
             for line in lines:
+                route_started = time.monotonic()
                 response = session.handle(line)
-                exchange = {"you": line, "parker": response["speech"], "kind": response["kind"]}
+                route_seconds = time.monotonic() - route_started
+                exchange = {
+                    "you": line,
+                    "parker": response["speech"],
+                    "kind": response["kind"],
+                    # Per-turn latency: what Parker adds after speech ends.
+                    # route_seconds is the brain time on answer turns and
+                    # ~0 on deterministic routes; their sum is when TTS can
+                    # start relative to utterance end.
+                    "asr_seconds": round(asr_seconds, 2),
+                    "route_seconds": round(route_seconds, 2),
+                }
                 all_exchanges.append(exchange)
                 if on_exchange:
                     on_exchange(exchange)

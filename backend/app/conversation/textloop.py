@@ -20,12 +20,35 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
+from app.brain.adapter import BrainAdapter, BrainContext, Message
 from app.conversation.repair import suggest_repair_candidates
 from app.conversation.repair_events import record_repair_event
 from app.conversation.tools import execute_tool
 
-MED_WORDS = ("pill", "pills", "medication", "meds", "dose")
-MED_CHANGE_PHRASES = ("should i", "take half", "skip", "double", "stop taking")
+# Bounded brain-lane conversation memory: enough for follow-ups
+# ("what about Saturday?"), small enough to stay cheap and forgetful.
+BRAIN_HISTORY_MAX_TURNS = 12
+
+ANSWER_STUB_SPEECH = (
+    "I'd look that up and summarize it for you. "
+    "(Research answers are stubbed in the local text loop.)"
+)
+
+# Includes the Parkinson's medication vocabulary the pilot user actually
+# says, so "double my levodopa" refuses deterministically BEFORE any model.
+MED_WORDS = (
+    "pill",
+    "pills",
+    "medication",
+    "meds",
+    "dose",
+    "levodopa",
+    "levadopa",
+    "carbidopa",
+    "sinemet",
+    "madopar",
+)
+MED_CHANGE_PHRASES = ("should i", "take half", "in half", "skip", "double", "stop taking")
 MEDICAL_ADVICE_WORDS = (
     "diagnose",
     "diagnosis",
@@ -34,6 +57,7 @@ MEDICAL_ADVICE_WORDS = (
     "antibiotic",
     "symptom",
     "tremor",
+    "shaking",
 )
 MEDICAL_ADVICE_PHRASES = (
     "what treatment",
@@ -73,7 +97,14 @@ MEDICAL_INSTRUCTION_PHRASES = (
     "take proper bed rest",
 )
 EMERGENCY_WORDS = ("911", "emergency", "ambulance", "can't breathe", "cant breathe", "chest pain", "fell")
-EMERGENCY_SUBSTITUTION_PHRASES = ("instead of calling", "handle it instead", "can't get up", "cant get up")
+EMERGENCY_SUBSTITUTION_PHRASES = (
+    "instead of calling",
+    "handle it instead",
+    "can't get up",
+    "cant get up",
+    "pretend you're the",
+    "pretend to be the",
+)
 PRIVATE_DISCLOSURE_WORDS = (
     "password",
     "passcode",
@@ -88,6 +119,7 @@ PRIVATE_DISCLOSURE_WORDS = (
 PURCHASE_PHRASES = ("order", "buy", "purchase", "card on file")
 FINANCIAL_ACCOUNT_PHRASES = (
     "account balance",
+    "bank balance",
     "bank account",
     "joint account",
     "current account",
@@ -661,10 +693,27 @@ def name_prefix_candidate(utterance: str) -> dict[str, Any] | None:
 class TextSession:
     """One conversational text session bound to a call log."""
 
-    def __init__(self, db: Session, call_log_id: int, *, model_client: "Any | None" = None):
+    def __init__(
+        self,
+        db: Session,
+        call_log_id: int,
+        *,
+        model_client: "Any | None" = None,
+        brain: "BrainAdapter | None" = None,
+        brain_context: "BrainContext | None" = None,
+    ):
         self.db = db
         self.call_log_id = call_log_id
         self._model_client = model_client  # anthropic.Anthropic or None; None → hardcoded fallback
+        # The pluggable conversational brain (docs/brain-adapters.md). None →
+        # the answer lane keeps the deterministic stub. The brain is only ever
+        # the fallthrough: guards, captures, and repair stay deterministic and
+        # run first, and a refused utterance never reaches it.
+        self._brain = brain
+        self._brain_context = brain_context
+        # Brain-lane history only — guarded/refused utterances are never
+        # recorded, so they can't leak into a later model call.
+        self._brain_history: list[Message] = []
         self._pending_choices: Optional[list[dict[str, Any]]] = None
         self._pending_utterance: Optional[str] = None
         # Labels from the most recently offered (and user-rejected) repair choices.
@@ -831,10 +880,12 @@ class TextSession:
         if _looks_like_media_request_question(lowered):
             return self._offer_choices(utterance)
         if "?" in utterance or lowered.startswith(("what", "how", "who", "when", "where")):
-            return {
-                "kind": "answer",
-                "speech": "I'd look that up and summarize it for you. (Research answers are stubbed in the local text loop.)",
-            }
+            return self._answer(utterance)
+        if self._brain is not None:
+            # End-of-chain fallthrough: nothing deterministic matched, so this
+            # is conversation, not a command — let the brain talk. Anything it
+            # wants *done* comes back as proposals gated below.
+            return self._answer(utterance)
         return self._offer_choices(utterance)
 
     def _handle_changed_mind(self, utterance: str, lowered: str) -> dict[str, Any] | None:
@@ -1059,6 +1110,120 @@ class TextSession:
         self._pending_alternates = list(self._current_alternates)
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
 
+    def _answer(self, utterance: str) -> dict[str, Any]:
+        """The informational lane: the brain when configured, the stub otherwise.
+
+        Every deterministic guard has already run by the time this is
+        reached — the brain never sees a refused utterance. The reply is
+        screened again on the way out (medical boundary, proposal
+        allowlist) and trimmed to TTS-listenable length.
+        """
+
+        if self._brain is None:
+            return {"kind": "answer", "speech": ANSWER_STUB_SPEECH}
+
+        from app.brain.guard import screen_reply, trim_for_speech
+
+        if self._brain_context is None:
+            from app.brain.claude import build_brain_context
+
+            self._brain_context = build_brain_context()
+        try:
+            reply = self._brain.respond(list(self._brain_history), utterance, self._brain_context)
+        except Exception:  # noqa: BLE001 — a dead brain must not kill the voice loop
+            import logging
+
+            logging.getLogger("parker.brain").exception("brain respond failed")
+            return {
+                "kind": "answer",
+                "speech": "I couldn't reach my answers just now — try me again in a moment.",
+            }
+
+        result = screen_reply(reply)
+        speech = trim_for_speech(result.reply.speech)
+        if result.medical_boundary_tripped:
+            response: dict[str, Any] = {"kind": "refused", "speech": speech, "flag_for_family": True}
+        elif result.reply.proposed_actions:
+            response = self._offer_brain_actions(utterance, speech, result.reply.proposed_actions)
+        else:
+            response = {
+                "kind": "answer",
+                "speech": speech or "I don't have a good answer for that right now.",
+            }
+        self._remember_brain_exchange(utterance, response["speech"])
+        return response
+
+    def _offer_brain_actions(
+        self,
+        utterance: str,
+        speech: str,
+        proposals: tuple,
+    ) -> dict[str, Any]:
+        """Brain proposals become confirmation-gated choices, never captures.
+
+        Same enrichment mechanics as probed repair choices: a selection
+        captures the complete parsed intent through the normal pipeline.
+        Message proposals must resolve to a lexicon-known recipient — a
+        brain cannot address someone the family didn't configure.
+        """
+
+        candidates: list[dict[str, Any]] = []
+        for action in proposals:
+            recipient = action.recipient
+            if action.action_type == "family_message":
+                recipient, known = canonicalize_recipient(recipient or "")
+                if not recipient or not known:
+                    continue
+            if any(action.label == c["label"] for c in candidates):
+                continue
+            candidates.append(
+                {
+                    "label": action.label,
+                    "action_type": action.action_type,
+                    "recipient": recipient,
+                    "subject": action.subject,
+                    "intent_text": action.intent_text,
+                }
+            )
+        fallback_speech = speech or "I don't have a good answer for that right now."
+        if not candidates:
+            return {"kind": "answer", "speech": fallback_speech}
+        result = execute_tool(
+            self.db,
+            self.call_log_id,
+            "offer_repair_choices",
+            {
+                "candidates": [
+                    {"label": c["label"], "action_type": c["action_type"]} for c in candidates
+                ],
+                "question": "Should I set that up?",
+                "allow_single": True,
+            },
+        )
+        if result.get("status") != "offered":
+            return {"kind": "answer", "speech": fallback_speech}
+        enriched_by_label = {c["label"]: c for c in candidates}
+        for choice in result["choices"]:
+            extra = enriched_by_label.get(choice["label"])
+            if extra is not None:
+                choice.update(
+                    recipient=extra["recipient"],
+                    subject=extra["subject"],
+                    intent_text=extra["intent_text"],
+                )
+        self._pending_choices = result["choices"]
+        self._pending_utterance = utterance
+        self._pending_alternates = []
+        spoken = f"{speech} {result['spoken_prompt']}".strip()
+        return {"kind": "choices", "speech": spoken, "choices": result["choices"]}
+
+    def _remember_brain_exchange(self, utterance: str, speech: str) -> None:
+        self._brain_history.append(Message(role="user", content=utterance))
+        self._brain_history.append(Message(role="assistant", content=speech))
+        max_messages = BRAIN_HISTORY_MAX_TURNS * 2
+        if len(self._brain_history) > max_messages:
+            del self._brain_history[: len(self._brain_history) - max_messages]
+
     def _handle_selection(self, utterance: str) -> dict[str, Any]:
         choices = self._pending_choices or []
         if not utterance.isdigit() or not 1 <= int(utterance) <= len(choices):
@@ -1140,6 +1305,7 @@ class TextSession:
 
 
 def main() -> None:  # pragma: no cover — interactive entry point
+    from app.brain.claude import build_brain_adapter
     from app.db.database import SessionLocal, create_tables
     from app.db.models import CallLog
 
@@ -1149,7 +1315,9 @@ def main() -> None:  # pragma: no cover — interactive entry point
     db.add(call)
     db.commit()
     db.refresh(call)
-    session = TextSession(db, call.id, model_client=_build_model_client())
+    session = TextSession(
+        db, call.id, model_client=_build_model_client(), brain=build_brain_adapter()
+    )
     print("Parker text loop — type an utterance, or 'quit' to exit.")
     print("Captured intents stage via POST /parker/tick and confirm at /parker/review/ui.\n")
     while True:

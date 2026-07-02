@@ -1,7 +1,7 @@
 # Real-audio eval — ASR -> TextSession route equivalence
 
 Date (UTC): 2026-07-02  
-Clips scored: 250 (excluded: {'no_oracle_label': 1, 'unknown_provenance': 0, 'missing_file': 0})  
+Clips scored: 250 (excluded: {'no_oracle_label': 1, 'unknown_provenance': 0, 'missing_file': 0, 'private_excluded': 0})  
 Oracle: self-referential — route(oracle transcript) vs route(ASR transcript).
 
 | model | intent clips | recovery (no repair) | recovery (repair) | recovery (repair+n-best) | unsafe (worst mode) | median WER | mean WER | s/clip |

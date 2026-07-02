@@ -59,6 +59,8 @@ class RepairPrompt:
 def build_repair_prompt(
     candidates: Iterable[tuple[str, Optional[str]]],
     question: str = DEFAULT_QUESTION,
+    *,
+    min_candidates: int = MIN_CANDIDATES,
 ) -> RepairPrompt:
     """Build a validated repair prompt from (label, action_type) candidates.
 
@@ -66,12 +68,16 @@ def build_repair_prompt(
     wrong count, blank/over-long/duplicate labels, action types unknown to
     the policy taxonomy, or prohibited action types (which must be refused,
     never offered as a choice).
+
+    ``min_candidates`` may be lowered to 1 for the confirmation-question
+    form ("1) send Sarah a message…, or 2) none of these?") used when the
+    brain proposes a single action; repair flows keep the 2-choice minimum.
     """
 
     entries = list(candidates)
-    if not MIN_CANDIDATES <= len(entries) <= MAX_CANDIDATES:
+    if not min_candidates <= len(entries) <= MAX_CANDIDATES:
         raise ValueError(
-            f"repair prompt needs {MIN_CANDIDATES}-{MAX_CANDIDATES} candidates, got {len(entries)}"
+            f"repair prompt needs {min_candidates}-{MAX_CANDIDATES} candidates, got {len(entries)}"
         )
     if not question or not question.strip():
         raise ValueError("repair prompt question must not be blank")

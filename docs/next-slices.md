@@ -381,6 +381,22 @@ Deferred: mining the ~35% remaining misses by degradation variant (next eval-dri
 
 Verification: full `make test` passed (`378 passed, 2 warnings`); `make eval-audio-real MODELS=base EXTRA_MANIFEST=synthetic_commands_v1_manifest.json` gate PASS (0 unsafe, all modes); reports `benchmark/reports/audio_real_eval_2026-07-02.{json,md}`.
 
+## Brain adapter: Claude inside the policy gate — DONE (2026-07-01)
+
+Shipped: the informational lane's stub is replaced by a real conversational brain behind a pluggable contract (Session B, `~/Operations/manifests/parker-session-b-brain-prompt.md`). Parker is the brainstem; the brain is swappable.
+
+**BrainAdapter contract** (`backend/app/brain/adapter.py`): `respond(history, utterance, context) -> BrainReply{speech, proposed_actions}`; proposals restricted to the capture-able policy subset (`reminder`, `family_message`, `exercise_start`, `media_playlist`, `appointment_note`). **ClaudeBrainAdapter** (`backend/app/brain/claude.py`): direct Anthropic API, `PARKER_BRAIN_MODEL` (default `claude-sonnet-5`) / `PARKER_BRAIN_MAX_TOKENS`; Parker persona system prompt (spoken 1-3 sentences, no medical advice, proposals only via the `propose_action` tool). **Post-response guard** (`backend/app/brain/guard.py`): medical boundary enforced in code after every reply (dosage/directive/diagnosis patterns → redirect + drop proposals), proposal allowlist, `trim_for_speech` TTS cap with "Want more detail?" continuation.
+
+**TextSession wiring**: the answer stub and end-of-chain fallthrough route to the brain when configured, with bounded 12-turn brain-lane history for follow-ups. Deterministic routes stay primary; a guard-refused utterance never reaches the brain and never enters its history. Proposals become confirmation-gated choices via the existing enrichment mechanics (new one-candidate confirmation form, `allow_single`); message proposals must resolve to a lexicon-known recipient. Zero-config invariant pinned: keyless behavior is byte-identical (stub answer, repair choices), and the whole suite runs with no key and no network.
+
+**Brain-lane eval** (`make eval-brain-lane`, `benchmark/evaluate_brain_lane_v0.py`): 16 informational turns incl. follow-up pairs, 10 conversational red-team cases asked naturally; unsafe is a hard 0 gate. The red-team routing portion runs keyless — 9/10 refuse deterministically pre-model. Red-team fixture design exposed four natural phrasings that slipped the pre-model guards; narrowly added: levodopa/carbidopa/sinemet/madopar to MED_WORDS, "bank balance", "shaking" (gated on advice phrases), "pretend you're the" (gated on emergency words), "in half" (gated on med words). **Talk-loop polish**: per-turn latency line (asr + route seconds → speech-start delay, 4s budget flag) and session mean/max rollup.
+
+Not regressed: real-audio eval base recovery 49.5% → 82.4% with repair, 0 unsafe all modes (`audio_real_eval_2026-07-02` refresh); grant readiness + audio-autodata gates green.
+
+Deferred: the live brain lane of `eval-brain-lane` and the manual `make talk-loop` brain transcript + real latency numbers need `ANTHROPIC_API_KEY` in the environment (not present this session — flagged, not hunted for); OpenClaw adapter implementation (design in `docs/brain-adapters.md` with the two v1 acceptance scenarios); streaming responses; wiring the brain into the audio harness (deliberately skipped — the harness measures the deterministic layer keyless, and 250 live-model clips per run is not "trivial").
+
+Verification: full `make test` passed (`423 passed, 2 warnings`); `make eval-brain-lane` keyless gate PASS (0 unsafe, 10/10 routed); `make eval-audio-real MODELS=base EXTRA_MANIFEST=synthetic_commands_v1_manifest.json` gate PASS; `make eval-grant-readiness` gate passed.
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:

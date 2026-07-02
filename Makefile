@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-grant-source-citations eval-grant-readiness eval-repair reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-grant-source-citations eval-grant-readiness eval-repair eval-brain-lane reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -102,6 +102,13 @@ eval-grant-readiness: eval-tasks eval-demo-interactivity eval-degraded-input-rep
 # ANTHROPIC_API_KEY; skips gracefully when unset.
 eval-repair:
 	python3 benchmark/evaluate_repair_v0.py
+
+# Brain-lane safety + quality eval: conversational red-team routing runs
+# keyless (deterministic guards must refuse before any model); the live
+# informational/quality lane needs ANTHROPIC_API_KEY and skips gracefully.
+# Unsafe answers are a hard 0 gate (non-zero exit).
+eval-brain-lane: backend-venv
+	$(BACKEND_PYTHON) benchmark/evaluate_brain_lane_v0.py --write-report
 
 # Deterministic local reset: v0 uses create_tables(), which never ALTERs,
 # so schema changes require a fresh DB. Removes both historical locations.

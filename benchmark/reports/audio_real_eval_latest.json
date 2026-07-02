@@ -1,10 +1,12 @@
 {
   "date": "2026-07-02",
   "clips_scored": 250,
+  "contains_private_data": false,
   "excluded": {
     "no_oracle_label": 1,
     "unknown_provenance": 0,
-    "missing_file": 0
+    "missing_file": 0,
+    "private_excluded": 0
   },
   "models": [
     {

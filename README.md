@@ -50,6 +50,10 @@ No raw audio is ever stored. The person's data stays in their house. Deploying P
 
 Local-first is the default: on-device Whisper (faster-whisper), no cloud required, transcripts as the only artifact. For the live conversational experience, families can opt into frontier realtime speech models (e.g., the OpenAI Realtime / gpt-realtime family — a bridge already exists in `voice/stream.py`) when latency and conversational quality matter more than full local processing. That is an explicit administrator choice with documented trade-offs, never a silent default; stored data stays local either way.
 
+## Bring your own brain
+
+Parker itself is the brainstem — the ear, the mouth, the repair questions, and the policy gate that owns every action. The thing that actually *converses* is a pluggable brain behind one small contract ([docs/brain-adapters.md](docs/brain-adapters.md)): with an `ANTHROPIC_API_KEY` configured, Claude answers the everyday questions a Google Home fumbles today — what day it is, how long rice takes, a follow-up about Saturday — in one to three spoken sentences, with the medical boundary enforced in code *after* every reply, not just requested in the prompt. The brain never sees an utterance the safety guards refused, and it cannot set a reminder or send a message; it can only propose, and a proposal comes back as a confirmation choice through the same pipeline as everything else. Without a key nothing changes: the answer lane stays a deterministic stub and every test and eval runs offline. The v1 brain is the family's own OpenClaw/Hermes agent — designed, not yet built.
+
 ## Why this matters
 
 Most assistants assume the user speaks clearly, holds a phone, looks at a screen, and can easily correct mistakes. Parker assumes a different reality:
@@ -67,7 +71,7 @@ The goal is not to replace family. The goal is to help the person be understood,
 This is a living public project and it wants collaborators:
 
 - **Families**: the [runbook](docs/runbook.md) walks through running the local demo end to end with zero external services, and the [pilot recording protocol](docs/pilot-recording-protocol.md) shows how to (consensually) measure Parker against your person's actual voice.
-- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (361 tests) plus `make eval-grant-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
+- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (423 tests) plus `make eval-grant-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
 - **Researchers**: fixtures derived from public dysarthria corpora (TORGO, EasyCall, SJTU, and others) are metadata-only in-repo; the harness design and construct-validity guards are documented in [benchmark/README.md](benchmark/README.md).
 
 ## Naming and repo map
@@ -85,14 +89,16 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Input ladder** — typed (`make repl`), scripted demo (`make demo`), audio file (`make demo-voice AUDIO=…`), live microphone (`make talk`), continuous voice conversation (`make talk-loop`). Voice transcription is fully on-device (faster-whisper); no audio is retained beyond the input file.
 - **Capture → resolve → stage → confirm → execute pipeline** — every action confirmed before execution; v0's executable surface is reminders, local exercise sessions, and *local-only* family messages.
 - **Repair under uncertainty** — ambiguous effortful speech gets 2 numbered choices plus "none of these". With `ANTHROPIC_API_KEY` set, choices are model-generated and grounded in the utterance (claude-haiku); without it, a deterministic fallback keeps everything working. Alternate ASR hypotheses (n-best) become evidence-based choices that carry their parsed recipient/subject.
+- **Conversational brain (opt-in)** — with `ANTHROPIC_API_KEY`, questions and unmatched conversation route to a pluggable `BrainAdapter` (Claude v0) with bounded follow-up history; brain-proposed actions become confirmation choices, never direct captures, and a deterministic post-response guard re-checks the medical boundary on every reply ([docs/brain-adapters.md](docs/brain-adapters.md)). Keyless, the answer lane stays a deterministic stub.
+- **Voice out + latency line** — `make talk-loop` speaks answers aloud (macOS `say`, config-gated), end-points recording with an energy VAD, and prints a per-turn latency line (ASR + routing → when speech starts).
 - **Learning flywheel v0** — consent-gated repair-event capture (`REPAIR_EVENT_CAPTURE_CONSENTED`, default off), personal lexicon ASR biasing (`PERSONAL_LEXICON`), documented in [docs/adaptation-ladder.md](docs/adaptation-ladder.md).
 - **Local recliner/TV evening loop** — one `local_evening_sessions` row per calendar evening; optional offer/decline, unclear-response repair choices, engaged/completed/timed-out states, and caregiver review controls.
 - **Family message outbox with two human gates** — patient confirms → `queued_local` → caregiver approves → `approved_local`. There is **no send path in the codebase at all**; cancel works from either state.
 - **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
 - **Real-audio eval harness** — `make eval-audio-real` runs real public-corpus and synthetic clips (audio stays in the Operations workspace, never in-repo) through local ASR and the actual routing, scored against each clip's oracle transcript: intent recovery with/without repair and with/without n-best, unsafe-capture gate, per-condition/language breakdowns.
-- **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 29 fixtures / 23 hard negatives / 0 unsafe), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, public-source citation guard, grant-readiness rollup, and repair-choice quality spot-check.
-- 361 backend tests as of the n-best repair + flywheel slice (2026-07-01).
+- **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 29 fixtures / 23 hard negatives / 0 unsafe), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, public-source citation guard, grant-readiness rollup, repair-choice quality spot-check, and brain-lane safety eval (`make eval-brain-lane`, keyless red-team routing gate + live TTS/quality lane, unsafe as a hard 0).
+- 423 backend tests as of the brain-adapter slice (2026-07-01).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -105,9 +111,10 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 | Speech-to-text | faster-whisper on-device, personal-lexicon biasing, optional dep | realtime cloud speech (family opt-in), voice-activity end-pointing |
 | Repair choices | n-best hypothesis probing + claude-haiku (opt-in), deterministic fallback | few-shot from consented repair history |
 | Learning | consent-gated repair-event capture, personal lexicon | mined lexicon suggestions, per-user fine-tunes |
+| Conversational brain | `BrainAdapter` contract; Claude v0 (`claude-sonnet-5`, opt-in via `ANTHROPIC_API_KEY`), deterministic stub keyless | OpenClaw/Hermes action backend (designed), realtime speech models (family opt-in) |
 | Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer admin/skills dashboard |
 | Eval harness | real-audio harness + full synthetic suite (see above) | pilot-voice longitudinal tracking, human-graded repair quality |
-| Voice out / live loop | none in v0 (no send path exists) | TTS, wake/VAD, realtime models (gpt-realtime family) |
+| Voice out / live loop | macOS `say` TTS + energy-VAD end-pointing in `make talk-loop`, per-turn latency line; no external send path exists | wake word, realtime models (gpt-realtime family) |
 
 ## Setup
 
@@ -115,7 +122,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (361 tests as of 2026-07-01)
+make test            # full backend suite should pass (423 tests as of 2026-07-01)
 ```
 
 **Fastest demo** (three commands, zero config):

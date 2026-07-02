@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Anthropic (model-driven repair choices; falls back to hardcoded when unset)
     anthropic_api_key: str = ""
 
+    # Brain (conversational answers behind the policy gate; docs/brain-adapters.md).
+    # Without ANTHROPIC_API_KEY the answer lane stays the deterministic stub.
+    parker_brain_model: str = "claude-sonnet-5"
+    parker_brain_max_tokens: int = 300
+
     # Local voice output (macOS say; no cloud, no dependencies)
     parker_tts_enabled: bool = True
     parker_tts_voice: str = ""  # empty = system default voice
