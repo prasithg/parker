@@ -137,7 +137,7 @@
         },
         {
           "action_type": "reminder",
-          "id": 5,
+          "id": 6,
           "requires": "patient confirmation",
           "resurface_count": 0,
           "status": "staged",
@@ -145,7 +145,7 @@
         },
         {
           "action_type": "family_message",
-          "id": 6,
+          "id": 7,
           "message_text": "Dinner on Sunday would be lovely, can the kids come too?",
           "recipient": "Rohan",
           "requires": "patient confirmation",
@@ -174,6 +174,16 @@
           "resurface_count": 0,
           "status": "executed",
           "subject": "message Sarah"
+        },
+        {
+          "action_type": "family_message",
+          "id": 5,
+          "message_text": "The garden is coming along nicely, tomatoes nearly ready.",
+          "recipient": "Michael",
+          "requires": "local execution only",
+          "resurface_count": 0,
+          "status": "executed",
+          "subject": "message Michael"
         },
         {
           "action_type": "reminder",

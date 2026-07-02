@@ -119,12 +119,14 @@ One command resets the DB, seeds a believable family day through the real pipeli
 
 ```bash
 make demo
-make run    # then open http://localhost:8000/parker/review/ui
+make run    # then open http://localhost:8000/parker/review/ui  (caregiver)
+            #      and http://localhost:8000/parker/screen      (the dad screen)
+make digest # the family handoff digest — printed + written to backend/digests/
 ```
 
-`make demo` runs both the family-day seed and the transcript replay, so the final review page opens populated with six actions awaiting confirmation: three seeded items (stale stretches, tomato-plants reminder, Rohan draft) plus three replay captures (tomato-plants reminder, Sarah draft, garden-utterance reminder). It also shows one Sarah message queued in the local outbox (approve it — it moves to the "still local only" section — or cancel it), one non-response escalation candidate from a reminder that was resurfaced three times without an answer, two "Recently done" local actions, and one "Changed my mind" cancellation. The printed replay dialogue shows repair choices, a refused medication question, and a purchase routed to human approval.
+`make demo` runs both the family-day seed and the transcript replay, so the final review page opens populated with six actions awaiting confirmation: three seeded items (stale stretches, tomato-plants reminder, Rohan draft) plus three replay captures (tomato-plants reminder, Sarah draft, garden-utterance reminder). It also shows one Sarah message queued in the local outbox (approve it — it moves to the "still local only" section — or cancel it), one Michael message **released to family contacts** on the patient's own confirmation (the capability trust model's happy path — visible, cancellable, never sent), one non-response escalation candidate from a reminder that was resurfaced three times without an answer, three "Recently done" local actions, and one "Changed my mind" cancellation. The printed replay dialogue shows repair choices, a refused medication question, and a purchase routed to human approval — and it deliberately ends mid-repair, so `/parker/screen` opens showing live numbered choice cards.
 
-Message lifecycle on the page: patient confirms → `queued_local` (awaiting your approval) → `approved_local` (reviewed, still on this machine) — or cancelled from either state. No send exists.
+Message lifecycle on the page: patient confirms → `queued_local` (awaiting your approval) → `approved_local` (reviewed, still on this machine) — or, for recipients on the admin's `PARKER_FAMILY_CONTACTS` allowlist, patient confirms → `released_local` directly. Cancellable from every live state. No send exists.
 
 The top of the review page now opens with a **Demo safety contract** so reviewers see the trust boundary before clicking anything: patient confirmation plus caregiver approval stays local, there is no outbound send path in v0, medical advice/medication changes/purchases/emergency-service replacement/private credential disclosure are out of scope, and non-response escalation items are review-only candidates.
 
@@ -136,7 +138,74 @@ With no password configured (the default), everything above works credential-fre
 DASHBOARD_USERNAME=family DASHBOARD_PASSWORD=choose-one make run
 ```
 
-The browser prompts once for HTTP Basic sign-in; the page's buttons reuse the credentials automatically, and curl flows need `-u family:choose-one`. `/parker/tick` and `/parker/resurface` deliberately stay open — they're the assistant-loop surface, not the caregiver's.
+The browser prompts once for HTTP Basic sign-in; the page's buttons reuse the credentials automatically, and curl flows need `-u family:choose-one`. `/parker/tick` and `/parker/resurface` deliberately stay open — they're the assistant-loop surface, not the caregiver's. The dad screen (below) also stays open by design.
+
+## The dad screen: `/parker/screen`
+
+A big-type live screen for the TV or monitor next to the person. Effortful
+speech already costs working memory; holding "was it 1 for the reminder or
+2 for the message?" in mind costs more. The screen carries that load
+instead: it shows what Parker heard, what Parker said, a status chip
+("Saved — Parker checks with you before anything runs", "Say yes — or no"),
+and the numbered choice cards matching the spoken "1) ... 2) ..." exactly.
+
+```bash
+make demo && make run
+# open http://localhost:8000/parker/screen — full-screen it on the TV
+```
+
+Design contract (pinned by tests in `backend/tests/test_screen.py`):
+
+- **Voice is the only input.** The page has no buttons, links, or form
+  controls — it is output, deliberately. Selection still happens by
+  saying the number.
+- **It mirrors the moment, not the past.** One overwritten row
+  (`screen_states`): the current exchange and nothing older. It is not a
+  transcript log; the review page's history sections are the audit
+  surface.
+- **No login, by design.** The screen shows only what Parker just said
+  aloud in the room anyway, and the person it serves should never face a
+  password. Locking `DASHBOARD_PASSWORD` locks the caregiver surface,
+  never this one.
+- **It degrades gracefully.** Fresh DB → "Parker is listening"; a server
+  restart keeps the last frame until the next exchange.
+
+Every path into `TextSession` drives it — `make repl`, `make talk`,
+`make talk-loop`, `make demo-voice`, and the demo replay — so the screen
+updates live while the talk loop runs, including Parker-initiated
+confirmation offers ("Shall I go ahead — yes or no?"), which appear with
+an empty "You said" and a yes/no chip. Options stay on screen through
+silent windows: taking a minute to answer never blanks the cards.
+
+## The family digest: `make digest`
+
+The family's rearview mirror under the capability trust model: family
+members administer capabilities and stay **aware**; they are not a
+per-item approval queue. `make digest` prints and writes a local, unsent
+markdown artifact (`backend/digests/parker-digest-YYYY-MM-DD.md`,
+gitignored); the same content is served at `/parker/digest`, linked from
+the top of the review page, behind the same opt-in auth seam.
+
+Three sections (each pinned by tests in `backend/tests/test_digest.py`):
+
+- **What happened** (windowed, last 24h): reminders done, messages
+  *released to family contacts* on the patient's own confirmation
+  (framed as events that happened, never approval asks), caregiver-
+  approved messages, exercise sessions, evening check-ins, other
+  completed actions, and "changed their mind" cancellations.
+- **Needs a look** (open items regardless of age): off-allowlist
+  messages queued for caregiver approval, non-response candidates
+  (review only — no notification was dispatched), failed skill
+  executions (never retried automatically), and actions still waiting
+  for a confirmation.
+- **What stayed local**: everything — the digest states explicitly that
+  released and approved messages alike have no send transport in v0 and
+  the digest itself is a local file.
+
+Hard boundaries, mechanically pinned: no credentials or secrets, no
+medical advice (events like "reminder done: call the pharmacy", never
+recommendations), and the digest module imports no network/send library
+at all.
 
 ## Voice path: `make demo-voice` (optional, local-only)
 
@@ -176,9 +245,9 @@ make talk-loop            # VAD end-pointed, up to 12s per turn, Ctrl-C to stop
 make talk-loop SECONDS=20 # longer max window for slower speech
 ```
 
-Leave it running in a terminal while the caregiver review page is open in a browser. The flow:
-- Parker offers "1) reminder 2) message" aloud → say "1" in the next window → captured.
-- Silence (background noise only) prints a cue and keeps listening.
+Leave it running in a terminal while the caregiver review page is open in a browser — and the dad screen (`/parker/screen`) on the TV, which mirrors every exchange live. The flow:
+- Parker offers "1) reminder 2) message" aloud → the numbered cards appear on the screen → say "1" in the next window → captured.
+- Silence (background noise only) prints a cue and keeps listening; pending cards stay on the screen.
 - Parker never listens while speaking, so it cannot transcribe itself.
 - Ctrl-C stops the loop and prints how many turns ran.
 
