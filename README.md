@@ -202,4 +202,4 @@ Synthetic and public-corpus data first. No real patient audio or private family 
 
 ## License
 
-Not yet licensed for distribution. Open-sourcing for other families and developers is the stated goal; a license will be chosen before the public launch.
+[MIT](LICENSE). Parker is not a medical device and provides no medical advice; the safety boundaries above are design commitments, not clinical claims.
