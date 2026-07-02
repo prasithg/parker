@@ -22,6 +22,7 @@ def test_pr_ci_workflow_runs_backend_tests_and_release_evals() -> None:
         "make eval-caregiver-state-legibility",
         "make eval-claim-metric-map",
         "make eval-construct-validity",
+        "make eval-hands",
         "make eval-release-readiness",
     ]
     for command in required_commands:

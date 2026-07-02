@@ -45,6 +45,57 @@ make voice-deps    # installs faster-whisper + sounddevice (local, no cloud)
 
 Required for `make demo-voice`, `make talk`, and `make talk-loop`. macOS prompts for microphone permission on first use of `make talk` / `make talk-loop`.
 
+## Capability administration: what the family sets up once
+
+The trust model is capability-level, not per-message: *"we don't want to get
+into the habit of approving our dad's stuff — we just want to set up new
+things for him."* The admin enables what Parker CAN do; within an enabled
+capability the patient's own confirmation is the only gate. Family approval
+survives only at the edges (off-allowlist recipients, purchases, new action
+types), and the review page becomes a rearview mirror plus edge-case queue
+instead of an approval queue.
+
+**Family contacts — the message capability:**
+
+```bash
+# in backend/.env:
+PARKER_FAMILY_CONTACTS=Sarah, Michael, Priya
+```
+
+- A confirmed message to a listed contact **releases on the patient's own
+  yes** — the outbox row is created `released_local` with
+  `released_by=capability_policy:family_contact_allowlist`, visible in the
+  review page's "Released to family contacts" section (cancellable there,
+  like everything local). No per-message approval.
+- A message to anyone else — an unlisted name Parker still recognizes from
+  `PERSONAL_LEXICON` — queues as `queued_local` and waits for a family
+  Approve click, exactly as before. Unrecognized names never even capture;
+  Parker asks who is meant.
+- With no contacts configured (the default), nothing auto-releases and
+  every message keeps today's two-human gate.
+- **v0 still has no send transport at all.** "Release" advances outbox
+  state and the trust model; released messages stay on this machine until
+  a later slice adds a real transport (Discord family channel) behind its
+  own explicit config.
+
+Contacts also feed local ASR: the Whisper bias prompt and recipient
+recognition derive from contacts + `PERSONAL_LEXICON`, so enabling a
+contact and teaching Parker to hear the name are one administrative act.
+
+**Spoken confirmation — the patient's gate:** in `make talk-loop`, after an
+intent stages, Parker asks aloud ("Ready when you are: a message to Sarah —
+… Shall I go ahead — yes or no?"). "Yes" confirms and executes as the
+patient; "no" cancels; anything else defers the action to the review page
+without nagging again. Prohibited tiers are refused long before this point
+and purchases still route to human approval — no capability makes those
+confirmable by voice.
+
+**Skills — the action capability (see the OpenClaw section below):** which
+gateway-backed actions exist at all (`media_playlist`, `open_links`) is
+curated by the admin on the family's OpenClaw instance. No enabled skill →
+the action type is not proposable, stageable, or executable anywhere in
+Parker.
+
 ## Prerequisites
 
 ```bash
@@ -271,10 +322,77 @@ print(result['spoken_prompt'])
 
 Offer an unsafe candidate (`action_type: medication_change`) to see the typed rejection.
 
+## Connecting a real OpenClaw instance (deployment, not performed by tests)
+
+Everything in the repo runs against a **fake** gateway — `make test` and
+`make eval-hands` never touch the network. Connecting the real thing is a
+deployment step on the family's hardware:
+
+**1. Stand up a patient-identity OpenClaw instance.** The family's own
+OpenClaw runs on the Mac mini for their use; Parker gets a *separate*
+instance (own workspace, own agent identity) so the patient's agent has
+patient-appropriate memory and skills only. Run its gateway on the default
+port: `openclaw gateway` → `http://127.0.0.1:18789` (or another port —
+whatever the URL, it goes in `PARKER_OPENCLAW_GATEWAY_URL`).
+
+**2. The admin curates skills there, not in Parker.** Install/enable only
+the skills the patient should have (e.g. a YouTube-on-TV skill mapped to
+`media_playlist`, a read-only browser skill mapped to `open_links`).
+Parker discovers the enabled list at startup and hides everything else.
+Adding a capability for Dad = enabling a skill on the gateway + restarting
+Parker; no Parker code changes.
+
+**3. Install the Parker bridge on that instance.** The public gateway API
+covers conversation (`POST /v1/chat/completions` — Parker's brain seam uses
+it as documented, bearer token and all), but documents no HTTP route for
+skill listing/invocation. Parker therefore expects a small bridge (an
+OpenClaw plugin route) on the patient instance:
+
+```text
+GET  /parker/v1/skills
+     -> {"skills": [{"name": "youtube-tv", "action_types": ["media_playlist"],
+                     "enabled": true}, ...]}
+
+POST /parker/v1/skills/invoke
+     {"action_type": "media_playlist",
+      "payload": {"subject": ..., "intent_text": ..., "recipient": ...,
+                  "skill": "youtube-tv"},
+      "idempotency_key": "staged-action-42"}
+     -> {"status": "ok" | "error", "detail": "<speakable result>"}
+```
+
+`detail` is read aloud verbatim on success ("queued 12 old Hindi songs on
+the living-room TV") — write it for ears. The idempotency key is Parker's
+staged-action id; the bridge may use it to refuse duplicate side effects,
+and Parker itself never retries an invocation. This bridge contract is the
+one deliberate extension beyond the public gateway API.
+
+**4. Point Parker at it:**
+
+```bash
+# in backend/.env:
+PARKER_OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789
+PARKER_OPENCLAW_GATEWAY_TOKEN=   # the gateway's OPENCLAW_GATEWAY_TOKEN, if set
+```
+
+Restart `make run` / `make talk-loop`. Startup logs the discovered action
+types. Degradation is built in: gateway down at startup → hands disabled,
+everything local keeps working; gateway down mid-conversation → Parker says
+once that it's on its backup brain (Claude with `ANTHROPIC_API_KEY`, or an
+honest "here's what still works" line); a skill error after confirmation →
+spoken failure plus a "Needs attention" review row, never a silent retry.
+
+**5. Verify with the acceptance flow.** Say: *"Put on some old Hindi songs
+on the TV"* → pick the offered choice → answer "yes" to the confirmation →
+the skill runs and Parker speaks the result; the review page shows the
+executed row. `make eval-hands` remains the offline regression gate for
+this whole path.
+
 ## Demo 5 — Evals
 
 ```bash
 make eval-tasks                                    # task-taxonomy eval, rule-based baseline
+make eval-hands                                    # proposal→confirm→execute over a fake OpenClaw gateway
 python3 benchmark/evaluate_tasks_v0.py --write-report   # benchmark/reports/
 cd backend && ./.venv/bin/pytest -q                # full suite
 
@@ -288,6 +406,8 @@ ANTHROPIC_API_KEY=sk-ant-... python3 benchmark/evaluate_repair_v0.py --write-rep
 ## What this demo deliberately cannot show
 
 - No real calls, SMS, or any outbound delivery — the outbox has no sender.
+  This includes capability-released messages: `released_local` means "the
+  family chose not to gate this per-message", not "sent".
 - No purchases, smart-home, or calendar writes — policy-blocked (`human_operator`).
 - No medical advice, medication changes, emergency-service replacement, or private credential disclosure — policy-refused, never confirmable.
 - No voice cloning — optional, consent-gated, not part of v0.

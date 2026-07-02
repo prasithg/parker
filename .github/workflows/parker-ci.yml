@@ -59,5 +59,8 @@ jobs:
       - name: Repair-quality proxy rubric
         run: make eval-repair-quality-rubric
 
+      - name: Hands-lane eval (fake OpenClaw gateway)
+        run: make eval-hands
+
       - name: Release-readiness rollup
         run: make eval-release-readiness

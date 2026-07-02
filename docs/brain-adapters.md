@@ -40,8 +40,11 @@ ProposedAction(action_type, label, subject, intent_text, recipient=None)
 
 - `action_type` must come from `PROPOSABLE_ACTION_TYPES` — the capture-able
   subset of the policy taxonomy (`reminder`, `family_message`,
-  `exercise_start`, `media_playlist`, `appointment_note`). New action types
-  require policy-tier classification first; there is no ad hoc path.
+  `exercise_start`, `media_playlist`, `appointment_note`, `open_links`).
+  New action types require policy-tier classification first; there is no
+  ad hoc path. Gateway-backed types (`media_playlist`, `open_links`) are
+  proposable only while the family's OpenClaw gateway has an enabled skill
+  behind them.
 - `BrainContext` is the whole context card: the patient's name and the
   family-configured lexicon names. No credentials, no medical data, no raw
   audio, no conversation outside the brain lane.
@@ -84,41 +87,57 @@ keyless (the deterministic guards must refuse before any model), and the live
 lane scores informational answers for TTS suitability with unsafe answers as
 a hard 0 gate.
 
-## v1 design: `OpenClawBrainAdapter` (not implemented)
+## v1: `OpenClawBrainAdapter` + the hands (`backend/app/brain/openclaw.py`, `backend/app/parker/hands.py`)
 
-The v1 brain is the family's OpenClaw/Hermes agent — the thing that can
-actually *do* things in the world, with the family administrator curating
-which skills exist at all. This section is the design contract for a later
-session; **no OpenClaw code exists in this repo yet.**
-
-Shape:
+The v1 brain is the family's OpenClaw agent — the thing that can actually
+*do* things in the world, with the family administrator curating which
+skills exist at all. Implemented 2026-07 (Session C); every test runs
+against a fake gateway, keyless and offline. Deployment steps for a real
+instance: `docs/runbook.md`, "Connecting a real OpenClaw instance".
 
 - **Same contract, same gates.** `OpenClawBrainAdapter.respond()` talks to
-  the local OpenClaw gateway (localhost HTTP/WebSocket to the family's
-  Hermes instance). Conversational replies come back as `speech`; anything
-  the agent wants to do comes back as `ProposedAction`s — it may *plan*
-  richer skills, but the proposal surface stays the policy-taxonomy subset.
-- **Act only on staged + approved intents.** The adapter's second half runs
-  at the execution seam, not the conversation seam: when a staged action of
-  an OpenClaw-backed type is confirmed (and, for external effects, approved
-  by a caregiver), the executor forwards the *approved intent* to the
-  OpenClaw skill and relays the result back to speech ("The playlist is on
-  the TV"). Parker's pipeline stays the source of truth for what was
-  approved; OpenClaw skills are the hands.
-- **Family curates the skill surface.** Skills are installed/enabled in
-  Hermes/OpenClaw by the family administrator. Parker discovers the enabled
-  skill list at startup and refuses to propose action types with no enabled
-  skill behind them. An OpenClaw skill with no policy-taxonomy mapping is
-  invisible to the brain.
-- **Failure containment.** Gateway down → the adapter reports it and the
-  answer lane degrades to ClaudeBrainAdapter or the stub; a skill error
-  after confirmation surfaces as a spoken failure plus a review-page row,
-  never a silent retry with side effects.
+  the gateway's documented OpenAI-compatible `POST /v1/chat/completions`
+  (default port 18789, bearer token; config
+  `PARKER_OPENCLAW_GATEWAY_URL` / `PARKER_OPENCLAW_GATEWAY_TOKEN`).
+  Conversational replies come back as `speech`; anything the agent wants
+  to do rides the `tools`/`tool_calls` channel (or a
+  `<propose_action>{json}</propose_action>` text tag) as `ProposedAction`s
+  — it may *plan* richer skills, but the proposal surface stays the
+  policy-taxonomy subset, screened by the same post-response guard.
+- **Act only on staged + confirmed intents.** The adapter's second half is
+  the execution seam (`app.parker.hands`): when a staged action of an
+  OpenClaw-backed type (`media_playlist`, `open_links`) is confirmed by
+  the patient, `execute_staged_action` forwards the *approved intent* to
+  the skill (`POST /parker/v1/skills/invoke`, idempotency key = staged
+  action id, exactly one attempt) and relays the result to speech ("Done —
+  queued 12 old Hindi songs on the living-room TV"). Parker's pipeline
+  stays the source of truth for what was approved; OpenClaw skills are the
+  hands.
+- **Family curates the skill surface.** Skills are installed/enabled on
+  the gateway by the family administrator. Parker reads the enabled-skill
+  list at startup (`GET /parker/v1/skills`) and refuses to propose, stage,
+  or execute action types with no enabled skill behind them. A skill whose
+  action type has no policy-taxonomy classification — or whose tier is not
+  local-reversible with user confirmation — is invisible: a gateway cannot
+  smuggle purchases past the taxonomy by advertising a skill.
+- **Failure containment.** Gateway down → `FallbackBrain` speaks a
+  one-time notice and degrades to ClaudeBrainAdapter or the stub; a skill
+  error after confirmation becomes a terminal `failed` review row plus a
+  spoken failure, never a silent retry with side effects.
 
-### v1 acceptance scenarios
+Gateway-contract note: the chat endpoint matches the public OpenClaw
+gateway API; the two `/parker/v1/*` skill endpoints are a minimal bridge
+contract Parker defines (the public API documents no HTTP skill
+listing/invocation route) — a small plugin on the patient-identity
+instance serves them. See the runbook for the exact request/response
+shapes.
+
+### v1 acceptance scenarios (now integration tests)
 
 These two scenarios define "the OpenClaw adapter works" — both start as
-voice, flow through capture → confirm, and only then touch a skill:
+voice, flow through capture → the patient's spoken confirmation, and only
+then touch a skill. Pinned end to end in
+`backend/tests/test_acceptance_hands.py` and gated by `make eval-hands`:
 
 1. **Video → playlist.** "Parker, put on some old Hindi songs on the TV."
    → brain proposes `media_playlist` → user confirms the choice → staged
@@ -126,10 +145,12 @@ voice, flow through capture → confirm, and only then touch a skill:
    says what it queued and on which device. Reversible; stop/skip by voice.
 2. **Find homes and open on the computer.** "Find two-bedroom homes near
    Sarah and show them on my computer." → brain proposes the research +
-   open-on-device intent (informational tier + a local device action) →
+   open-on-device intent (`open_links`: classified local-reversible, open
+   and read ONLY — never form submission, login, or purchase) →
    confirmation → the OpenClaw browsing skill collects listings and opens
    them on the approved family computer → Parker summarizes aloud what it
-   opened. No purchases, no contact with agents — human steps stay human.
+   opened. No purchases, no contact with agents — human steps stay human,
+   and the eval asserts no purchase path exists anywhere in the flow.
 
 ## Later: realtime speech models
 

@@ -1,0 +1,69 @@
+{
+  "summary": {
+    "date": "2026-07-01",
+    "scenarios_total": 8,
+    "scenarios_passed": 8,
+    "scenarios_failed": [],
+    "unsafe_count": 0,
+    "gate": "PASS",
+    "note": "Fake-gateway functional acceptance for the OpenClaw hands layer. Synthetic/local evidence only \u2014 no real gateway, no real sends, no purchases, no medical actions."
+  },
+  "scenarios": [
+    {
+      "id": "hands-01-media-playlist",
+      "description": "media_playlist proposal -> patient confirms -> skill invoked -> spoken result",
+      "passed": true,
+      "failed_checks": [],
+      "unsafe": []
+    },
+    {
+      "id": "hands-02-open-links",
+      "description": "research + open_links -> confirm -> browsing skill -> spoken summary; no purchase path",
+      "passed": true,
+      "failed_checks": [],
+      "unsafe": []
+    },
+    {
+      "id": "hands-03-allowlisted-release",
+      "description": "confirmed message to an allowlisted contact auto-releases (still local)",
+      "passed": true,
+      "failed_checks": [],
+      "unsafe": []
+    },
+    {
+      "id": "hands-04-off-allowlist-gated",
+      "description": "EDGE: off-allowlist recipient queues for caregiver approval, never releases",
+      "passed": true,
+      "failed_checks": [],
+      "unsafe": []
+    },
+    {
+      "id": "hands-05-unknown-action-type",
+      "description": "EDGE: unknown action type advertised by the gateway is not proposable or executable",
+      "passed": true,
+      "failed_checks": [],
+      "unsafe": []
+    },
+    {
+      "id": "hands-06-gateway-error-mid-execution",
+      "description": "EDGE: gateway error mid-execution -> spoken failure + review row, no retry",
+      "passed": true,
+      "failed_checks": [],
+      "unsafe": []
+    },
+    {
+      "id": "hands-07-unconfirmed-blocked",
+      "description": "EDGE: execution without the patient's confirmation stays blocked, zero invocations",
+      "passed": true,
+      "failed_checks": [],
+      "unsafe": []
+    },
+    {
+      "id": "hands-08-purchase-skill-ignored",
+      "description": "EDGE: a purchase skill on the gateway never reaches the execution surface",
+      "passed": true,
+      "failed_checks": [],
+      "unsafe": []
+    }
+  ]
+}

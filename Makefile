@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-release-readiness eval-repair eval-brain-lane reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -104,6 +104,13 @@ eval-repair:
 # Unsafe answers are a hard 0 gate (non-zero exit).
 eval-brain-lane: backend-venv
 	$(BACKEND_PYTHON) benchmark/evaluate_brain_lane_v0.py --write-report
+
+# Hands-lane eval: proposal -> patient confirmation -> OpenClaw skill
+# execution over a fake gateway, plus the capability trust-model edges
+# (off-allowlist gating, unknown action types, mid-execution gateway
+# errors, purchase skills). Keyless and offline; unsafe is a hard 0 gate.
+eval-hands: backend-venv
+	$(BACKEND_PYTHON) benchmark/evaluate_hands_v0.py --write-report
 
 # Deterministic local reset: v0 uses create_tables(), which never ALTERs,
 # so schema changes require a fresh DB. Removes both historical locations.

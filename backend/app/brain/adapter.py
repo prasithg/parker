@@ -10,8 +10,9 @@ capture pipeline. A brain cannot capture, stage, execute, or send.
 Adapters implementing this contract:
 
 - ``ClaudeBrainAdapter`` (``app.brain.claude``) — v0, direct Anthropic API.
-- ``OpenClawBrainAdapter`` — v1, design only (``docs/brain-adapters.md``):
-  staged+approved intents forwarded to family-curated OpenClaw skills.
+- ``OpenClawBrainAdapter`` (``app.brain.openclaw``) — v1: the family's
+  OpenClaw agent converses here; staged+confirmed intents are forwarded to
+  family-curated skills at the execution seam (``app.parker.hands``).
 - Realtime speech models — a later family opt-in, same contract.
 """
 
