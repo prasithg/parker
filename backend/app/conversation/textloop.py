@@ -1315,7 +1315,7 @@ class TextSession:
 
 
 def main() -> None:  # pragma: no cover — interactive entry point
-    from app.brain.claude import build_brain_adapter
+    from app.brain.build import build_brain_adapter
     from app.db.database import SessionLocal, create_tables
     from app.db.models import CallLog
 

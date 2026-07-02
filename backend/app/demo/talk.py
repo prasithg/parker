@@ -23,7 +23,7 @@ from typing import Any, Callable, Iterator, Optional
 
 from sqlalchemy.orm import Session
 
-from app.brain.claude import build_brain_adapter
+from app.brain.build import build_brain_adapter
 from app.conversation.textloop import TextSession, _build_model_client
 from app.db.models import CallLog
 from app.demo.replay import replay_transcript
