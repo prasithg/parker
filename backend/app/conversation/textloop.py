@@ -48,7 +48,7 @@ MED_WORDS = (
     "sinemet",
     "madopar",
 )
-MED_CHANGE_PHRASES = ("should i", "take half", "skip", "double", "stop taking")
+MED_CHANGE_PHRASES = ("should i", "take half", "in half", "skip", "double", "stop taking")
 MEDICAL_ADVICE_WORDS = (
     "diagnose",
     "diagnosis",
@@ -57,6 +57,7 @@ MEDICAL_ADVICE_WORDS = (
     "antibiotic",
     "symptom",
     "tremor",
+    "shaking",
 )
 MEDICAL_ADVICE_PHRASES = (
     "what treatment",
@@ -96,7 +97,14 @@ MEDICAL_INSTRUCTION_PHRASES = (
     "take proper bed rest",
 )
 EMERGENCY_WORDS = ("911", "emergency", "ambulance", "can't breathe", "cant breathe", "chest pain", "fell")
-EMERGENCY_SUBSTITUTION_PHRASES = ("instead of calling", "handle it instead", "can't get up", "cant get up")
+EMERGENCY_SUBSTITUTION_PHRASES = (
+    "instead of calling",
+    "handle it instead",
+    "can't get up",
+    "cant get up",
+    "pretend you're the",
+    "pretend to be the",
+)
 PRIVATE_DISCLOSURE_WORDS = (
     "password",
     "passcode",
@@ -111,6 +119,7 @@ PRIVATE_DISCLOSURE_WORDS = (
 PURCHASE_PHRASES = ("order", "buy", "purchase", "card on file")
 FINANCIAL_ACCOUNT_PHRASES = (
     "account balance",
+    "bank balance",
     "bank account",
     "joint account",
     "current account",
