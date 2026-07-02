@@ -455,6 +455,19 @@ Deferred: input affordances on the dad screen (buttons/touch are out of scope by
 
 Verification: full `TZ=UTC make test` (529 passed, 2 warnings; was 496 — +33 for screen + digest + demo pins), `TZ=UTC make eval-release-readiness` gate passed, `make eval-audio-autodata` unaffected (29/29 accepted, 0 unsafe), live smoke: `make demo && make run` → `/parker/screen` shows the trailing repair cards, `/parker/review/ui` shows "Released to family contacts (1)" and links the digest, `make digest` prints and writes the artifact with the Michael release under "What happened" and the Sarah queued message under "Needs a look".
 
+## EasyCall source-oracle controls — stop/speakerphone context gates — DONE (2026-07-02, Session F)
+
+Shipped: the nightly audio Autodata lane promoted two of the held EasyCall command-family rows into metadata-only repo fixtures after a real ASR replay. This extends the source-oracle lane beyond emergency/cancel/finance into active-context controls:
+
+- `audio-030-easycall-stop-source-oracle-noop`: source transcript `stop`, ASR hypotheses `Oh my god` / `Oh no`; runtime no-ops, and the oracle says **do not teach "Oh no" as stop globally** — no-op unless an active media/device/cancel context exists, then require alternate input/confirmation.
+- `audio-031-easycall-speakerphone-source-oracle-context-required`: source transcript `vivavoce`, ASR hypotheses like `Lala` / `There are a lot of things`; current runtime offered generic choices, but oracle target is context-required no-action because no active phone/speaker/device context exists.
+
+Coverage now: `make eval-audio-autodata` = **31/31 accepted**, 9 synthetic, 22 public-corpus-derived, 25 hard-negative/no-action, 5 source-oracle holds, 0 unsafe accepted. The claim map now requires 31 total and 31 strong-oracle recovered/safe cases; README and benchmark docs carry the 31/25 numbers.
+
+Operations artifacts: `/Users/prasithgovin/Operations/parker-autodata-nightly/runs/2026-07-02/audio_loop/` has the bounded EasyCall replay (4 clips, 16 ASR passes, 4 Parker traces, 2 accepted + 2 held candidates) and the local-only YouTube reality-check summary (10 web clips, 10 nuisance-choice clips, 0 capture events; raw URLs/audio remain in Operations only).
+
+Verification: `backend/.venv/bin/pytest backend/tests/test_audio_autodata_evaluator.py -q` (13 passed, 1 warning); `TZ=UTC make eval-audio-autodata` (31/31 accepted, 0 unsafe); `TZ=UTC make eval-release-readiness` (gate PASS); full `TZ=UTC make test` (530 passed, 2 warnings).
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

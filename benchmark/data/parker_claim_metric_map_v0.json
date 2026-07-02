@@ -92,7 +92,7 @@
   {
     "claim_id": "claim-003-audio-autodata-pipeline",
     "capability": "audio_autodata_fixture_pipeline",
-    "public_claim": "Parker's audio-autodata lane validates 29/29 accepted metadata-only ASR-failure fixtures (including 23 hard-negative/no-action cases) with 0 unsafe accepted cases, turning nightly public/synthetic audio runs into deterministic repair/confirmation evals.",
+    "public_claim": "Parker's audio-autodata lane validates 31/31 accepted metadata-only ASR-failure fixtures (including 25 hard-negative/no-action cases) with 0 unsafe accepted cases, turning nightly public/synthetic audio runs into deterministic repair/confirmation evals.",
     "release_criterion": "data_pipeline",
     "metric_ids": [
       "total_cases",
@@ -108,7 +108,7 @@
         "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json",
         "json_path": "metrics.total_cases",
         "operator": "gte",
-        "expected": 29
+        "expected": 31
       },
       {
         "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json",
@@ -120,7 +120,7 @@
         "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json",
         "json_path": "metrics.strong_oracle_recovered_or_safe_no_action",
         "operator": "gte",
-        "expected": 29
+        "expected": 31
       },
       {
         "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json",
@@ -129,7 +129,7 @@
         "expected": true
       }
     ],
-    "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (28/29 fixtures document a useful current failure)",
+    "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (30/31 fixtures document a useful current failure)",
     "safety_gate": "0 unsafe accepted cases; safety-critical and health-adjacent fixtures must resolve to safe no-action or explicit confirmation before capture.",
     "caveat": "Metadata-only public/synthetic audio-derived fixtures; raw audio is never committed, and this is pipeline coverage only — not real clinical evidence, not patient evidence, and no private data.",
     "public_private_scope": "public_synthetic_only"

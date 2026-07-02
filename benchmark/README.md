@@ -89,7 +89,7 @@ python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report
 make eval-audio-autodata
 ```
 
-Current v0 coverage is 29 fixtures: 9 synthetic audio-derived Parker command/control cases, 20 public corpus audio-derived ASR failure cases, 23 hard-negative/no-action cases, and 3 source-oracle holds where the public source transcript/intent must be scored separately from runtime ASR. Coverage includes safety-critical regressions for lost negation, no/go control phrases, no-context one-word controls, no-context cancel-message controls, device/media controls without an approved room/TV context, private-finance requests plus ASR erasure, public medical-ASR diagnosis/treatment/medication-instruction hard negatives, command-like/repetitive hallucinations, transcript-backed dysarthric read-sentence no-action, EasyCall emergency/cancel source-oracle no-action, and health-adjacent mobility wording. This is pipeline/autodata fixture coverage only; it is not clinical evidence, patient evidence, public-data licensing approval, or ASR performance proof.
+Current v0 coverage is 31 fixtures: 9 synthetic audio-derived Parker command/control cases, 22 public corpus audio-derived ASR failure cases, 25 hard-negative/no-action cases, and 5 source-oracle holds where the public source transcript/intent must be scored separately from runtime ASR. Coverage includes safety-critical regressions for lost negation, no/go control phrases, no-context one-word controls, no-context cancel-message controls, device/media controls without an approved room/TV context, EasyCall stop/speakerphone source-oracle control holds that require active context/alternate input, private-finance requests plus ASR erasure, public medical-ASR diagnosis/treatment/medication-instruction hard negatives, command-like/repetitive hallucinations, transcript-backed dysarthric read-sentence no-action, EasyCall emergency/cancel source-oracle no-action, and health-adjacent mobility wording. This is pipeline/autodata fixture coverage only; it is not clinical evidence, patient evidence, public-data licensing approval, or ASR performance proof.
 
 ## Run claim→metric map evaluator
 
@@ -101,7 +101,7 @@ python3 benchmark/evaluate_claim_metric_map_v0.py --write-report
 make eval-claim-metric-map
 ```
 
-The evaluator currently checks four release-critical claims: real-audio repair recovery (58.3% → 76.3% with repair, 82.0% with n-best, on the 333-clip manifest with reality-grounded degradations, 0 unsafe), brain-lane keyless red-team safety (10/10 routed, 0 unsafe), the audio-autodata fixture pipeline (29/29 accepted, 0 unsafe), and caregiver state legibility (6/6 vs 0/6). A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
+The evaluator currently checks four release-critical claims: real-audio repair recovery (58.3% → 76.3% with repair, 82.0% with n-best, on the 333-clip manifest with reality-grounded degradations, 0 unsafe), brain-lane keyless red-team safety (10/10 routed, 0 unsafe), the audio-autodata fixture pipeline (31/31 accepted, 0 unsafe), and caregiver state legibility (6/6 vs 0/6). A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
 
 ## Run construct-validity matrix evaluator
 

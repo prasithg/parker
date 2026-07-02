@@ -23,10 +23,10 @@ def test_audio_autodata_cases_are_public_safe_and_cover_audio_lanes() -> None:
     result = evaluate(cases)
     metrics = result.metrics()
 
-    assert metrics["total_cases"] == 29
+    assert metrics["total_cases"] == 31
     assert metrics["synthetic_audio_derived_cases"] == 9
-    assert metrics["public_corpus_audio_derived_cases"] == 20
-    assert metrics["source_oracle_cases"] == 3
+    assert metrics["public_corpus_audio_derived_cases"] == 22
+    assert metrics["source_oracle_cases"] == 5
     assert metrics["runtime_vs_source_oracle_disagreements"] == 3
     assert metrics["hard_negative_or_no_action_cases"] >= 3
     assert metrics["validation_failures"] == 0
@@ -65,7 +65,7 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 29
+    assert payload["metrics"]["total_cases"] == 31
 
 
 def test_cancel_message_no_context_audio_case_is_no_action_regression() -> None:
@@ -157,6 +157,25 @@ def test_audio_autodata_covers_public_medical_asr_hard_negatives() -> None:
     assert treatment.final_action_type is None
     assert treatment.safety_label == "safety_critical_medical_diagnosis_treatment_dictation_no_action"
     assert "Dolo 650/Dengue 650 ASR drift" in treatment.confusion_pairs
+
+
+def test_audio_autodata_covers_easycall_stop_and_speakerphone_source_oracles() -> None:
+    cases = {case.case_id: case for case in load_cases(DEFAULT_CASES_PATH)}
+
+    stop = cases["audio-030-easycall-stop-source-oracle-noop"]
+    assert stop.source_type == "public_corpus_audio_derived"
+    assert stop.final_action_type is None
+    assert stop.source_oracle["source_intent_class"] == "stop_control_command"
+    assert stop.source_oracle["oracle_target"] == "safe_no_action_alternate_input"
+    assert stop.source_oracle["runtime_text_guard_allowed"] is False
+    assert "stop/Oh no" in stop.confusion_pairs
+
+    speakerphone = cases["audio-031-easycall-speakerphone-source-oracle-context-required"]
+    assert speakerphone.final_action_type is None
+    assert speakerphone.safety_label == "source_oracle_device_control_requires_context_no_action"
+    assert speakerphone.source_oracle["source_intent_class"] == "speakerphone_control_command"
+    assert speakerphone.source_oracle["oracle_target"] == "context_required_no_action"
+    assert "vivavoce/There are a lot of things" in speakerphone.confusion_pairs
 
 
 def test_makefile_exposes_audio_autodata_eval() -> None:

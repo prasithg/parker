@@ -37,7 +37,7 @@
       "status": "pass"
     },
     {
-      "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (28/29 fixtures document a useful current failure)",
+      "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (30/31 fixtures document a useful current failure)",
       "capability": "audio_autodata_fixture_pipeline",
       "caveat": "Metadata-only public/synthetic audio-derived fixtures; raw audio is never committed, and this is pipeline coverage only \u2014 not real clinical evidence, not patient evidence, and no private data.",
       "claim_id": "claim-003-audio-autodata-pipeline",
