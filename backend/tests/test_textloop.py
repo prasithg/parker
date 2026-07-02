@@ -392,6 +392,89 @@ def test_invalid_selection_reprompts_without_capturing(db):
     assert db.query(CapturedIntent).count() == 0
 
 
+def test_counting_sequences_noop_without_capture_or_choices(db):
+    # Speech-therapy exercises are counting, and ASR renders spoken numbers
+    # as digits (web-private validation lane). Counting is ambient exercise
+    # audio — never a command, never worth generic repair choices.
+    session = _session(db)
+
+    for utterance in ("One, two, three, four.", "81, 82, 83, 84, 85, 86, 87, 88, 89, 90."):
+        response = session.handle(utterance)
+        assert response["kind"] == "noop"
+        assert "counting" in response["speech"].lower()
+
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_counting_sequence_dismisses_pending_choices_so_digits_cannot_select(db):
+    # The near-miss from the validation lane: ambient speech draws generic
+    # choices, then exercise counting continues. A counting line must set
+    # the choices aside so a later digit-rendered fragment cannot select
+    # an intent nobody asked for.
+    session = _session(db)
+    offered = session.handle("The thing... with the... you know...")
+    assert offered["kind"] == "choices"
+
+    counting = session.handle("1, 2, 3, 4.")
+    assert counting["kind"] == "noop"
+
+    follow_up = session.handle("2")
+    assert follow_up["kind"] != "captured"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_new_command_escapes_pending_choices_instead_of_being_swallowed(db):
+    # Before this seam, one nuisance choice offer put the session into a
+    # "Just say the number" loop that ate the user's next real command —
+    # the worst failure shape for a speaker whose retries are effortful.
+    session = _session(db)
+    offered = session.handle("The thing... with the... you know...")
+    assert offered["kind"] == "choices"
+
+    response = session.handle("Remind me to take my walk this afternoon")
+
+    assert response["kind"] == "captured"
+    saved = db.get(CapturedIntent, response["captured_intent_id"])
+    assert saved.requested_action == "remind"
+    assert "walk" in saved.subject
+
+
+def test_question_escapes_pending_choices(db):
+    session = _session(db)
+    session.handle("The thing... with the... you know...")
+
+    response = session.handle("When is my next appointment")
+
+    assert response["kind"] == "answer"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_dismissal_words_reject_pending_choices_without_capture(db):
+    session = _session(db)
+    session.handle("The thing... with the... you know...")
+
+    response = session.handle("never mind")
+
+    assert response["kind"] == "retry"
+    assert db.query(CapturedIntent).count() == 0
+    # Session is reset: the next utterance routes normally.
+    follow_up = session.handle("Remind me to stretch")
+    assert follow_up["kind"] == "captured"
+
+
+def test_garbled_text_while_choices_pending_still_reprompts(db):
+    # Escape is only for clearly-new commands/questions; unclear text is
+    # still most likely a garbled selection attempt.
+    session = _session(db)
+    session.handle("The thing... with the... you know...")
+
+    response = session.handle("the blue one maybe")
+
+    assert response["kind"] == "choices"
+    assert "number" in response["speech"].lower()
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_questions_get_answer_stub_without_capture(db):
     session = _session(db)
 

@@ -237,6 +237,21 @@ CONFIRM_NO_PHRASES = {
     "no thank you",
 }
 
+# Spoken dismissal while repair choices are pending: equivalent to picking
+# "none of these" without knowing its number. Kept small and exact-match —
+# anything else while choices are pending is a digit selection, a
+# clearly-new utterance (which escapes to normal routing), or a garbled
+# selection attempt (re-prompt).
+DISMISS_CHOICE_PHRASES = CONFIRM_NO_PHRASES | {
+    "none",
+    "none of these",
+    "none of those",
+    "never mind",
+    "nevermind",
+    "cancel that message",
+    "cancel this message",
+}
+
 NO_CONTEXT_CONTROL_RESPONSES = {
     "yes": "I heard yes, but there isn't anything waiting for confirmation.",
     "yeah": "I heard yes, but there isn't anything waiting for confirmation.",
@@ -375,6 +390,59 @@ def _repetitive_asr_hallucination_response(utterance: str) -> dict[str, Any] | N
                 ),
             }
     return None
+
+
+_NUMBER_WORDS = {
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+    "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty",
+    "fifty", "sixty", "seventy", "eighty", "ninety", "hundred",
+}
+
+
+def _counting_sequence_response(utterance: str) -> dict[str, Any] | None:
+    """No-op number/counting sequences — exercise audio, not commands.
+
+    Counting is everyday speech-therapy content ("81, 82, …" warm-ups,
+    "one, two, three, four" pacing) and local ASR renders spoken numbers as
+    digits. Observed in the web-private local validation lane. A counting
+    line is never a command and never a repair-choice selection — without
+    this guard, a digit-rendered counting fragment spoken while repair
+    choices are pending is one ASR segmentation quirk away from selecting
+    one (see benchmark/data/private_audio_pattern_notes_v0.json).
+    """
+
+    words = re.sub(r"[,.!?\-]+", " ", utterance).lower().split()
+    if len(words) < 3:
+        return None
+    pure_numbers = sum(1 for w in words if w.isdigit() or w in _NUMBER_WORDS)
+    if pure_numbers < 3:
+        return None
+    if any(not (w.isdigit() or w in _NUMBER_WORDS or w == "and") for w in words):
+        return None
+    return {
+        "kind": "noop",
+        "speech": "Sounds like counting practice — I'll stay out of the way.",
+    }
+
+
+def _looks_like_new_directed_utterance(utterance: str) -> bool:
+    """A clearly-new command or question spoken while repair choices pend.
+
+    The web-private validation lane showed ambient speech constantly draws
+    generic repair choices; selection mode then swallowed every following
+    utterance — including the user's actual next command — behind "Just
+    say the number". For a speaker whose retries are effortful, eating the
+    retry is the worst failure shape. Clear command/exercise/question
+    forms escape selection mode and route normally; anything else is still
+    treated as a garbled selection attempt.
+    """
+
+    if MESSAGE_PATTERN.match(utterance) or SEND_PATTERN.match(utterance):
+        return True
+    if REMIND_PATTERN.match(utterance) or EXERCISE_PATTERN.match(utterance):
+        return True
+    return utterance.lower().startswith(("what", "when", "where", "who", "how", "why"))
 
 
 def _message_body_needs_clarification(body: str) -> bool:
@@ -787,7 +855,11 @@ class TextSession:
             # Not a yes/no: the offer is deferred (action stays staged for
             # review) and the utterance routes normally below.
         if self._pending_choices is not None:
-            return self._handle_selection(utterance)
+            handled = self._handle_selection(utterance)
+            if handled is not None:
+                return handled
+            # A clearly-new utterance set the pending choices aside; it
+            # routes normally below (mirrors the confirmation-offer seam).
 
         lowered = utterance.lower()
         revision = self._handle_changed_mind(utterance, lowered)
@@ -799,6 +871,9 @@ class TextSession:
         control_negation = _control_negation_response(utterance)
         if control_negation is not None:
             return control_negation
+        counting = _counting_sequence_response(utterance)
+        if counting is not None:
+            return counting
 
         if _looks_like_emergency_substitution(lowered):
             return {
@@ -1419,19 +1494,52 @@ class TextSession:
         if len(self._brain_history) > max_messages:
             del self._brain_history[: len(self._brain_history) - max_messages]
 
-    def _handle_selection(self, utterance: str) -> dict[str, Any]:
+    def _handle_selection(self, utterance: str) -> Optional[dict[str, Any]]:
+        """Resolve one utterance spoken while repair choices are pending.
+
+        Digits select. Counting sequences and dismissal words set the
+        choices aside. A clearly-new command/question returns ``None`` so
+        ``handle`` routes it normally — the web-private validation lane
+        showed ambient speech constantly draws generic choices, and before
+        this seam selection mode swallowed the user's next real attempt
+        behind "Just say the number". Anything else re-prompts as a
+        garbled selection attempt.
+        """
+
         choices = self._pending_choices or []
-        if not utterance.isdigit() or not 1 <= int(utterance) <= len(choices):
-            speech = "Just say the number — " + ", ".join(
-                f"{c['position']}) {c['label']}" for c in choices
-            )
-            return {"kind": "choices", "speech": speech, "choices": choices}
-        choice = choices[int(utterance) - 1]
-        source = self._pending_utterance or choice["label"]
-        alternates = self._pending_alternates
+        if utterance.isdigit() and 1 <= int(utterance) <= len(choices):
+            return self._select_choice(choices[int(utterance) - 1], choices)
+        counting = _counting_sequence_response(utterance)
+        if counting is not None:
+            self._dismiss_pending_choices()
+            return counting
+        normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
+        normalized = re.sub(r"\s+", " ", normalized)
+        if normalized in DISMISS_CHOICE_PHRASES or _control_negation_response(utterance) is not None:
+            none_choice = next((c for c in choices if c.get("action_type") is None), None)
+            if none_choice is not None:
+                return self._select_choice(none_choice, choices)
+            self._dismiss_pending_choices()
+            return {"kind": "retry", "speech": "Okay, none of those. Tell me again in your own words."}
+        if _looks_like_new_directed_utterance(utterance):
+            self._dismiss_pending_choices()
+            return None
+        speech = "Just say the number — " + ", ".join(
+            f"{c['position']}) {c['label']}" for c in choices
+        )
+        return {"kind": "choices", "speech": speech, "choices": choices}
+
+    def _dismiss_pending_choices(self) -> None:
         self._pending_choices = None
         self._pending_utterance = None
         self._pending_alternates = []
+
+    def _select_choice(
+        self, choice: dict[str, Any], choices: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        source = self._pending_utterance or choice["label"]
+        alternates = self._pending_alternates
+        self._dismiss_pending_choices()
         if choice["action_type"] is None:
             # Save the rejected labels so the next offer can generate different alternatives.
             self._prior_offered_labels = [
