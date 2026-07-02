@@ -75,6 +75,7 @@ def test_replay_routes_the_full_script_safely(db):
         "refused",    # medication change
         "needs_human_approval",  # purchase
         "answer",     # weather question
+        "choices",    # trailing vague media line → cards left on the live screen
     ]
     # Exactly three intents captured; the unsafe lines captured nothing.
     intents = db.query(CapturedIntent).all()

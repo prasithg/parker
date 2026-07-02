@@ -22,6 +22,7 @@ family-contact allowlist (otherwise they queue for caregiver approval).
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -33,6 +34,12 @@ from app.brain.adapter import BrainAdapter, BrainContext, Message
 from app.conversation.repair import suggest_repair_candidates
 from app.conversation.repair_events import record_repair_event
 from app.conversation.tools import execute_tool
+from app.parker.screen import (
+    AWAITING_CHOICE,
+    AWAITING_NOTHING,
+    AWAITING_YES_NO,
+    publish_screen_state,
+)
 
 # Bounded brain-lane conversation memory: enough for follow-ups
 # ("what about Saturday?"), small enough to stay cheap and forgetful.
@@ -842,8 +849,41 @@ class TextSession:
         ``alternates`` are additional ASR hypotheses for the same audio
         (n-best or a second model's transcript). They are never routed
         directly — they only enrich repair choices via safe probing.
+
+        Every exchange also updates the single-row screen state behind
+        ``/parker/screen`` (the live patient screen): what was heard, what
+        Parker said, and any numbered choices still waiting for a spoken
+        selection. The screen is output-only; publishing must never break
+        the conversation itself.
         """
 
+        response = self._route(text, alternates=alternates)
+        self._publish_screen(heard=text.strip(), response=response)
+        return response
+
+    def _publish_screen(self, *, heard: str, response: dict[str, Any]) -> None:
+        if self._pending_choices is not None:
+            awaiting = AWAITING_CHOICE
+        elif self._pending_confirmation is not None:
+            awaiting = AWAITING_YES_NO
+        else:
+            awaiting = AWAITING_NOTHING
+        try:
+            publish_screen_state(
+                self.db,
+                heard=heard,
+                speech=response.get("speech", ""),
+                kind=response.get("kind", ""),
+                choices=self._pending_choices,
+                awaiting=awaiting,
+            )
+        except Exception:  # noqa: BLE001 — a broken mirror must not kill the voice loop
+            self.db.rollback()
+            logging.getLogger("parker.screen").debug(
+                "screen-state publish skipped", exc_info=True
+            )
+
+    def _route(self, text: str, *, alternates: Optional[list[str]] = None) -> dict[str, Any]:
         utterance = text.strip()
         self._current_alternates = [a for a in (alternates or []) if a.strip() and a.strip() != utterance]
         if not utterance:
@@ -1199,11 +1239,14 @@ class TextSession:
         self._offered_confirmation_ids.add(action.id)
         self._pending_confirmation = action.id
         description = self._describe_staged_action(action)
-        return {
+        offer = {
             "kind": "confirm_offer",
             "speech": f"Ready when you are: {description}. Shall I go ahead — yes or no?",
             "staged_action_id": action.id,
         }
+        # Parker spoke first: the screen shows the offer with nothing heard.
+        self._publish_screen(heard="", response=offer)
+        return offer
 
     def _handle_confirmation_reply(self, utterance: str) -> dict[str, Any] | None:
         from app.parker.pipeline import (

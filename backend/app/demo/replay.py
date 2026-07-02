@@ -30,6 +30,10 @@ DEMO_SCRIPT: list[str] = [
     "Should I take half my pills tomorrow?",  # refused, redirected
     "Order that walker with the card on file",  # routed to human approval
     "What's the weather looking like this weekend?",  # answer stub
+    # Ends mid-repair on purpose: the offer captures nothing (the tool
+    # persists no rows), but it leaves numbered choice cards on the live
+    # patient screen so `make demo` shows /parker/screen at its best.
+    "Put on the... the thing we watched with the... you know...",
 ]
 
 
