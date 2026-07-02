@@ -12,12 +12,27 @@ from app.db.models import CapturedIntent, OutboxMessage, ResolutionResult, Stage
 from app.exercises.session import start_local_exercise_session
 from app.parker.policy import executable_v0_action_types
 
-# Action types v0 may execute after confirmation. Every entry's execution
-# artifact is local and reversible (reminders resurface locally; exercise starts
-# are local/auditable; family messages queue to the cancellable local outbox — no send path exists).
+# Action types v0 may execute LOCALLY after confirmation. Every entry's
+# execution artifact is local and reversible (reminders resurface locally;
+# exercise starts are local/auditable; family messages queue/release to the
+# cancellable local outbox — no send path exists).
 EXECUTABLE_V0_ACTION_TYPES = executable_v0_action_types()
 # Backwards-compatible alias for earlier naming.
 REVERSIBLE_ACTION_TYPES = EXECUTABLE_V0_ACTION_TYPES
+
+
+def currently_executable_action_types() -> set[str]:
+    """The live execution surface: local types plus gateway-backed types.
+
+    Gateway-backed types (app.parker.hands) exist only while the family's
+    OpenClaw gateway advertises an enabled skill AND the policy taxonomy
+    classifies the type local-reversible with user confirmation. With no
+    gateway configured this is exactly the local v0 set.
+    """
+
+    from app.parker.hands import gateway_executable_action_types
+
+    return set(EXECUTABLE_V0_ACTION_TYPES) | set(gateway_executable_action_types())
 REQUESTED_ACTION_TO_ACTION_TYPE = {
     "remind": "reminder",
     "reminder": "reminder",
@@ -68,10 +83,11 @@ def resolve_captured_intents(db: Session, now: datetime | None = None) -> list[R
         .order_by(CapturedIntent.created_at, CapturedIntent.id)
         .all()
     )
+    executable = currently_executable_action_types()
     results: list[ResolutionResult] = []
     for intent in due_intents:
         action_type = REQUESTED_ACTION_TO_ACTION_TYPE.get(intent.requested_action, intent.requested_action)
-        reversible = action_type in EXECUTABLE_V0_ACTION_TYPES
+        reversible = action_type in executable
         subject = intent.subject or intent.intent_text
         result = ResolutionResult(
             captured_intent_id=intent.id,
@@ -106,9 +122,10 @@ def stage_resolved_actions(db: Session, now: datetime | None = None) -> list[Sta
         .order_by(ResolutionResult.created_at, ResolutionResult.id)
         .all()
     )
+    executable = currently_executable_action_types()
     staged: list[StagedAction] = []
     for resolution in resolutions:
-        if not resolution.reversible or resolution.action_type not in EXECUTABLE_V0_ACTION_TYPES:
+        if not resolution.reversible or resolution.action_type not in executable:
             resolution.status = "rejected"
             resolution.summary = _append_reversible_rejection(resolution.summary)
             continue
@@ -202,16 +219,26 @@ def confirm_staged_action(
 
 
 def execute_staged_action(db: Session, staged_action_id: int, now: datetime | None = None) -> StagedAction:
-    """Execute only confirmed, reversible v0 actions.
+    """Execute only confirmed actions on the current execution surface.
 
-    Reminders execute by resurfacing locally. Family messages execute by
-    queueing to the local outbox — nothing is sent anywhere in v0.
+    Local types execute locally: reminders resurface, exercise sessions
+    start, family messages queue/release to the local outbox — nothing is
+    sent anywhere in v0. Gateway-backed types forward the APPROVED intent
+    to the family's OpenClaw skill (app.parker.hands); a skill error
+    becomes a ``failed`` review row and is never silently retried.
     """
 
     action = _get_action(db, staged_action_id)
-    if not action.reversible or action.action_type not in EXECUTABLE_V0_ACTION_TYPES:
+    if action.status in {"executed", "cancelled", "failed"}:
+        # Terminal states are never re-run or overwritten: a failed skill
+        # invocation stays failed (no retry, audit intact), an executed
+        # action stays executed, a cancellation stands.
+        return action
+    if not action.reversible or action.action_type not in currently_executable_action_types():
         action.status = "blocked"
-        action.execution_result = "Only reversible actions can be executed in Parker v0."
+        action.execution_result = (
+            "Only reversible actions on the current execution surface can be executed."
+        )
     elif action.status != "confirmed":
         action.status = "blocked"
         action.execution_result = "Action requires confirmation before execution."
@@ -231,15 +258,56 @@ def execute_staged_action(db: Session, staged_action_id: int, now: datetime | No
         action.status = "executed"
         action.executed_at = now or datetime.utcnow()
         action.execution_result = f"local exercise session started: {subject} (exercise session {session.id})"
-    else:
+    elif action.action_type in EXECUTABLE_V0_ACTION_TYPES:
         payload = _json_payload(action.action_payload)
         subject = payload.get("subject") or action.resolution_result.summary
         action.status = "executed"
         action.executed_at = now or datetime.utcnow()
         action.execution_result = f"reminder resurfaced: {subject}"
+    else:
+        _execute_via_hands(db, action, now=now)
     db.commit()
     db.refresh(action)
     return action
+
+
+def _execute_via_hands(db: Session, action: StagedAction, now: datetime | None = None) -> None:
+    """Forward one confirmed gateway-backed intent to its OpenClaw skill.
+
+    Exactly one invocation attempt. Success relays the skill's speakable
+    detail; failure marks the action ``failed`` with the reason — a review
+    row plus spoken failure, never a silent retry with side effects.
+    """
+
+    from app.parker.hands import configured_hands
+
+    del db  # symmetry with siblings; caller commits
+    hands = configured_hands()
+    if hands is None:
+        action.status = "blocked"
+        action.execution_result = (
+            f"No OpenClaw skill is currently enabled for {action.action_type}."
+        )
+        return
+    payload = _json_payload(action.action_payload)
+    result = hands.invoke(
+        action.action_type,
+        {
+            "subject": payload.get("subject"),
+            "intent_text": payload.get("intent_text"),
+            "recipient": payload.get("recipient"),
+        },
+        idempotency_key=f"staged-action-{action.id}",
+    )
+    if result.ok:
+        action.status = "executed"
+        action.executed_at = now or datetime.utcnow()
+        action.execution_result = f"openclaw skill completed: {result.detail}"
+    else:
+        action.status = "failed"
+        action.execution_result = (
+            f"openclaw skill failed (no retry was attempted): {result.detail}"
+        )
 
 
 def _execute_family_message(db: Session, action: StagedAction, now: datetime | None = None) -> None:

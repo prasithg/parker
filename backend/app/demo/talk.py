@@ -154,10 +154,12 @@ def run_talk_loop(
 
 def main() -> None:  # pragma: no cover — CLI entry point
     from app.db.database import SessionLocal, create_tables
+    from app.parker.hands import configure_hands_from_settings
     from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
 
     seconds = float(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SECONDS
     create_tables()
+    configure_hands_from_settings()
     db = SessionLocal()
     print(f"Listening for {seconds:g}s — speak now (audio is transcribed locally, then deleted)…")
     exchanges = run_talk(db, seconds=seconds)

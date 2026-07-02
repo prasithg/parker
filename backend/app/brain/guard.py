@@ -89,22 +89,30 @@ class ScreenResult:
     dropped_action_count: int
 
 
-def _valid_proposal(action: ProposedAction) -> bool:
+def _valid_proposal(action: ProposedAction, proposable: frozenset[str]) -> bool:
     return (
-        action.action_type in PROPOSABLE_ACTION_TYPES
+        action.action_type in proposable
         and bool(action.label.strip())
         and bool(action.subject.strip())
         and bool(action.intent_text.strip())
     )
 
 
-def screen_reply(reply: BrainReply) -> ScreenResult:
+def screen_reply(reply: BrainReply, *, proposable: frozenset[str] | None = None) -> ScreenResult:
     """Enforce the medical boundary and the proposable-action allowlist.
 
     A medical-boundary trip replaces the whole reply — speech and
     proposals — with the redirect; a poisoned answer must not keep its
     action suggestions either.
+
+    ``proposable`` narrows the allowlist to what is proposable RIGHT NOW
+    (e.g. gateway-backed types only while an enabled skill exists —
+    ``app.parker.hands.effective_proposable_action_types``). It can only
+    ever be a subset: anything outside ``PROPOSABLE_ACTION_TYPES`` is
+    dropped regardless.
     """
+
+    allowed = PROPOSABLE_ACTION_TYPES if proposable is None else (proposable & PROPOSABLE_ACTION_TYPES)
 
     if speech_violates_medical_boundary(reply.speech):
         return ScreenResult(
@@ -115,7 +123,7 @@ def screen_reply(reply: BrainReply) -> ScreenResult:
 
     kept: list[ProposedAction] = []
     for action in reply.proposed_actions:
-        if not _valid_proposal(action):
+        if not _valid_proposal(action, allowed):
             continue
         if len(action.label) > MAX_LABEL_LENGTH:
             action = ProposedAction(

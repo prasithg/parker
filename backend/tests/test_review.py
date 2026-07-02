@@ -61,9 +61,11 @@ def test_cancel_confirmed_action_before_execution(db):
     cancelled = cancel_staged_action(db, staged.id, now=NOW)
 
     assert cancelled.status == "cancelled"
-    # Cancelled actions cannot be executed afterwards.
+    # Cancelled is terminal: a later execute is a no-op and the cancellation
+    # record (who/when) survives instead of being overwritten.
     executed = execute_staged_action(db, staged.id, now=NOW)
-    assert executed.status == "blocked"
+    assert executed.status == "cancelled"
+    assert executed.cancelled_by is not None
 
 
 def test_cancel_executed_action_is_a_no_op(db):

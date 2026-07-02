@@ -26,6 +26,7 @@ REVIEW_PAGE_HTML = """<!doctype html>
   .badge.staged, .badge.queued_local { background: #fff3cd; }
   .badge.confirmed, .badge.approved_local, .badge.released_local { background: #d4edda; }
   .badge.executed { background: #e2e3e5; }
+  .badge.failed { background: #f8d7da; color: #842029; }
   .badge.cancelled { background: #f0e6e6; color: #844; }
   .badge.info { background: #d6e4f0; }
   .badge.warning, .badge.urgent { background: #f8d7da; }
@@ -75,6 +76,9 @@ approving marks it reviewed; nothing is ever sent externally from this page.</p>
 
 <h2 id="h-history">Recently done (stayed on this machine)</h2>
 <div id="history"></div>
+
+<h2 id="h-failed">Needs attention — skill failures (never retried automatically)</h2>
+<div id="failed"></div>
 
 <h2 id="h-exercise-sessions">Exercise sessions</h2>
 <div id="exercise-sessions"></div>
@@ -241,6 +245,11 @@ function eveningSessionCard(s) {
   return card;
 }
 
+function failedActionCard(a) {
+  return el(`<div class="card">${a.action_type}: <b>${a.subject ?? ''}</b><span class="badge failed">failed</span>
+    <div class="meta">confirmed by ${a.confirmed_by ?? '—'} · ${a.execution_result ?? ''}</div></div>`);
+}
+
 function cancelledActionCard(a) {
   const what = a.action_type === 'family_message'
     ? `Message to <b>${a.recipient ?? '(no recipient)'}</b>: “${a.message_text ?? ''}”`
@@ -272,6 +281,7 @@ async function load() {
   fill('candidates', data.escalation_candidates, escalationCard, 'No non-response candidates.', 'Non-response escalation candidates');
   fill('escalations', data.open_escalations, escalationCard, 'No open escalations.', 'Other open escalations');
   fill('history', data.recent_history, historyCard, 'Nothing executed yet.', 'Recently done (stayed on this machine)');
+  fill('failed', data.recent_failed, failedActionCard, 'No skill failures.', 'Needs attention — skill failures (never retried automatically)');
   fill('exercise-sessions', data.recent_exercise_sessions, exerciseSessionCard, 'No exercise sessions yet.', 'Exercise sessions');
   fill('evening-sessions', data.recent_evening_sessions, eveningSessionCard, 'No evening-loop sessions yet.', 'Evening loop');
   const cancelledTotal = data.recent_cancelled.length + data.outbox_cancelled.length;

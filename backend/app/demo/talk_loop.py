@@ -18,10 +18,12 @@ from app.voice.speak import load_local_speaker
 
 def main() -> None:  # pragma: no cover — interactive entry point
     from app.db.database import SessionLocal, create_tables
+    from app.parker.hands import configure_hands_from_settings
     from app.voice.record import load_local_recorder, load_vad_recorder
 
     seconds = float(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SECONDS
     create_tables()
+    configure_hands_from_settings()
     db = SessionLocal()
     speak = load_local_speaker()
     # End-pointed recording: `seconds` becomes the max window; a natural

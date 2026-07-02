@@ -23,7 +23,9 @@ from typing import Optional, Protocol
 # Action types a brain may propose. Deliberately the capture-able subset of
 # the policy taxonomy (backend/app/parker/policy.py): everything here stages
 # through capture → resolve → stage → confirm, so a proposal can never skip a
-# gate. New types require policy-tier classification first, never ad hoc.
+# gate. New types require policy-tier classification first, never ad hoc
+# (open_links was classified LOCAL_REVERSIBLE / open-and-read-only before
+# being added here).
 PROPOSABLE_ACTION_TYPES = frozenset(
     {
         "reminder",
@@ -31,8 +33,15 @@ PROPOSABLE_ACTION_TYPES = frozenset(
         "exercise_start",
         "media_playlist",
         "appointment_note",
+        "open_links",
     }
 )
+
+# The subset whose execution is an OpenClaw skill rather than Parker's own
+# local pipeline. These are proposable/executable ONLY while the family's
+# gateway advertises an enabled skill behind them (app.parker.hands); with
+# no gateway they are invisible to every brain.
+OPENCLAW_BACKED_ACTION_TYPES = frozenset({"media_playlist", "open_links"})
 
 
 @dataclass(frozen=True)

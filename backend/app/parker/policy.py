@@ -89,7 +89,16 @@ ACTION_POLICIES: dict[str, ActionPolicy] = {
         ),
         ActionPolicy(
             "media_playlist", TIER_LOCAL_REVERSIBLE, CONFIRM_USER, False,
-            "Build or start a YouTube/music playlist on the user's device.",
+            "Build or start a YouTube/music playlist on the user's device. Not "
+            "executable locally; executes via a family-enabled OpenClaw skill "
+            "when one backs it (stop/skip stays available by voice).",
+        ),
+        ActionPolicy(
+            "open_links", TIER_LOCAL_REVERSIBLE, CONFIRM_USER, False,
+            "Open read-only links/pages on an approved family device (e.g. show "
+            "home listings on the computer). Open and read ONLY — never form "
+            "submission, login, checkout, or purchase. Not executable locally; "
+            "executes via a family-enabled OpenClaw skill when one backs it.",
         ),
         # External messaging: leaves the household; user confirmation plus policy.
         ActionPolicy(

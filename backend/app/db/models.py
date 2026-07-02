@@ -153,6 +153,7 @@ class StagedAction(Base):
             "confirmed",
             "blocked",
             "executed",
+            "failed",  # a gateway skill errored after confirmation; never retried silently
             "cancelled",
             name="staged_action_status",
             native_enum=False,

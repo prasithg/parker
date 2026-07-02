@@ -39,3 +39,16 @@ def override_get_db(db):
         yield
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_hands():
+    """No test inherits another test's (fake) OpenClaw hands registry."""
+
+    from app.parker import hands
+
+    hands.configure_hands(None)
+    try:
+        yield
+    finally:
+        hands.configure_hands(None)

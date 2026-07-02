@@ -18,8 +18,13 @@ from app.parker.router import router as parker_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: create DB tables, start scheduler."""
+    """Startup: create DB tables, discover OpenClaw skills, start scheduler."""
     create_tables()
+    # Skill discovery (app/parker/hands.py): no gateway configured -> no-op;
+    # gateway down -> logged, hands disabled, the server still boots.
+    from app.parker.hands import configure_hands_from_settings
+
+    configure_hands_from_settings()
     scheduler = BackgroundScheduler(timezone="America/New_York")
     setup_scheduler(scheduler, SessionLocal)
     scheduler.start()

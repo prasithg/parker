@@ -194,6 +194,15 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
         .limit(RECENT_HISTORY_LIMIT)
         .all()
     )
+    # Failed gateway executions need family attention: spoken failure at the
+    # time, a visible row here, and deliberately no automatic retry.
+    failed_actions = (
+        db.query(StagedAction)
+        .filter(StagedAction.status == "failed")
+        .order_by(StagedAction.created_at.desc(), StagedAction.id.desc())
+        .limit(RECENT_HISTORY_LIMIT)
+        .all()
+    )
     # The "changed my mind" audit: cancellations stay visible, not vanished.
     cancelled_actions = (
         db.query(StagedAction)
@@ -225,6 +234,7 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
             for session in list_recent_local_evening_sessions(db, limit=RECENT_HISTORY_LIMIT)
         ],
         "recent_history": [_serialize_action(action) for action in history],
+        "recent_failed": [_serialize_action(action) for action in failed_actions],
         "recent_cancelled": [_serialize_action(action) for action in cancelled_actions],
         "outbox_cancelled": [_serialize_outbox_message(message) for message in cancelled_messages],
     }

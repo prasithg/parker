@@ -280,6 +280,11 @@ def _session(db, brain):
 
 
 def test_gateway_proposal_becomes_choice_and_captures_only_on_selection(db):
+    from app.parker.hands import configure_hands
+    from tests.test_hands import FakeHands
+
+    configure_hands(FakeHands(action_types=("media_playlist",)))
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -296,6 +301,23 @@ def test_gateway_proposal_becomes_choice_and_captures_only_on_selection(db):
     assert picked["kind"] == "captured"
     captured = db.query(CapturedIntent).one()
     assert captured.requested_action == "media_playlist"
+
+
+def test_gateway_proposal_without_enabled_skill_is_dropped(db):
+    """Skill curation is the capability gate: no enabled skill, no proposal."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_chat_reply(content="Happy to.", tool_calls=[_tool_call(PLAYLIST_ARGS)]),
+        )
+
+    session = _session(db, OpenClawBrainAdapter(_gateway(handler)))
+
+    response = session.handle("Could you put on some of the old songs somehow?")
+
+    assert response["kind"] == "answer"  # the speech survives; the dead-end proposal does not
+    assert db.query(CapturedIntent).count() == 0
 
 
 def test_prohibited_gateway_proposal_is_dropped_by_the_guard(db):

@@ -1133,6 +1133,7 @@ class TextSession:
             return {"kind": "answer", "speech": ANSWER_STUB_SPEECH}
 
         from app.brain.guard import screen_reply, trim_for_speech
+        from app.parker.hands import effective_proposable_action_types
 
         if self._brain_context is None:
             from app.brain.claude import build_brain_context
@@ -1149,7 +1150,9 @@ class TextSession:
                 "speech": "I couldn't reach my answers just now — try me again in a moment.",
             }
 
-        result = screen_reply(reply)
+        # Gateway-backed action types are proposable only while the family's
+        # OpenClaw gateway has an enabled skill behind them.
+        result = screen_reply(reply, proposable=effective_proposable_action_types())
         speech = trim_for_speech(result.reply.speech)
         if result.medical_boundary_tripped:
             response: dict[str, Any] = {"kind": "refused", "speech": speech, "flag_for_family": True}
@@ -1318,8 +1321,10 @@ def main() -> None:  # pragma: no cover — interactive entry point
     from app.brain.build import build_brain_adapter
     from app.db.database import SessionLocal, create_tables
     from app.db.models import CallLog
+    from app.parker.hands import configure_hands_from_settings
 
     create_tables()
+    configure_hands_from_settings()
     db = SessionLocal()
     call = CallLog(call_sid=f"TEXT-{datetime.utcnow():%Y%m%d%H%M%S}", call_type="text_loop")
     db.add(call)
