@@ -523,6 +523,56 @@ def probe_direct_intent(utterance: str) -> dict[str, Any] | None:
     return None
 
 
+def _lexicon_names() -> list[str]:
+    """Names from the family-configured personal lexicon.
+
+    A lexicon entry counts as a name when it is a single capitalized word
+    ("Sarah", not "physio" or "tomato plants"). The lexicon spelling is
+    canonical — ASR variants resolve back to it.
+    """
+
+    from app.config import settings
+
+    return [
+        entry.strip()
+        for entry in settings.personal_lexicon.split(",")
+        if entry.strip() and " " not in entry.strip() and entry.strip()[0].isupper()
+    ]
+
+
+def name_prefix_candidate(utterance: str) -> dict[str, Any] | None:
+    """Interpret "<Name> <content>" as a possible message to that person.
+
+    ASR on effortful speech routinely erases the leading verb: "Tell Sarah
+    physio went well" arrives as "Sarah physio went well" — which is also
+    exactly how people dictate messages. Gated on the personal lexicon so
+    arbitrary capitalized words never trigger it, safety-screened like all
+    probes, and offered as a repair choice (never captured directly): the
+    person may simply be talking *about* Sarah, so one confirmation
+    question is the right cost.
+    """
+
+    candidate = utterance.strip()
+    lowered = candidate.lower()
+    if any(phrase in lowered for group in _PROBE_BLOCKED_PHRASES for phrase in group):
+        return None
+    for name in _lexicon_names():
+        prefix = name.lower()
+        if not lowered.startswith(prefix):
+            continue
+        rest = candidate[len(name):].lstrip(" ,—-").rstrip(".")
+        if len(rest.split()) < 2:
+            continue
+        return {
+            "label": f"send {name} a message: “{rest[:60]}”",
+            "action_type": "family_message",
+            "recipient": name,  # canonical lexicon spelling
+            "subject": f"message {name}",
+            "intent_text": rest,
+        }
+    return None
+
+
 class TextSession:
     """One conversational text session bound to a call log."""
 
@@ -871,6 +921,9 @@ class TextSession:
         # evidence-based choices, listed before the generic suggestions. They
         # carry recipient/subject so a selection captures a complete intent.
         probed: list[dict[str, Any]] = []
+        name_intent = name_prefix_candidate(utterance)
+        if name_intent is not None:
+            probed.append(name_intent)
         for alternate in self._current_alternates[:2]:
             intent = probe_direct_intent(alternate)
             if intent is not None and all(intent["label"] != p["label"] for p in probed):
