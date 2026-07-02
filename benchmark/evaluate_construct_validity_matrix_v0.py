@@ -1,11 +1,11 @@
-"""Construct-validity matrix evaluator for Parker grant evidence.
+"""Construct-validity matrix evaluator for Parker release evidence.
 
-This guard sits between the claim→metric map and the prose grant packet. It
-keeps two things explicit:
+This guard sits between the claim→metric map and public release prose
+(README, launch post). It keeps two things explicit:
 
 1. which constructs are currently citable from synthetic/local reports; and
-2. which attractive constructs are research gaps that the grant should fund,
-   not claims the current demo has already proven.
+2. which attractive constructs are open research gaps, not claims the
+   current demo has already proven.
 
 Usage:
     python3 benchmark/evaluate_construct_validity_matrix_v0.py
@@ -33,7 +33,7 @@ _VALID_SUPPORT_LEVELS = {CURRENTLY_CITABLE, RESEARCH_GAP}
 _REQUIRED_FIELDS = {
     "construct_id",
     "capability",
-    "grant_criterion",
+    "release_criterion",
     "construct_question",
     "operationalization",
     "current_claim_support",
@@ -83,11 +83,11 @@ class RequiredAssertion:
 
 @dataclass(frozen=True)
 class ConstructValidityRow:
-    """One construct-validity row for grant evidence or a marked research gap."""
+    """One construct-validity row for release evidence or a marked research gap."""
 
     construct_id: str
     capability: str
-    grant_criterion: str
+    release_criterion: str
     construct_question: str
     operationalization: str
     current_claim_support: str
@@ -150,7 +150,7 @@ class ConstructValidityRow:
         return cls(
             construct_id=construct_id,
             capability=str(row["capability"]),
-            grant_criterion=str(row["grant_criterion"]),
+            release_criterion=str(row["release_criterion"]),
             construct_question=_required_text(row["construct_question"], construct_id, "construct_question"),
             operationalization=_required_text(row["operationalization"], construct_id, "operationalization"),
             current_claim_support=support,
@@ -169,7 +169,7 @@ class ConstructValidityRow:
         return {
             "construct_id": self.construct_id,
             "capability": self.capability,
-            "grant_criterion": self.grant_criterion,
+            "release_criterion": self.release_criterion,
             "construct_question": self.construct_question,
             "operationalization": self.operationalization,
             "current_claim_support": self.current_claim_support,
@@ -255,7 +255,7 @@ class ConstructValidityEvalResult:
         return {
             "eval": "construct_validity_matrix_v0",
             "provenance": {
-                "purpose": "proposal construct-validity guard: distinguish citable synthetic/local evidence from grant-funded research gaps",
+                "purpose": "release construct-validity guard: distinguish citable synthetic/local evidence from open research gaps",
                 "private_data": "none",
                 "fixture_policy": "public synthetic/local reports only",
                 "model_or_api_dependency": "none",
@@ -278,7 +278,7 @@ class ConstructValidityEvalResult:
                 {
                     "construct_id": row.construct_id,
                     "capability": row.capability,
-                    "grant_criterion": row.grant_criterion,
+                    "release_criterion": row.release_criterion,
                     "known_limitations": row.known_limitations,
                     "upgrade_path": row.upgrade_path,
                     "caveat": row.caveat,
@@ -436,7 +436,7 @@ def format_summary(result: ConstructValidityEvalResult) -> str:
     lines.extend(
         [
             "",
-            "Caveat: passing means current proposal constructs are tied to synthetic/local evidence and explicit gaps; it is not real-world clinical, audio, or patient proof.",
+            "Caveat: passing means current public-claim constructs are tied to synthetic/local evidence and explicit gaps; it is not real-world clinical, audio, or patient proof.",
         ]
     )
     if payload["failing_assertions"] or payload["report_load_errors"]:
@@ -457,7 +457,7 @@ def format_markdown_report(result: ConstructValidityEvalResult, run_date: str) -
         "# Parker construct-validity matrix eval v0",
         "",
         f"- Date: {run_date}",
-        "- Purpose: distinguish current citable synthetic/local evidence from grant-funded research gaps.",
+        "- Purpose: distinguish current citable synthetic/local evidence from open research gaps.",
         "- Provenance: public synthetic/local reports only; no private data; no model/API dependency.",
         "",
         "## Gate",
@@ -485,7 +485,7 @@ def format_markdown_report(result: ConstructValidityEvalResult, run_date: str) -
                 [
                     row.construct_id,
                     row.capability,
-                    row.grant_criterion,
+                    row.release_criterion,
                     row.current_claim_support,
                     ", ".join(row.metric_ids),
                     row.baseline,
@@ -513,7 +513,7 @@ def format_markdown_report(result: ConstructValidityEvalResult, run_date: str) -
             "",
             "## Scope caveat",
             "",
-            "Passing this guard means the grant packet distinguishes current synthetic/local evidence from research gaps. It does not establish clinical efficacy, real Parkinson's audio performance, emergency readiness, or production privacy safety.",
+            "Passing this guard means public release copy distinguishes current synthetic/local evidence from open research gaps. It does not establish clinical efficacy, real Parkinson's audio performance, emergency readiness, or production privacy safety.",
             "",
         ]
     )

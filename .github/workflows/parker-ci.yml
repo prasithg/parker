@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 jobs:
-  backend-tests-and-grant-evals:
-    name: Backend tests and grant evals
+  backend-tests-and-release-evals:
+    name: Backend tests and release evals
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -59,8 +59,5 @@ jobs:
       - name: Repair-quality proxy rubric
         run: make eval-repair-quality-rubric
 
-      - name: Grant public-source citation guard
-        run: make eval-grant-source-citations
-
-      - name: Grant-readiness rollup
-        run: make eval-grant-readiness
+      - name: Release-readiness rollup
+        run: make eval-release-readiness

@@ -7,8 +7,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "parker-ci.yml"
 
 
-def test_pr_ci_workflow_runs_backend_tests_and_grant_evals() -> None:
-    """PRs should get remote evidence for the same local gates cited in grant docs."""
+def test_pr_ci_workflow_runs_backend_tests_and_release_evals() -> None:
+    """PRs should get remote evidence for the same local gates cited in public docs."""
 
     assert WORKFLOW.exists(), "Parker PR CI workflow is missing"
     workflow_text = WORKFLOW.read_text()
@@ -22,7 +22,7 @@ def test_pr_ci_workflow_runs_backend_tests_and_grant_evals() -> None:
         "make eval-caregiver-state-legibility",
         "make eval-claim-metric-map",
         "make eval-construct-validity",
-        "make eval-grant-readiness",
+        "make eval-release-readiness",
     ]
     for command in required_commands:
         assert command in workflow_text
@@ -33,3 +33,4 @@ def test_pr_ci_workflow_runs_backend_tests_and_grant_evals() -> None:
 
     assert "python-version: '3.11'" in workflow_text
     assert "ANTHROPIC_API_KEY" not in workflow_text
+    assert "grant" not in workflow_text.lower()

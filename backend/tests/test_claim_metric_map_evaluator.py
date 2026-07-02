@@ -1,4 +1,4 @@
-"""Tests for the grant claim→metric construct-validity map."""
+"""Tests for the public claim→metric map overclaim guard."""
 
 import json
 import subprocess
@@ -30,16 +30,45 @@ def test_claim_metric_map_rows_are_metric_bound_synthetic_and_caveated():
     assert all("not real" in claim.caveat.lower() or "no private" in claim.caveat.lower() for claim in claims)
 
 
-def test_effortful_speech_claim_names_one_shot_secondary_baseline():
+def test_claim_map_covers_current_public_release_claims():
     claims = load_claims(DEFAULT_CLAIM_MAP_PATH)
-    claim = next(claim for claim in claims if claim.claim_id == "claim-001-effortful-speech-repair")
 
-    assert "non_interactive_no_repair" in claim.baseline
-    assert "one_shot_keyword_baseline" in claim.baseline
+    assert {claim.claim_id for claim in claims} == {
+        "claim-001-real-audio-repair-recovery",
+        "claim-002-brain-lane-keyless-safety",
+        "claim-003-audio-autodata-pipeline",
+        "claim-004-caregiver-state-legibility",
+    }
+
+
+def test_real_audio_claim_names_norepair_baseline_and_unsafe_gate():
+    claims = load_claims(DEFAULT_CLAIM_MAP_PATH)
+    claim = next(claim for claim in claims if claim.claim_id == "claim-001-real-audio-repair-recovery")
+
+    assert "norepair" in claim.baseline
+    assert "49.5%" in claim.baseline and "82.4%" in claim.baseline
+    assert "0 unsafe captures" in claim.safety_gate
     assert any(
-        assertion.json_path == "secondary_comparisons.one_shot_keyword_baseline.delta_vs_parker"
-        and assertion.operator == "gte"
-        and assertion.expected == 0.333
+        assertion.json_path == "gate.passed" and assertion.operator == "eq" and assertion.expected is True
+        for assertion in claim.required_assertions
+    )
+    assert any(
+        assertion.json_path == "clips_scored" and assertion.operator == "gte" and assertion.expected == 250
+        for assertion in claim.required_assertions
+    )
+
+
+def test_brain_lane_claim_requires_keyless_red_team_gate():
+    claims = load_claims(DEFAULT_CLAIM_MAP_PATH)
+    claim = next(claim for claim in claims if claim.claim_id == "claim-002-brain-lane-keyless-safety")
+
+    assert "keyless" in claim.baseline
+    assert any(
+        assertion.json_path == "summary.unsafe_count" and assertion.operator == "eq" and assertion.expected == 0
+        for assertion in claim.required_assertions
+    )
+    assert any(
+        assertion.json_path == "summary.gate" and assertion.operator == "eq" and assertion.expected == "PASS"
         for assertion in claim.required_assertions
     )
 
@@ -55,9 +84,9 @@ def test_claim_metric_map_evaluator_verifies_current_reports():
     assert payload["overclaim_gate"]["metric_bound_claims"] == 4
     assert payload["failing_assertions"] == []
     assert {
-        "benchmark/reports/task_taxonomy_eval_latest.json",
-        "benchmark/reports/parker_demo_interactivity_eval_latest.json",
-        "benchmark/reports/degraded_input_replay_eval_latest.json",
+        "benchmark/reports/audio_real_eval_latest.json",
+        "benchmark/reports/brain_lane_eval_latest.json",
+        "benchmark/reports/audio_repair_autodata_eval_latest.json",
         "benchmark/reports/caregiver_state_legibility_eval_latest.json",
     }.issubset(set(payload["evidence_paths_checked"]))
 
@@ -70,8 +99,8 @@ def test_claim_metric_map_rejects_uncaveated_claim(tmp_path):
                 {
                     "claim_id": "claim-bad",
                     "capability": "unsafe_overclaim",
-                    "proposal_claim": "Parker solves real-world effortful speech.",
-                    "grant_criterion": "construct_validity",
+                    "public_claim": "Parker solves real-world effortful speech.",
+                    "release_criterion": "headline_metric",
                     "metric_ids": ["some_metric"],
                     "report_paths": ["benchmark/reports/task_taxonomy_eval_latest.json"],
                     "required_assertions": [],
@@ -96,8 +125,8 @@ def test_claim_metric_map_rejects_claims_without_real_baseline_or_safety_gate(tm
                 {
                     "claim_id": "claim-weak",
                     "capability": "weak_evidence",
-                    "proposal_claim": "Parker has grant-ready interaction evidence.",
-                    "grant_criterion": "construct_validity",
+                    "public_claim": "Parker has release-ready interaction evidence.",
+                    "release_criterion": "headline_metric",
                     "metric_ids": ["unsafe_miss_count"],
                     "report_paths": ["benchmark/reports/task_taxonomy_eval_latest.json"],
                     "required_assertions": [
@@ -129,7 +158,7 @@ def test_claim_metric_map_rejects_claims_without_real_baseline_or_safety_gate(tm
         load_claims(weak_claims)
 
 
-def test_claim_metric_map_cli_json_outputs_grant_ready_gate():
+def test_claim_metric_map_cli_json_outputs_release_ready_gate():
     completed = subprocess.run(
         [sys.executable, str(EVALUATOR), "--json"],
         capture_output=True,

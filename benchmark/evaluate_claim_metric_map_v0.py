@@ -1,10 +1,10 @@
-"""Grant-facing claim→metric map evaluator for Parker v0.
+"""Public claim→metric map evaluator for Parker v0.
 
-This harness keeps the Thinking Machines grant packet honest: every major
-proposal-facing claim must point at an emitted metric, a baseline/evidence
-report, a safety gate, and a caveat. It is not another performance benchmark;
-it is an overclaim guard that prevents prose from drifting beyond the current
-synthetic/local evidence.
+This harness keeps Parker's public release claims honest: every major claim
+made in the README or a launch post must point at an emitted metric, a
+baseline/evidence report, a safety gate, and a caveat. It is not another
+performance benchmark; it is an overclaim guard that prevents prose from
+drifting beyond the current synthetic/local evidence.
 
 Usage:
     python3 benchmark/evaluate_claim_metric_map_v0.py
@@ -29,8 +29,8 @@ DEFAULT_REPORTS_DIR = REPO_ROOT / "benchmark" / "reports"
 _REQUIRED_FIELDS = {
     "claim_id",
     "capability",
-    "proposal_claim",
-    "grant_criterion",
+    "public_claim",
+    "release_criterion",
     "metric_ids",
     "report_paths",
     "required_assertions",
@@ -49,7 +49,7 @@ _OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
 
 @dataclass(frozen=True)
 class RequiredAssertion:
-    """One report-backed metric assertion for a proposal claim."""
+    """One report-backed metric assertion for a public claim."""
 
     report_path: str
     json_path: str
@@ -73,12 +73,12 @@ class RequiredAssertion:
 
 @dataclass(frozen=True)
 class ClaimMetricRow:
-    """One grant claim bound to current repo metric evidence."""
+    """One public release claim bound to current repo metric evidence."""
 
     claim_id: str
     capability: str
-    proposal_claim: str
-    grant_criterion: str
+    public_claim: str
+    release_criterion: str
     metric_ids: list[str]
     report_paths: list[str]
     required_assertions: list[RequiredAssertion]
@@ -113,8 +113,8 @@ class ClaimMetricRow:
         return cls(
             claim_id=claim_id,
             capability=str(row["capability"]),
-            proposal_claim=str(row["proposal_claim"]),
-            grant_criterion=str(row["grant_criterion"]),
+            public_claim=str(row["public_claim"]),
+            release_criterion=str(row["release_criterion"]),
             metric_ids=metric_ids,
             report_paths=report_paths,
             required_assertions=[RequiredAssertion.from_dict(item, claim_id) for item in assertions_raw],
@@ -128,8 +128,8 @@ class ClaimMetricRow:
         return {
             "claim_id": self.claim_id,
             "capability": self.capability,
-            "proposal_claim": self.proposal_claim,
-            "grant_criterion": self.grant_criterion,
+            "public_claim": self.public_claim,
+            "release_criterion": self.release_criterion,
             "metric_ids": self.metric_ids,
             "report_paths": self.report_paths,
             "required_assertions": [assertion.__dict__ for assertion in self.required_assertions],
@@ -201,7 +201,7 @@ class ClaimMetricEvalResult:
         return {
             "eval": "claim_metric_map_v0",
             "provenance": {
-                "purpose": "proposal overclaim guard: each grant-facing claim must map to emitted metric evidence, a baseline, safety gate, and caveat",
+                "purpose": "release overclaim guard: each public claim must map to emitted metric evidence, a baseline, safety gate, and caveat",
                 "private_data": "none",
                 "fixture_policy": "public synthetic/local reports only",
                 "model_or_api_dependency": "none",
@@ -385,7 +385,7 @@ def format_markdown_report(result: ClaimMetricEvalResult, run_date: str) -> str:
         "# Parker claim→metric map eval v0",
         "",
         f"- Date: {run_date}",
-        "- Purpose: make each grant-facing claim traceable to emitted metric evidence, a baseline, a safety gate, and a caveat.",
+        "- Purpose: make each public release claim traceable to emitted metric evidence, a baseline, a safety gate, and a caveat.",
         "- Provenance: public synthetic/local reports only; no private data; no model/API dependency.",
         "",
         "## Overclaim gate",
@@ -413,7 +413,7 @@ def format_markdown_report(result: ClaimMetricEvalResult, run_date: str) -> str:
                 [
                     claim.claim_id,
                     claim.capability,
-                    claim.grant_criterion,
+                    claim.release_criterion,
                     ", ".join(claim.metric_ids),
                     claim.baseline,
                     claim.caveat,
@@ -436,7 +436,7 @@ def format_markdown_report(result: ClaimMetricEvalResult, run_date: str) -> str:
             "",
             "## Scope caveat",
             "",
-            "Passing this guard means the proposal's current claims are tied to current synthetic/local evidence. It does not establish clinical efficacy, real Parkinson's audio performance, emergency readiness, or private-data safety in production.",
+            "Passing this guard means the current public claims are tied to current synthetic/local evidence. It does not establish clinical efficacy, real Parkinson's audio performance, emergency readiness, or private-data safety in production.",
             "",
         ]
     )

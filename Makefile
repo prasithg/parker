@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-grant-source-citations eval-grant-readiness eval-repair eval-brain-lane reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-release-readiness eval-repair eval-brain-lane reset-db repl demo voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -38,7 +38,7 @@ eval-interactivity:
 eval-demo-interactivity: backend-venv
 	$(BACKEND_PYTHON) benchmark/demo_interactivity_predictions_v0.py --write-report
 
-# Grant-facing degraded-input replay check: compares the current Parker repair
+# Degraded-input replay check: compares the current Parker repair
 # protocol against a non-interactive no-repair baseline and a stronger one-shot
 # keyword baseline on synthetic held-out effortful-speech transcript fixtures.
 eval-degraded-input-replay: backend-venv
@@ -50,13 +50,13 @@ eval-degraded-input-replay: backend-venv
 eval-caregiver-state-legibility:
 	python3 benchmark/evaluate_caregiver_state_legibility_v0.py --write-report
 
-# Grant overclaim guard: every proposal-facing claim must point at emitted
-# metric evidence, a baseline, a safety gate, and a caveat.
+# Release overclaim guard: every public claim (README/launch post) must point
+# at emitted metric evidence, a baseline, a safety gate, and a caveat.
 eval-claim-metric-map:
 	python3 benchmark/evaluate_claim_metric_map_v0.py --write-report
 
 # Construct-validity matrix guard: distinguishes current citable synthetic/local
-# evidence from grant-funded research gaps so the proposal does not overclaim.
+# evidence from open research gaps so public release copy does not overclaim.
 eval-construct-validity:
 	python3 benchmark/evaluate_construct_validity_matrix_v0.py --write-report
 
@@ -86,16 +86,11 @@ eval-audio-real: backend-venv
 gen-synthetic-commands: backend-venv
 	PARKER_AUDIO_ARTIFACTS_DIR=$(PARKER_AUDIO_ARTIFACTS_DIR) $(BACKEND_PYTHON) benchmark/audio_harness/generate_synthetic.py
 
-# Public-source citation guard: keeps grant program facts grounded in public
-# Thinking Machines pages and separate from private/admin fields.
-eval-grant-source-citations:
-	python3 benchmark/evaluate_grant_source_citations_v0.py --write-report
-
-# Grant readiness rollup: one mobile-friendly evidence gate above the individual
+# Release readiness rollup: one evidence gate above the individual
 # synthetic/local evals. This refreshes every source report first so stale
-# proposal metrics fail closed instead of surviving from an older run.
-eval-grant-readiness: eval-tasks eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-grant-source-citations
-	python3 benchmark/evaluate_grant_readiness_v0.py --write-report
+# public-claim metrics fail closed instead of surviving from an older run.
+eval-release-readiness: eval-tasks eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric
+	python3 benchmark/evaluate_release_readiness_v0.py --write-report
 
 # Repair-choice quality eval: runs effortful-speech fixtures through the real
 # Claude haiku model and prints candidates for human review. Requires

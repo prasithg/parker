@@ -1,4 +1,4 @@
-"""Tests for Parker's grant construct-validity matrix evaluator."""
+"""Tests for Parker's release construct-validity matrix evaluator."""
 
 import json
 import subprocess
@@ -22,7 +22,7 @@ WORKFLOW = REPO / ".github/workflows/parker-ci.yml"
 
 
 def test_construct_validity_matrix_separates_citable_claims_from_research_gaps() -> None:
-    """The grant packet should distinguish current evidence from funded next work."""
+    """Public release copy should distinguish current evidence from open research gaps."""
 
     rows = load_matrix(DEFAULT_MATRIX_PATH)
 
@@ -35,7 +35,7 @@ def test_construct_validity_matrix_separates_citable_claims_from_research_gaps()
 
     assert len(citable) == 4
     assert len(gaps) == 2
-    assert {row.grant_criterion for row in rows} >= {
+    assert {row.release_criterion for row in rows} >= {
         "relevance",
         "feasibility",
         "construct_validity",
@@ -57,7 +57,7 @@ def test_construct_validity_evaluator_verifies_current_reports_and_surfaces_gaps
 
     assert payload["eval"] == "construct_validity_matrix_v0"
     assert payload["provenance"] == {
-        "purpose": "proposal construct-validity guard: distinguish citable synthetic/local evidence from grant-funded research gaps",
+        "purpose": "release construct-validity guard: distinguish citable synthetic/local evidence from open research gaps",
         "private_data": "none",
         "fixture_policy": "public synthetic/local reports only",
         "model_or_api_dependency": "none",
@@ -93,7 +93,7 @@ def test_construct_validity_matrix_rejects_citable_rows_without_limitations_or_u
                 {
                     "construct_id": "cv-bad",
                     "capability": "overclaimed_repair",
-                    "grant_criterion": "construct_validity",
+                    "release_criterion": "construct_validity",
                     "construct_question": "Can Parker repair all effortful speech?",
                     "operationalization": "Claim unsupported broad repair ability.",
                     "current_claim_support": "citable_with_caveats",

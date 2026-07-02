@@ -1,14 +1,15 @@
-"""Grant-readiness rollup for Parker v0 proposal evidence.
+"""Release-readiness rollup for Parker v0 public claims.
 
-This is the one-command briefing layer above the individual grant-facing evals.
-It does not create a new performance claim; it summarizes whether the current
-synthetic/local reports are fresh enough, caveated enough, and safety-gated
-enough for Pras to cite in the grant packet.
+This is the one-command briefing layer above the individual honesty-guard
+evals. It does not create a new performance claim; it summarizes whether the
+current synthetic/local reports are fresh enough, caveated enough, and
+safety-gated enough to back the public claims Parker makes in the README and
+any launch post.
 
 Usage:
-    python3 benchmark/evaluate_grant_readiness_v0.py
-    python3 benchmark/evaluate_grant_readiness_v0.py --json
-    python3 benchmark/evaluate_grant_readiness_v0.py --write-report
+    python3 benchmark/evaluate_release_readiness_v0.py
+    python3 benchmark/evaluate_release_readiness_v0.py --json
+    python3 benchmark/evaluate_release_readiness_v0.py --write-report
 """
 
 from __future__ import annotations
@@ -45,13 +46,12 @@ REQUIRED_REPORTS: dict[str, Path] = {
     "claim_metric_map": DEFAULT_REPORTS_DIR / "claim_metric_map_eval_latest.json",
     "construct_validity": DEFAULT_REPORTS_DIR / "construct_validity_matrix_eval_latest.json",
     "repair_quality_rubric": DEFAULT_REPORTS_DIR / "repair_quality_rubric_eval_latest.json",
-    "grant_source_citations": DEFAULT_REPORTS_DIR / "grant_source_citations_eval_latest.json",
 }
 
 
 @dataclass(frozen=True)
-class GrantReadinessEvalResult:
-    """Serializable grant-readiness rollup."""
+class ReleaseReadinessEvalResult:
+    """Serializable release-readiness rollup."""
 
     payload: dict[str, Any]
 
@@ -59,16 +59,16 @@ class GrantReadinessEvalResult:
         return self.payload
 
 
-def evaluate_grant_readiness(
+def evaluate_release_readiness(
     *,
     report_paths: dict[str, Path] | None = None,
     claim_map_path: Path = DEFAULT_CLAIM_MAP_PATH,
     construct_matrix_path: Path = DEFAULT_MATRIX_PATH,
-) -> GrantReadinessEvalResult:
-    """Evaluate whether current synthetic/local evidence is grant-citable.
+) -> ReleaseReadinessEvalResult:
+    """Evaluate whether current synthetic/local evidence backs the public claims.
 
     The gate deliberately fails closed on missing or malformed reports. Passing
-    means only: the current repo reports support the narrowly caveated proposal
+    means only: the current repo reports support the narrowly caveated public
     claims. It never means real-world, clinical, patient, or private-data proof.
     """
 
@@ -115,7 +115,6 @@ def evaluate_grant_readiness(
             reports.get("caregiver_state_legibility")
         ),
         "repair_quality_rubric": _repair_quality_rubric_metrics(reports.get("repair_quality_rubric")),
-        "grant_source_citations": _grant_source_citation_metrics(reports.get("grant_source_citations")),
     }
 
     source_report_freshness = _source_report_freshness(reports, paths)
@@ -141,7 +140,7 @@ def evaluate_grant_readiness(
         construct_matrix_path,
     )
     payload = {
-        "eval": "grant_readiness_v0",
+        "eval": "release_readiness_v0",
         "date": date.today().isoformat(),
         "provenance": {
             "private_data": "none",
@@ -152,14 +151,14 @@ def evaluate_grant_readiness(
             "passed": not blocking_failures,
             "blocking_failures": blocking_failures,
         },
-        "grant_summary": _grant_summary(metrics),
+        "release_summary": _release_summary(metrics),
         "metrics": metrics,
         "source_report_freshness": source_report_freshness,
         "claim_cards": _claim_cards(claim_eval_payload),
         "construct_validity_cards": _construct_validity_cards(construct_eval_payload),
         "evidence_paths_checked": evidence_paths,
     }
-    return GrantReadinessEvalResult(payload)
+    return ReleaseReadinessEvalResult(payload)
 
 
 def _load_json_report(report_name: str, path: Path) -> tuple[dict[str, Any], dict[str, str] | None]:
@@ -177,10 +176,10 @@ def _load_json_report(report_name: str, path: Path) -> tuple[dict[str, Any], dic
 def _source_report_freshness(reports: dict[str, dict[str, Any]], paths: dict[str, Path]) -> dict[str, Any]:
     """Summarize whether required source reports were generated today.
 
-    The grant packet's headline metrics are only safe to cite when the source
-    reports feeding the rollup are current. This intentionally checks the
-    report payload date, not filesystem mtime, so copied reports retain their
-    evidence date and stale JSON fixtures fail closed in CI/tests.
+    The README/launch-post headline metrics are only safe to cite when the
+    source reports feeding the rollup are current. This intentionally checks
+    the report payload date, not filesystem mtime, so copied reports retain
+    their evidence date and stale JSON fixtures fail closed in CI/tests.
     """
 
     expected_date = date.today().isoformat()
@@ -373,33 +372,6 @@ def _repair_quality_rubric_metrics(report: dict[str, Any] | None) -> dict[str, A
     }
 
 
-def _grant_source_citation_metrics(report: dict[str, Any] | None) -> dict[str, Any]:
-    if not report:
-        return {
-            "total_sources": 0,
-            "public_web_sources": 0,
-            "total_facts": 0,
-            "required_facts_covered": 0,
-            "required_fact_coverage": 0.0,
-            "proposal_requirements_count": 0,
-            "selection_criteria_count": 0,
-            "terms_risk_facts": 0,
-            "citation_gate_passed": False,
-        }
-    metrics = report.get("metrics", {})
-    return {
-        "total_sources": int(metrics.get("total_sources", 0)),
-        "public_web_sources": int(metrics.get("public_web_sources", 0)),
-        "total_facts": int(metrics.get("total_facts", 0)),
-        "required_facts_covered": int(metrics.get("required_facts_covered", 0)),
-        "required_fact_coverage": float(metrics.get("required_fact_coverage", 0.0)),
-        "proposal_requirements_count": int(metrics.get("proposal_requirements_count", 0)),
-        "selection_criteria_count": int(metrics.get("selection_criteria_count", 0)),
-        "terms_risk_facts": int(metrics.get("terms_risk_facts", 0)),
-        "citation_gate_passed": bool(report.get("citation_gate", {}).get("passed", False)),
-    }
-
-
 def _recovered_count(report: dict[str, Any], baseline: str) -> int:
     case_results = report.get("case_results", {}).get(baseline, [])
     if isinstance(case_results, list):
@@ -505,25 +477,6 @@ def _gate_failures(claim_eval_payload: dict[str, Any] | None, metrics: dict[str,
                 "message": "repair-quality rubric must pass curated synthetic choices while flagging generic fallback as non-citable quality evidence",
             }
         )
-
-    source_citations = metrics["grant_source_citations"]
-    if (
-        source_citations["total_sources"] < 4
-        or source_citations["public_web_sources"] < source_citations["total_sources"]
-        or source_citations["total_facts"] < 11
-        or source_citations["required_facts_covered"] < 11
-        or source_citations["required_fact_coverage"] < 1.0
-        or source_citations["proposal_requirements_count"] < 5
-        or source_citations["selection_criteria_count"] < 4
-        or source_citations["terms_risk_facts"] < 3
-        or source_citations["citation_gate_passed"] is not True
-    ):
-        failures.append(
-            {
-                "check": "grant_source_citation_gate",
-                "message": "grant source citations must cover public program facts, required materials, criteria, and terms-risk caveats with no private/admin inference",
-            }
-        )
     return failures
 
 
@@ -544,7 +497,7 @@ def _claim_cards(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
                 "claim_id": claim_id,
                 "status": status,
                 "capability": claim.get("capability"),
-                "grant_criterion": claim.get("grant_criterion"),
+                "release_criterion": claim.get("release_criterion"),
                 "metric_ids": claim.get("metric_ids", []),
                 "evidence_paths": claim.get("report_paths", []),
                 "baseline": claim.get("baseline"),
@@ -574,7 +527,7 @@ def _construct_validity_cards(payload: dict[str, Any] | None) -> list[dict[str, 
                 "construct_id": construct_id,
                 "status": status,
                 "capability": row.get("capability"),
-                "grant_criterion": row.get("grant_criterion"),
+                "release_criterion": row.get("release_criterion"),
                 "metric_ids": row.get("metric_ids", []),
                 "evidence_paths": row.get("evidence_paths", []),
                 "known_limitations": row.get("known_limitations"),
@@ -602,10 +555,10 @@ def _evidence_paths(
     return sorted(evidence)
 
 
-def _grant_summary(metrics: dict[str, Any]) -> dict[str, str]:
+def _release_summary(metrics: dict[str, Any]) -> dict[str, str]:
     degraded = metrics["degraded_input_replay"]
     return {
-        "primary_decision": "Safe to cite as synthetic/local grant evidence; not safe to present as real-world or clinical proof.",
+        "primary_decision": "Safe to cite as synthetic/local evidence in public release claims (README, launch post); not safe to present as real-world or clinical proof.",
         "safe_claim_line": (
             f"{degraded['synthetic_cases']} synthetic held-out transcript fixtures: Parker repair recovered "
             f"{degraded['parker_recovered']}/{degraded['synthetic_cases']} intended local actions vs no-repair "
@@ -614,10 +567,9 @@ def _grant_summary(metrics: dict[str, Any]) -> dict[str, str]:
             f"{degraded['unsafe_miss_count']} unsafe misses across the degraded-input replay."
         ),
         "required_caveat": "Synthetic transcript/local-demo evidence only; not real Parkinson's audio, not patient/clinical efficacy proof, and no private family/medical data.",
-        "repair_quality_caveat": "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains a grant-funded research gap.",
-        "caregiver_legibility_caveat": "Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains a grant-funded research gap.",
-        "source_citation_caveat": "Program facts are backed by public Thinking Machines pages; private/admin fields still require Pras and were not inferred.",
-        "next_action": "Use this rollup as the grant packet's final evidence checklist; keep the individual reports attached for auditability.",
+        "repair_quality_caveat": "Repair-choice specificity is proxy-rubric checked only; human-graded repair quality remains an open research gap.",
+        "caregiver_legibility_caveat": "Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains an open research gap.",
+        "next_action": "Use this rollup as the final evidence checklist before public claims ship in the README or a launch post; keep the individual reports attached for auditability.",
     }
 
 
@@ -628,14 +580,14 @@ def _repo_relative(path: Path) -> str:
         return str(path)
 
 
-def write_reports(result: GrantReadinessEvalResult, reports_dir: Path = DEFAULT_REPORTS_DIR) -> dict[str, Path]:
+def write_reports(result: ReleaseReadinessEvalResult, reports_dir: Path = DEFAULT_REPORTS_DIR) -> dict[str, Path]:
     reports_dir.mkdir(parents=True, exist_ok=True)
     payload = result.as_dict()
     stamp = payload["date"]
-    latest_json = reports_dir / "grant_readiness_eval_latest.json"
-    dated_json = reports_dir / f"grant_readiness_eval_{stamp}.json"
-    latest_md = reports_dir / "grant_readiness_eval_latest.md"
-    dated_md = reports_dir / f"grant_readiness_eval_{stamp}.md"
+    latest_json = reports_dir / "release_readiness_eval_latest.json"
+    dated_json = reports_dir / f"release_readiness_eval_{stamp}.json"
+    latest_md = reports_dir / "release_readiness_eval_latest.md"
+    dated_md = reports_dir / f"release_readiness_eval_{stamp}.md"
     json_text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     md_text = render_markdown(payload)
     latest_json.write_text(json_text)
@@ -652,11 +604,11 @@ def write_reports(result: GrantReadinessEvalResult, reports_dir: Path = DEFAULT_
 
 def render_markdown(payload: dict[str, Any]) -> str:
     gate = payload["readiness_gate"]
-    summary = payload["grant_summary"]
+    summary = payload["release_summary"]
     metrics = payload["metrics"]
     freshness = payload["source_report_freshness"]
     lines = [
-        "# Parker grant-readiness rollup",
+        "# Parker release-readiness rollup",
         "",
         f"Date: {payload['date']}",
         f"Gate: {'PASS' if gate['passed'] else 'FAIL'}",
@@ -668,7 +620,6 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Required caveat: {summary['required_caveat']}",
         f"- Repair-quality caveat: {summary['repair_quality_caveat']}",
         f"- Caregiver-legibility caveat: {summary['caregiver_legibility_caveat']}",
-        f"- Source-citation caveat: {summary['source_citation_caveat']}",
         "",
         "## Metrics",
         "",
@@ -679,18 +630,17 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Demo interactivity: {metrics['demo_interactivity']['synthetic_scenarios']} scenarios; pass rate {metrics['demo_interactivity']['overall_pass_rate']}; unsafe misses {metrics['demo_interactivity']['unsafe_miss_count']}",
         f"- Caregiver state legibility: Parker {metrics['caregiver_state_legibility']['parker_review_ui_correct_tasks']}/{metrics['caregiver_state_legibility']['total_tasks']} vs raw chat {metrics['caregiver_state_legibility']['raw_chat_only_correct_tasks']}/{metrics['caregiver_state_legibility']['total_tasks']}; unsafe misses {metrics['caregiver_state_legibility']['unsafe_miss_count']}; gate {metrics['caregiver_state_legibility']['legibility_gate_passed']}",
         f"- Repair quality: {metrics['repair_quality_rubric']['reference_passing_cases']}/{metrics['repair_quality_rubric']['total_cases']} curated choices pass; generic fallback passing cases {metrics['repair_quality_rubric']['generic_fallback_passing_cases']}; quality proof claim allowed {metrics['repair_quality_rubric']['quality_proof_claim_allowed']}",
-        f"- Grant source citations: {metrics['grant_source_citations']['required_facts_covered']}/11 required facts covered across {metrics['grant_source_citations']['public_web_sources']} public sources; citation gate {metrics['grant_source_citations']['citation_gate_passed']}",
         f"- Source report freshness: {'PASS' if freshness['all_current'] else 'FAIL'} for expected date {freshness['expected_date']}",
         "",
         "## Claim cards",
         "",
     ]
     for card in payload["claim_cards"]:
-        lines.append(f"- **{card['claim_id']}** — {card['status']} — {card['capability']} ({card['grant_criterion']})")
+        lines.append(f"- **{card['claim_id']}** — {card['status']} — {card['capability']} ({card['release_criterion']})")
     lines.extend(["", "## Construct-validity cards", ""])
     for card in payload["construct_validity_cards"]:
         lines.append(
-            f"- **{card['construct_id']}** — {card['status']} — {card['capability']} ({card['grant_criterion']})"
+            f"- **{card['construct_id']}** — {card['status']} — {card['capability']} ({card['release_criterion']})"
         )
     lines.extend(["", "## Blocking failures", ""])
     if gate["blocking_failures"]:
@@ -703,12 +653,12 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Evaluate Parker grant-readiness from current synthetic/local reports.")
+    parser = argparse.ArgumentParser(description="Evaluate Parker release-readiness from current synthetic/local reports.")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     parser.add_argument("--write-report", action="store_true", help="write latest and dated JSON/Markdown reports")
     args = parser.parse_args()
 
-    result = evaluate_grant_readiness()
+    result = evaluate_release_readiness()
     payload = result.as_dict()
     if args.write_report:
         paths = write_reports(result)
