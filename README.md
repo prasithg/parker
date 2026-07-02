@@ -71,7 +71,7 @@ The goal is not to replace family. The goal is to help the person be understood,
 This is a living public project and it wants collaborators:
 
 - **Families**: the [runbook](docs/runbook.md) walks through running the local demo end to end with zero external services, and the [pilot recording protocol](docs/pilot-recording-protocol.md) shows how to (consensually) measure Parker against your person's actual voice.
-- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (423 tests) plus `make eval-grant-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
+- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (420 tests) plus `make eval-release-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
 - **Researchers**: fixtures derived from public dysarthria corpora (TORGO, EasyCall, SJTU, and others) are metadata-only in-repo; the harness design and construct-validity guards are documented in [benchmark/README.md](benchmark/README.md).
 
 ## Naming and repo map
@@ -97,8 +97,8 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
 - **Real-audio eval harness** — `make eval-audio-real` runs real public-corpus and synthetic clips (audio stays in the Operations workspace, never in-repo) through local ASR and the actual routing, scored against each clip's oracle transcript: intent recovery with/without repair and with/without n-best, unsafe-capture gate, per-condition/language breakdowns.
-- **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 29 fixtures / 23 hard negatives / 0 unsafe), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, public-source citation guard, grant-readiness rollup, repair-choice quality spot-check, and brain-lane safety eval (`make eval-brain-lane`, keyless red-team routing gate + live TTS/quality lane, unsafe as a hard 0).
-- 423 backend tests as of the brain-adapter slice (2026-07-01).
+- **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 29 fixtures / 23 hard negatives / 0 unsafe), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, release-readiness rollup, repair-choice quality spot-check, and brain-lane safety eval (`make eval-brain-lane`, keyless red-team routing gate + live TTS/quality lane, unsafe as a hard 0).
+- 420 backend tests as of the release-readiness slice (2026-07-02).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -122,7 +122,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (423 tests as of 2026-07-01)
+make test            # full backend suite should pass (420 tests as of 2026-07-02)
 ```
 
 **Fastest demo** (three commands, zero config):
@@ -151,7 +151,7 @@ Ready-to-publish work should include:
 - tests or evals that prove the changed behavior;
 - README/docs updates that describe the real current state;
 - safety notes for any new action surface;
-- public-facing language suitable for posts, demos, and grant/research conversations.
+- public-facing language suitable for posts, demos, and research conversations.
 
 ## Safety boundaries
 

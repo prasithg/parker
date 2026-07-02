@@ -48,14 +48,13 @@ python3 benchmark/evaluate_interactivity_v0.py --predictions my_trace_prediction
 python3 benchmark/evaluate_interactivity_v0.py --write-report
 make eval-interactivity                                    # from repo root, reference trace
 make eval-demo-interactivity                               # Parker-generated local demo trace
-make eval-degraded-input-replay                            # grant-facing degraded-input repair vs no-repair + one-shot baselines
+make eval-degraded-input-replay                            # degraded-input repair vs no-repair + one-shot baselines
 make eval-caregiver-state-legibility                       # caregiver review-state proxy vs raw chat-only baseline
-make eval-claim-metric-map                                 # grant claim→metric overclaim guard
+make eval-claim-metric-map                                 # public claim→metric overclaim guard
 make eval-construct-validity                               # construct-validity matrix: citable evidence vs research gaps
 make eval-repair-quality-rubric                            # repair-choice proxy rubric: generic fallback must stay non-citable
 make eval-audio-autodata                                   # metadata-only audio-derived ASR/repair Autodata fixtures
-make eval-grant-source-citations                           # public-source citation guard for program facts/admin caveats
-make eval-grant-readiness                                  # one-command proposal evidence/readiness rollup
+make eval-release-readiness                                # one-command public-claim evidence/readiness rollup
 ```
 
 The default `reference synthetic trace` is the ideal fixture trace; use `--predictions` to score Parker runs or other agents. Safety-critical misses for confirmation gates, local outbox reversibility, and unsafe-action suppression are counted separately from ordinary latency/UI failures.
@@ -64,7 +63,7 @@ The default `reference synthetic trace` is the ideal fixture trace; use `--predi
 
 ## Run degraded-input replay evaluator
 
-`data/degraded_input_replay_v0.json` is the Night4 Claw/adversarial-review smoke check for the grant pitch: one pre-registered quantitative interaction metric, `intent_recovery_accuracy_delta_vs_non_interactive`, on synthetic held-out degraded/effortful-speech transcript inputs, plus a stronger secondary one-shot keyword comparator for caveating the weak no-repair baseline.
+`data/degraded_input_replay_v0.json` is the Night4 Claw/adversarial-review smoke check for Parker's interactivity evidence: one pre-registered quantitative interaction metric, `intent_recovery_accuracy_delta_vs_non_interactive`, on synthetic held-out degraded/effortful-speech transcript inputs, plus a stronger secondary one-shot keyword comparator for caveating the weak no-repair baseline.
 
 ```bash
 backend/.venv/bin/python benchmark/evaluate_degraded_input_replay_v0.py --json
@@ -78,7 +77,7 @@ It compares three baselines on the same cases:
 - `one_shot_keyword_baseline`: no repair loop, but a one-shot explicit-cue transcript classifier tries to infer reminder/message intent; current smoke result recovers 2/3 synthetic cases.
 - `parker_repair_protocol`: current deterministic Parker `TextSession` repair-choice path with a one-number user repair selection; current smoke result recovers 3/3 synthetic cases.
 
-This is **not** real Parkinson's audio evidence and should not be overclaimed. It exists to keep the proposal honest: no “Parker improves interactivity” sentence should survive unless it maps to an emitted metric, a baseline, a safety gate, and a caveat.
+This is **not** real Parkinson's audio evidence and should not be overclaimed. It exists to keep public claims honest: no “Parker improves interactivity” sentence should survive unless it maps to an emitted metric, a baseline, a safety gate, and a caveat.
 
 ## Run audio Autodata repair evaluator
 
@@ -94,7 +93,7 @@ Current v0 coverage is 29 fixtures: 9 synthetic audio-derived Parker command/con
 
 ## Run claim→metric map evaluator
 
-`data/parker_claim_metric_map_v0.json` binds the current grant-facing Parker claims to concrete report paths, metric IDs, baselines, safety gates, and caveats. It is a proposal overclaim guard, not a new performance claim.
+`data/parker_claim_metric_map_v0.json` binds Parker's current public claims (README, launch post) to concrete report paths, metric IDs, baselines, safety gates, and caveats. It is a release overclaim guard, not a new performance claim.
 
 ```bash
 python3 benchmark/evaluate_claim_metric_map_v0.py --json
@@ -102,11 +101,11 @@ python3 benchmark/evaluate_claim_metric_map_v0.py --write-report
 make eval-claim-metric-map
 ```
 
-The evaluator currently checks four proposal-critical claims: effortful-speech repair, confirmation/local outbox reversibility, safety red-team boundaries, and caregiver state legibility. A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
+The evaluator currently checks four release-critical claims: real-audio repair recovery (49.5% → 82.4% with repair on the 250-clip manifest, 0 unsafe), brain-lane keyless red-team safety (10/10 routed, 0 unsafe), the audio-autodata fixture pipeline (29/29 accepted, 0 unsafe), and caregiver state legibility (6/6 vs 0/6). A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
 
 ## Run construct-validity matrix evaluator
 
-`data/parker_construct_validity_matrix_v0.json` separates what the grant packet may cite now from what the grant should fund next. Current citable constructs must point to emitted synthetic/local reports, baselines, safety gates, caveats, known limitations, and upgrade paths. Research-gap rows are intentionally non-citable: they keep realtime audio/latency and human-graded repair quality out of current proof claims.
+`data/parker_construct_validity_matrix_v0.json` separates what public release copy may cite now from open research gaps. Current citable constructs must point to emitted synthetic/local reports, baselines, safety gates, caveats, known limitations, and upgrade paths. Research-gap rows are intentionally non-citable: they keep realtime audio/latency and human-graded repair quality out of current proof claims.
 
 ```bash
 python3 benchmark/evaluate_construct_validity_matrix_v0.py --json
@@ -114,7 +113,7 @@ python3 benchmark/evaluate_construct_validity_matrix_v0.py --write-report
 make eval-construct-validity
 ```
 
-The evaluator currently reports 6 constructs: 4 citable with caveats, 2 explicit research gaps, 14 report-backed assertions, and 0 failures. Passing means only that the grant packet distinguishes synthetic/local evidence from future research; it is not real-world clinical, audio, or patient proof.
+The evaluator currently reports 6 constructs: 4 citable with caveats, 2 explicit research gaps, 14 report-backed assertions, and 0 failures. Passing means only that public release copy distinguishes synthetic/local evidence from open research gaps; it is not real-world clinical, audio, or patient proof.
 
 ## Run caregiver-state legibility proxy
 
@@ -126,30 +125,18 @@ python3 benchmark/evaluate_caregiver_state_legibility_v0.py --write-report
 make eval-caregiver-state-legibility
 ```
 
-This is a construct-validity bump for the grant packet's caregiver/operator legibility claim: current synthetic proxy result is Parker review UI 6/6 tasks vs raw chat-only 0/6, with 0 unsafe misses. It is **not** a caregiver usability study, human-graded evidence, or real family data.
+This is a construct-validity bump for Parker's caregiver/operator legibility claim: current synthetic proxy result is Parker review UI 6/6 tasks vs raw chat-only 0/6, with 0 unsafe misses. It is **not** a caregiver usability study, human-graded evidence, or real family data.
 
-## Run grant-readiness rollup
+## Run release-readiness rollup
 
-`benchmark/evaluate_grant_readiness_v0.py` is the one-command briefing layer above the individual grant evals. It fails closed on missing/malformed required reports, stale source-report dates, re-runs the claim→metric overclaim guard and construct-validity matrix guard, and emits the exact safe claim line plus required caveat Pras can carry into the grant packet.
+`benchmark/evaluate_release_readiness_v0.py` is the one-command briefing layer above the individual honesty-guard evals. It fails closed on missing/malformed required reports, stale source-report dates, re-runs the claim→metric overclaim guard and construct-validity matrix guard, and emits the exact safe claim line plus required caveat that public release copy (README, launch post) can carry.
 
 ```bash
-python3 benchmark/evaluate_grant_readiness_v0.py --json
-python3 benchmark/evaluate_grant_readiness_v0.py --write-report
-make eval-grant-readiness
+python3 benchmark/evaluate_release_readiness_v0.py --json
+python3 benchmark/evaluate_release_readiness_v0.py --write-report
+make eval-release-readiness
 ```
 
-`make eval-grant-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, repair-quality rubric, and public-source citation reports before writing the rollup, so proposal metrics and program facts do not silently survive from an older run.
+`make eval-release-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so public-claim metrics do not silently survive from an older run. (Reports are written under `benchmark/reports/release_readiness_eval_*`; historical dated `grant_readiness_eval_*` reports from the retired grant lane remain in place as records but are no longer read.)
 
 Passing means only that the current synthetic/local reports are safe to cite with caveats. It does **not** establish real-world, clinical, patient, audio, emergency-readiness, or private-data proof.
-
-## Run grant source-citation guard
-
-`data/grant_source_citations_v0.json` records the public Thinking Machines pages and excerpts currently used for grant-program facts: award amount/Tinker credits, deadline, application materials, selection criteria, funding/timeline, non-confidential proposal warning, work-product license posture, and interaction-model framing. The evaluator is offline/deterministic in CI; live web verification belongs in the Night4 checkpoint, not in the core suite.
-
-```bash
-python3 benchmark/evaluate_grant_source_citations_v0.py --json
-python3 benchmark/evaluate_grant_source_citations_v0.py --write-report
-make eval-grant-source-citations
-```
-
-Passing means the grant packet's program facts are backed by public-source excerpts and that private/admin fields remain human-only. It is not legal advice and does not submit or email anything.
