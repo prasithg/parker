@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo digest voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -129,7 +129,14 @@ demo: reset-db
 	cd backend && ./.venv/bin/python -m app.demo.replay
 	@echo ""
 	@echo "Demo ready. Start the server with 'make run' and open:"
-	@echo "  http://localhost:8000/parker/review/ui"
+	@echo "  http://localhost:8000/parker/review/ui   (caregiver review)"
+	@echo "  http://localhost:8000/parker/screen      (live patient screen)"
+
+# Family handoff digest: a local, unsent daily summary — what happened,
+# what needs a look, what stayed local. Prints it and writes a markdown
+# artifact to backend/digests/ (gitignored). Never sends anything.
+digest: backend-venv
+	cd backend && ./.venv/bin/python -m app.parker.digest
 
 # Optional, local-only transcription deps (faster-whisper). Not part of the
 # core suite — tests inject a fake transcriber. First run downloads model

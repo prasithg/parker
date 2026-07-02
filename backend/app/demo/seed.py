@@ -9,7 +9,10 @@ Resulting review-page state:
 
 - a reminder and a drafted family message awaiting confirmation;
 - one stale reminder that became a non-response escalation candidate;
-- one confirmed message queued to the local outbox (cancellable);
+- one confirmed message queued to the local outbox (cancellable) —
+  the off-allowlist per-message approval gate;
+- one message released to an allowlisted family contact on the
+  patient's own confirmation — the capability trust model's happy path;
 - one executed reminder for history;
 - one cancelled reminder for the "Changed my mind" audit list.
 """
@@ -108,7 +111,35 @@ def seed_demo_data(db: Session, now: datetime | None = None) -> dict[str, Any]:
     cancelled = stage_resolved_actions(db, now=hours_ago(6))[0]
     cancel_staged_action(db, cancelled.id, cancelled_by="patient", now=hours_ago(5.5))
 
-    # 5. Reminder awaiting confirmation right now.
+    # 5. Capability release (the trust model's happy path): the admin has
+    #    allowlisted Michael, so the patient's own confirmation released
+    #    this message — no per-message approval stop. The allowlist is set
+    #    only for this step so scenario 3 above keeps demonstrating the
+    #    off-allowlist queued-approval edge case alongside it.
+    from app.config import settings
+
+    capture_intent(
+        db,
+        call_log_id=call.id,
+        intent_text="The garden is coming along nicely, tomatoes nearly ready.",
+        requested_action="message",
+        subject="message Michael",
+        recipient="Michael",
+        due_at=hours_ago(1.2),
+    )
+    resolve_captured_intents(db, now=hours_ago(1.2))
+    released = stage_resolved_actions(db, now=hours_ago(1.2))[0]
+    confirm_staged_action(db, released.id, confirmed_by="patient", now=hours_ago(1.1))
+    previous_contacts = settings.parker_family_contacts
+    settings.parker_family_contacts = (
+        f"{previous_contacts},Michael" if previous_contacts else "Michael"
+    )
+    try:
+        execute_staged_action(db, released.id, now=hours_ago(1))
+    finally:
+        settings.parker_family_contacts = previous_contacts
+
+    # 6. Reminder awaiting confirmation right now.
     capture_intent(
         db,
         call_log_id=call.id,
@@ -117,7 +148,7 @@ def seed_demo_data(db: Session, now: datetime | None = None) -> dict[str, Any]:
         subject="water the tomato plants",
         due_at=current - timedelta(minutes=5),
     )
-    # 6. Drafted family message awaiting confirmation right now.
+    # 7. Drafted family message awaiting confirmation right now.
     capture_intent(
         db,
         call_log_id=call.id,
@@ -137,8 +168,9 @@ def seed_demo_data(db: Session, now: datetime | None = None) -> dict[str, Any]:
         "call_log_id": call.id,
         "pending_confirmation": 3,  # stale stretches + tomato plants + Rohan draft
         "outbox_queued": 1,
+        "outbox_released": 1,  # Michael is allowlisted — patient-confirmed release
         "escalation_candidates": len(candidates),
-        "executed_history": 2,  # pharmacy reminder + Sarah message
+        "executed_history": 3,  # pharmacy reminder + Sarah message + Michael message
         "cancelled": 1,  # the bridge card table, changed mind
     }
 
@@ -157,6 +189,7 @@ def main() -> None:  # pragma: no cover — CLI entry point
             "Demo data seeded: "
             f"{summary['pending_confirmation']} actions awaiting confirmation, "
             f"{summary['outbox_queued']} message queued locally, "
+            f"{summary['outbox_released']} message released to family contacts, "
             f"{summary['escalation_candidates']} non-response candidate(s), "
             f"{summary['cancelled']} cancelled item in the audit list."
         )

@@ -30,6 +30,9 @@ def test_seed_produces_the_documented_review_state(db):
 
     assert len(review["outbox_queued"]) == 1
     assert review["outbox_queued"][0]["recipient"] == "Sarah"
+    released = review["outbox_released"]
+    assert [item["recipient"] for item in released] == ["Michael"]
+    assert released[0]["released_by"] == "capability_policy:family_contact_allowlist"
     assert len(review["escalation_candidates"]) == 1
     assert "afternoon stretches" in review["escalation_candidates"][0]["reason"]
     assert review["open_escalations"] == []
@@ -46,8 +49,9 @@ def test_seed_is_deterministic_for_a_fixed_now(db):
         "call_log_id": first["call_log_id"],
         "pending_confirmation": 3,
         "outbox_queued": 1,
+        "outbox_released": 1,
         "escalation_candidates": 1,
-        "executed_history": 2,
+        "executed_history": 3,
         "cancelled": 1,
     }
 
@@ -59,7 +63,7 @@ def test_seed_refuses_to_run_twice(db):
 
     assert second["skipped"] is True
     assert "reset-db" in second["reason"]
-    assert db.query(OutboxMessage).count() == 1  # nothing duplicated
+    assert db.query(OutboxMessage).count() == 2  # nothing duplicated (queued + released)
 
 
 def test_replay_routes_the_full_script_safely(db):

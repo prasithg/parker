@@ -42,6 +42,8 @@ REVIEW_PAGE_HTML = """<!doctype html>
 <h1>Parker — caregiver review</h1>
 <p class="note">Everything here is local. Confirming queues a message to the local outbox and
 approving marks it reviewed; nothing is ever sent externally from this page.</p>
+<p class="note">Rearview mirror: <a href="/parker/digest">family digest — what happened, what
+needs a look, what stayed local</a> (a local artifact, never sent; also <code>make digest</code>).</p>
 <section class="safety" aria-label="Demo safety contract">
   <strong>Demo safety contract</strong>
   <ul>

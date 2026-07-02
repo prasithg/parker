@@ -8,3 +8,5 @@ node_modules/
 .venv
 .venv/
 .venv*/
+# Local family digests (make digest) — artifacts stay on this machine.
+backend/digests/

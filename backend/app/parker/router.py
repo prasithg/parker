@@ -40,6 +40,7 @@ from app.parker.pipeline import (
     resolve_captured_intents,
     stage_resolved_actions,
 )
+from app.parker.digest import render_digest_page
 from app.parker.review_ui import REVIEW_PAGE_HTML
 from app.parker.screen import get_screen_state, serialize_screen_state
 from app.parker.screen_ui import SCREEN_PAGE_HTML
@@ -349,6 +350,20 @@ def patient_screen_state(db: Session = Depends(get_db)) -> dict[str, Any]:
     if state is None:
         return {"empty": True}
     return {"empty": False, **serialize_screen_state(state)}
+
+
+# The digest aggregates message bodies, so it sits with the caregiver
+# decision surface behind the same opt-in auth seam as /parker/review.
+@router.get(
+    "/digest",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+    dependencies=[Depends(require_dashboard_auth)],
+)
+def family_digest(db: Session = Depends(get_db)) -> str:
+    """The family handoff digest: what happened, what needs a look, all local."""
+
+    return render_digest_page(db)
 
 
 @router.get("/outbox", dependencies=[Depends(require_dashboard_auth)])
