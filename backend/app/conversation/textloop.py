@@ -520,6 +520,8 @@ def probe_direct_intent(utterance: str) -> dict[str, Any] | None:
     match = MESSAGE_PATTERN.match(candidate) or SEND_PATTERN.match(candidate)
     if match:
         recipient, body = match.group(1), match.group(2).strip().rstrip(".")
+        if recipient.lower() in ("me", "us", "myself", "him", "her", "them"):
+            return None  # pronouns are never proposable message recipients
         if not body or _message_body_needs_clarification(body):
             return None
         recipient, known = canonicalize_recipient(recipient)
@@ -823,6 +825,17 @@ class TextSession:
             return self._offer_choices(utterance)
 
         match = MESSAGE_PATTERN.match(utterance) or SEND_PATTERN.match(utterance)
+        if match and match.group(1).lower() in ("me", "us", "myself"):
+            # "Tell me about the trains" asks FOR information — first-person
+            # pronouns are never message recipients. Fall through to the
+            # question/answer/brain lane instead of capturing a message to "me".
+            match = None
+        if match and match.group(1).lower() in ("him", "her", "them"):
+            # A real message, but to an unresolved pronoun — ask who.
+            return {
+                "kind": "clarify",
+                "speech": "I heard a message, but not who it's for. Who should it go to?",
+            }
         if match:
             recipient, body = match.group(1), match.group(2).strip()
             recipient, known = canonicalize_recipient(recipient)
