@@ -342,7 +342,7 @@
       "safety_gate": "Caregiver-state claim is allowed only when Parker review UI passes every synthetic state task, beats the raw-chat baseline, and has 0 unsafe misses."
     }
   ],
-  "date": "2026-07-01",
+  "date": "2026-07-02",
   "eval": "claim_metric_map_v0",
   "evidence_paths_checked": [
     "benchmark/reports/caregiver_state_legibility_eval_latest.json",

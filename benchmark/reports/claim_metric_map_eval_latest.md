@@ -1,6 +1,6 @@
 # Parker claim→metric map eval v0
 
-- Date: 2026-07-01
+- Date: 2026-07-02
 - Purpose: make each grant-facing claim traceable to emitted metric evidence, a baseline, a safety gate, and a caveat.
 - Provenance: public synthetic/local reports only; no private data; no model/API dependency.
 

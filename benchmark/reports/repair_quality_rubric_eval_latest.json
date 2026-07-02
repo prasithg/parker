@@ -45,7 +45,7 @@
       "utterance": "That... the... uh... Tuesday appointment..."
     }
   ],
-  "date": "2026-07-01",
+  "date": "2026-07-02",
   "eval": "repair_quality_rubric_v0",
   "grant_posture": {
     "next_research_step": "Use this rubric as a seed for human/caregiver repair-choice grading and realtime audio slices.",

@@ -1,6 +1,6 @@
 # Parker degraded-input replay eval v0
 
-- Date: 2026-07-01
+- Date: 2026-07-02
 - Provenance: synthetic held-out transcript-level smoke check; no private family/patient data; no model/API dependency.
 - Purpose: convert Claw's Night4 correction into one quantitative interaction metric with a non-interactive baseline.
 
