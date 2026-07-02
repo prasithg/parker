@@ -46,14 +46,14 @@ def test_real_audio_claim_names_norepair_baseline_and_unsafe_gate():
     claim = next(claim for claim in claims if claim.claim_id == "claim-001-real-audio-repair-recovery")
 
     assert "norepair" in claim.baseline
-    assert "49.5%" in claim.baseline and "82.4%" in claim.baseline
+    assert "58.3%" in claim.baseline and "76.3%" in claim.baseline
     assert "0 unsafe captures" in claim.safety_gate
     assert any(
         assertion.json_path == "gate.passed" and assertion.operator == "eq" and assertion.expected is True
         for assertion in claim.required_assertions
     )
     assert any(
-        assertion.json_path == "clips_scored" and assertion.operator == "gte" and assertion.expected == 250
+        assertion.json_path == "clips_scored" and assertion.operator == "gte" and assertion.expected == 333
         for assertion in claim.required_assertions
     )
 

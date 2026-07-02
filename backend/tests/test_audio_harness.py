@@ -252,6 +252,33 @@ def test_degradations_are_dysarthria_shaped() -> None:
     assert degrade_faded_ending("No, don't send that yet") == "No, don't send"
 
 
+def test_reality_grounded_degradations_from_private_lane() -> None:
+    # Shapes observed in the web-private local validation lane (see
+    # benchmark/data/private_audio_pattern_notes_v0.json): effortful word
+    # repeats, mid-word cutoffs, and filler restarts.
+    from benchmark.audio_harness.generate_synthetic import (
+        degrade_filler_restart,
+        degrade_midword_cutoff,
+        degrade_word_repeat,
+    )
+
+    cmd = "Tell Sarah the physio visit went well today"
+    assert degrade_word_repeat(cmd) == "Tell, tell Sarah the physio visit, visit went well today"
+    # the cut lands INSIDE a word — a fragment, not a whole-word fade
+    assert degrade_midword_cutoff(cmd) == "Tell Sarah the phys"
+    assert degrade_midword_cutoff("Remind me to water the tomato plants this evening") == (
+        "Remind me to water the tomato plants this eveni"
+    )
+    assert degrade_filler_restart(cmd) == (
+        "Tell Sarah... um, you know... tell Sarah the physio visit went well today"
+    )
+    # short utterances are left alone rather than degraded to nothing
+    for degrade in (degrade_word_repeat, degrade_midword_cutoff, degrade_filler_restart):
+        assert degrade("Stop") == "Stop"
+    # no long-enough word to cut inside -> no-op (dedupe drops it)
+    assert degrade_midword_cutoff("No, don't send that yet") == "No, don't send that yet"
+
+
 def test_generator_manifest_schema_is_loadable(tmp_path: Path) -> None:
     from benchmark.audio_harness.generate_synthetic import COMMANDS, DATASET
 

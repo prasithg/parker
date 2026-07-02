@@ -1,13 +1,16 @@
 """Generate a degraded synthetic command corpus for the real-audio eval.
 
 Takes ~30 taxonomy-covering Parker commands, applies dysarthria-shaped
-TEXT degradations (the failure modes observed on real corpus audio:
-erased leading verbs, ellipsis disfluency, clipped starts, faded
-endings), and synthesizes each variant with macOS `say` at slow-to-normal
-rates across several voices. Audio and the manifest land in the
-Operations artifacts dir (``PARKER_AUDIO_ARTIFACTS_DIR``) — never in the
-repo. ``oracle_label`` is the CLEAN intended command: the eval asks
-whether Parker recovers the intent from the degraded audio.
+TEXT degradations (the failure modes observed on real corpus audio and in
+the web-private local validation lane: erased leading verbs, ellipsis
+disfluency, clipped starts, faded endings, effortful word repeats,
+mid-word cutoffs, filler restarts), and synthesizes each variant with
+macOS `say` at slow-to-normal rates across several voices. Audio and the
+manifest land in the Operations artifacts dir
+(``PARKER_AUDIO_ARTIFACTS_DIR``) — never in the repo. ``oracle_label`` is
+the CLEAN intended command: the eval asks whether Parker recovers the
+intent from the degraded audio. Reality grounding for each degradation is
+catalogued in ``benchmark/data/private_audio_pattern_notes_v0.json``.
 
 Deterministic: variants/voices/rates cycle by index, no randomness, so
 re-runs produce identical clip sets (same sha256s → warm ASR cache).
@@ -21,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -70,6 +74,11 @@ COMMANDS: list[str] = [
     "Should I take half my pills tomorrow",
     "Order that walker with the card on file",
     "What's my bank account balance",
+    # ambient / exercise audio (no-action lane) — the web-private validation
+    # lane showed speech-therapy counting and conversational monologue are
+    # what Parker actually overhears; neither may capture anything.
+    "One, two, three, four, five",
+    "We went to the lake with the grandkids and the weather was lovely",
 ]
 
 VOICES = ["Samantha", "Daniel", "Karen", "Moira"]
@@ -109,12 +118,69 @@ def degrade_faded_ending(text: str) -> str:
     return " ".join(words[: max(3, len(words) - 2)]) if len(words) > 4 else text
 
 
+def degrade_word_repeat(text: str) -> str:
+    """Effortful repetition: 1-word units restart before speech continues.
+
+    Web-private lane shape: dysarthric list reading and effortful monologue
+    repeat short units ("step, step", "50, 50", "six, six and a half").
+    Deterministic: the first word and the middle word each repeat once.
+    """
+    words = text.split()
+    if len(words) < 4:
+        return text
+    mid = len(words) // 2
+    first = words[0].rstrip(",")
+    mid_word = words[mid].rstrip(",")
+    out = [first + ",", first.lower()] + words[1:mid] + [mid_word + ",", words[mid]] + words[mid + 1 :]
+    return " ".join(out)
+
+
+def degrade_midword_cutoff(text: str) -> str:
+    """Speech stops inside a word, not after one ("huckleberry" -> "huckle").
+
+    Web-private lane shape: real truncation leaves word FRAGMENTS at the
+    cut point (trailing "the-", "norm" for "normal"), where faded_ending
+    only drops whole words. The last long-enough word keeps ~60% of its
+    letters and everything after it is lost.
+    """
+    words = text.split()
+    if len(words) < 4:
+        return text
+    for index in range(len(words) - 1, -1, -1):
+        letters = re.sub(r"[^A-Za-z']", "", words[index])
+        if len(letters) >= 6:
+            fragment = letters[: max(3, (len(letters) * 3 + 4) // 5)]
+            return " ".join(words[:index] + [fragment])
+    return text
+
+
+def degrade_filler_restart(text: str) -> str:
+    """A filler interrupts and the speaker restarts the opening words.
+
+    Web-private lane shape: filler interjections ("so, you know…") and
+    phrase restarts ("…a little bit … just a little bit about…").
+    """
+    words = text.split()
+    if len(words) < 5:
+        return text
+    lead = max(2, len(words) // 3)
+    opening = " ".join(words[:lead])
+    restart = " ".join([words[0].lower()] + words[1:])
+    return f"{opening}... um, you know... {restart}"
+
+
+# Append-only: variant order feeds the deterministic voice/rate assignment,
+# so existing clips keep their exact audio (and warm ASR cache) across
+# generator upgrades.
 VARIANTS = [
     ("clean", lambda t: t),
     ("verb_dropped", degrade_verb_dropped),
     ("ellipsis", degrade_ellipsis),
     ("clipped_start", degrade_clipped_start),
     ("faded_ending", degrade_faded_ending),
+    ("word_repeat", degrade_word_repeat),
+    ("midword_cutoff", degrade_midword_cutoff),
+    ("filler_restart", degrade_filler_restart),
 ]
 
 

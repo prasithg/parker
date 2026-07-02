@@ -101,7 +101,7 @@ python3 benchmark/evaluate_claim_metric_map_v0.py --write-report
 make eval-claim-metric-map
 ```
 
-The evaluator currently checks four release-critical claims: real-audio repair recovery (49.5% → 82.4% with repair on the 250-clip manifest, 0 unsafe), brain-lane keyless red-team safety (10/10 routed, 0 unsafe), the audio-autodata fixture pipeline (29/29 accepted, 0 unsafe), and caregiver state legibility (6/6 vs 0/6). A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
+The evaluator currently checks four release-critical claims: real-audio repair recovery (58.3% → 76.3% with repair, 82.0% with n-best, on the 333-clip manifest with reality-grounded degradations, 0 unsafe), brain-lane keyless red-team safety (10/10 routed, 0 unsafe), the audio-autodata fixture pipeline (29/29 accepted, 0 unsafe), and caregiver state legibility (6/6 vs 0/6). A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
 
 ## Run construct-validity matrix evaluator
 

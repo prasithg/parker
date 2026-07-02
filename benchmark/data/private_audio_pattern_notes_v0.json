@@ -1,0 +1,130 @@
+{
+  "dataset": "private_audio_pattern_notes_v0",
+  "description": "Sanitized failure-class catalogue from the local-only raw-audio validation lane (sim2real reality check). Pattern SHAPES only: class names, generic descriptions, degradation parameters, counts, safety labels. No source URLs, no audio hashes, no verbatim transcript quotes — the source clips' speakers never consented to redistribution, and a distinctive quote is identifying. Raw audio, source manifests, and the full review note live in the Operations workspace, never this repo.",
+  "observation_run": {
+    "lane": "web-private local lane",
+    "clips": 10,
+    "clip_seconds_each": 20,
+    "sources": 5,
+    "asr_models": ["tiny", "base"],
+    "replay": "route_lines, fresh in-memory DB per clip per model, lexicon on and off",
+    "scored_private_run": "run.py --include-private: 10/10 clips, 0 unsafe captures in every mode for both models, reports redirected outside the repo",
+    "capture_events_across_40_replays": 0
+  },
+  "entries": [
+    {
+      "failure_class": "word_phrase_repetition",
+      "description": "Effortful speech and dysarthric list reading repeat short units (1-2 words) before continuing; ASR transcribes the repeats verbatim. Repo repetition guard historically required >=18 words with heavy repetition, so short repetition runs pass straight through routing.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 2, "repeat_events": 4},
+      "parameters": {"repeat_unit_words": [1, 2], "repeats_per_unit": 1},
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "generator_variant": "word_repeat",
+      "safety_label": "safe_nuisance"
+    },
+    {
+      "failure_class": "midword_truncation",
+      "description": "Speech (or the capture window) stops inside a word: ASR emits word fragments at the cut point, sometimes forming a shorter real word, sometimes a non-word. Whole-word fades do not reproduce the fragment shape.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 3, "fragment_events": 4},
+      "parameters": {"fragment_fraction_of_word": 0.5},
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "generator_variant": "midword_cutoff",
+      "safety_label": "safe_miss"
+    },
+    {
+      "failure_class": "filler_restart",
+      "description": "A filler interjection interrupts the utterance and the speaker restarts the opening words before completing the thought. Conversational and testimonial speech shows this constantly.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 2, "events": 2},
+      "parameters": {"restart_leading_words": 2},
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "generator_variant": "filler_restart",
+      "safety_label": "safe_nuisance"
+    },
+    {
+      "failure_class": "counting_number_sequence",
+      "description": "Speech-therapy exercises are counting, and local ASR renders spoken numbers as digits. Before this slice, counting lines drew generic repair choices, and a probe confirmed that a bare in-range digit spoken while choices were pending selected one and captured an intent from ambient audio. Fixed: counting sequences are a no-op in normal mode and set pending choices aside; residual risk (a single bare digit while choices are pending is indistinguishable from a deliberate selection) stays documented and mitigated upstream.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 2, "counting_lines": 2},
+      "parameters": {"min_sequence_numbers": 3},
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "generator_command_class": "no_action_counting",
+      "safety_label": "unsafe_adjacent_guarded"
+    },
+    {
+      "failure_class": "ambient_monologue_nuisance_choices",
+      "description": "Conversational monologue and narration not addressed to Parker drew generic repair choices on effectively every line (101 of 101 routed utterances; scored form: 10/10 clips classify nuisance_choices). Selection mode then swallowed every following utterance behind the number re-prompt, including real commands (probe-confirmed). Fixed this slice: clearly-new commands/questions/dismissals escape selection mode. The deeper gap — Parker has no addressed-to-me detection — is a known deferral (wake word / addressed detection), not solvable by a text guard.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 10, "monologue_utterances_offered_choices": 101, "captures": 0},
+      "parameters": null,
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "generator_command_class": "no_action_ambient_monologue",
+      "safety_label": "safe_nuisance"
+    },
+    {
+      "failure_class": "clipped_start",
+      "description": "Audio begins mid-sentence; leading words are lost. Every raw window opened mid-speech.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 10},
+      "parameters": {"leading_words_lost": 2},
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "generator_variant": "clipped_start",
+      "safety_label": "safe_miss"
+    },
+    {
+      "failure_class": "faded_or_truncated_ending",
+      "description": "Speech ends before the sentence completes; validated as a class, with the refinement that real cuts often land inside a word (see midword_truncation).",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 6},
+      "parameters": {"trailing_words_lost": 2},
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "generator_variant": "faded_ending",
+      "safety_label": "safe_miss"
+    },
+    {
+      "failure_class": "ellipsis_pause_disfluency",
+      "description": "Effortful and filler pauses surface as ellipses and segment breaks in ASR output.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 4},
+      "parameters": null,
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "generator_variant": "ellipsis",
+      "safety_label": "safe_nuisance"
+    },
+    {
+      "failure_class": "phonetic_domain_term_substitution",
+      "description": "ASR substitutes plausible everyday words for domain terms and names (a condition name became a vehicle; a compound word became a kinship phrase). Same class as the known name-mangle failures; arises organically when any audio meets ASR, so the generator needs no explicit variant. Names are guarded by lexicon recipient canonicalization.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 4, "substitution_events": 6},
+      "parameters": null,
+      "covered_by_synthetic": true,
+      "synthetic_gap": null,
+      "safety_label": "safe_miss"
+    },
+    {
+      "failure_class": "multispeaker_backchannel_interleave",
+      "description": "Two-speaker audio (interviewer/examiner + subject) arrives as interleaved short utterances, including bare backchannels. A text-degradation generator over single-voice TTS cannot represent cross-talk; this belongs to the deferred recliner-acoustics re-recording rig.",
+      "observed_in": "web-private local lane",
+      "counts": {"clips": 3, "backchannel_utterances": 4},
+      "parameters": null,
+      "covered_by_synthetic": false,
+      "synthetic_gap": "single-voice TTS cannot produce multi-speaker cross-talk; deferred to the re-recording rig",
+      "safety_label": "safe_nuisance"
+    }
+  ],
+  "negative_observations": [
+    {
+      "failure_class": "long_hallucination_loop",
+      "note": "NOT re-observed in this lane: all 20 transcripts kept unique-word ratios >= 0.69. Prior evidence for long fluent loops comes from the earlier no-transcript corpus rows only, so the generator gets no loop variant from this run (do not invent degradations reality did not show)."
+    }
+  ]
+}
