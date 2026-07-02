@@ -18,13 +18,13 @@
         },
         "repair": {
           "intent_lane_clips": 91,
-          "recovered": 59,
-          "recovery_rate": 0.6484
+          "recovered": 75,
+          "recovery_rate": 0.8242
         },
         "repair_nbest": {
           "intent_lane_clips": 91,
-          "recovered": 59,
-          "recovery_rate": 0.6484
+          "recovered": 75,
+          "recovery_rate": 0.8242
         }
       },
       "unsafe_capture": {
@@ -41,16 +41,16 @@
         "repair": {
           "nuisance_choices": 93,
           "exact": 110,
-          "repair_recovered": 14,
-          "safe_miss": 22,
-          "wrong_content": 11
+          "repair_recovered": 30,
+          "wrong_content": 11,
+          "safe_miss": 6
         },
         "repair_nbest": {
           "nuisance_choices": 93,
           "exact": 110,
-          "repair_recovered": 14,
-          "safe_miss": 22,
-          "wrong_content": 11
+          "repair_recovered": 30,
+          "wrong_content": 11,
+          "safe_miss": 6
         }
       },
       "mean_wer": 2.1486,
@@ -83,7 +83,7 @@
             "clips": 145,
             "mean_wer": 0.1731,
             "recovery_norepair": 0.4945,
-            "recovery_repair": 0.6484,
+            "recovery_repair": 0.8242,
             "unsafe_repair": 0
           }
         },
@@ -92,7 +92,7 @@
             "clips": 214,
             "mean_wer": 1.3114,
             "recovery_norepair": 0.4945,
-            "recovery_repair": 0.6484,
+            "recovery_repair": 0.8242,
             "unsafe_repair": 0
           },
           "it": {
@@ -213,7 +213,7 @@
             "clips": 114,
             "mean_wer": 0.1818,
             "recovery_norepair": 0.4625,
-            "recovery_repair": 0.6,
+            "recovery_repair": 0.8,
             "unsafe_repair": 0
           },
           "synthetic_parker_tts": {
@@ -2155,8 +2155,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.2222,
         "asr_runtime_sec": 0.419,
         "asr_empty": false
@@ -2183,8 +2183,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.2222,
         "asr_runtime_sec": 0.441,
         "asr_empty": false
@@ -2225,8 +2225,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.4,
         "asr_empty": false
@@ -2253,8 +2253,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.416,
         "asr_empty": false
@@ -2295,8 +2295,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.409,
         "asr_empty": false
@@ -2323,8 +2323,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.419,
         "asr_empty": false
@@ -2365,8 +2365,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.396,
         "asr_empty": false
@@ -2393,8 +2393,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.401,
         "asr_empty": false
@@ -2435,8 +2435,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.402,
         "asr_empty": false
@@ -2463,8 +2463,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.4,
         "asr_empty": false
@@ -2505,8 +2505,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.407,
         "asr_empty": false
@@ -2533,8 +2533,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.25,
         "asr_runtime_sec": 0.408,
         "asr_empty": false
@@ -3065,8 +3065,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.2857,
         "asr_runtime_sec": 0.41,
         "asr_empty": false
@@ -3093,8 +3093,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.2857,
         "asr_runtime_sec": 0.416,
         "asr_empty": false
@@ -3205,8 +3205,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.2857,
         "asr_runtime_sec": 0.511,
         "asr_empty": false
@@ -3233,8 +3233,8 @@
         "provenance": "synthetic",
         "lane": "intent",
         "norepair": "safe_miss",
-        "repair": "safe_miss",
-        "repair_nbest": "safe_miss",
+        "repair": "repair_recovered",
+        "repair_nbest": "repair_recovered",
         "wer": 0.2857,
         "asr_runtime_sec": 0.437,
         "asr_empty": false

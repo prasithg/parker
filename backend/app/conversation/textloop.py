@@ -544,6 +544,63 @@ def _lexicon_names() -> list[str]:
     ]
 
 
+# Clipped-start fragments with one high-precision reading. ASR loses the
+# first word(s) of effortful speech constantly; these shapes survive it.
+_REMINDER_FRAGMENT = re.compile(r"^(?:me\s+)?to\s+(\w.+)$", re.IGNORECASE)
+_EXERCISE_FRAGMENT = re.compile(
+    r"^(?:a|an|the)?\s*(speech|voice|movement|stretching|cognitive)\s+exercise"
+    r"(?:\s+(?:for|about|called)\s+(.+))?[.]?$",
+    re.IGNORECASE,
+)
+
+
+def fragment_candidates(utterance: str) -> list[dict[str, Any]]:
+    """Reconstruct clipped-start fragments into concrete repair choices.
+
+    "me to water the tomato plants this evening" is what's left of
+    "Remind me to..." after ASR clips the start; "a speech exercise for
+    the morning cards" is a clipped "Start...". Only shapes with one
+    high-precision reading are reconstructed, they are safety-screened
+    like every probe, and they are only ever *offered* — the user
+    confirms the reconstruction by picking it.
+    """
+
+    candidate = utterance.strip().rstrip(".")
+    lowered = candidate.lower()
+    if any(phrase in lowered for group in _PROBE_BLOCKED_PHRASES for phrase in group):
+        return []
+    results: list[dict[str, Any]] = []
+    # >= 3 content words keeps conversational filler ("to be honest") out;
+    # precision over recall — a wrong offer is a nuisance question.
+    match = _REMINDER_FRAGMENT.match(candidate)
+    if match and len(match.group(1).split()) >= 3:
+        subject = match.group(1).strip()
+        results.append(
+            {
+                "label": f"a reminder to {subject[:60]}",
+                "action_type": "reminder",
+                "recipient": None,
+                "subject": subject,
+                "intent_text": f"remind me to {subject}",
+            }
+        )
+    match = _EXERCISE_FRAGMENT.match(candidate)
+    if match:
+        exercise_type = match.group(1).lower()
+        details = (match.group(2) or "short practice").strip().rstrip(".")
+        subject = f"{exercise_type} exercise: {details}"
+        results.append(
+            {
+                "label": f"start a {subject}",
+                "action_type": "exercise_start",
+                "recipient": None,
+                "subject": subject,
+                "intent_text": candidate,
+            }
+        )
+    return results
+
+
 def canonicalize_recipient(name: str) -> tuple[str, bool]:
     """Resolve an ASR-heard recipient against the personal lexicon.
 
@@ -961,6 +1018,9 @@ class TextSession:
         name_intent = name_prefix_candidate(utterance)
         if name_intent is not None:
             probed.append(name_intent)
+        for fragment in fragment_candidates(utterance):
+            if all(fragment["label"] != p["label"] for p in probed):
+                probed.append(fragment)
         for alternate in self._current_alternates[:2]:
             intent = probe_direct_intent(alternate)
             if intent is not None and all(intent["label"] != p["label"] for p in probed):
