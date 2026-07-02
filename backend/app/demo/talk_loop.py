@@ -35,6 +35,7 @@ def main() -> None:  # pragma: no cover — interactive entry point
         listening_hint = f"[listening for {seconds:g}s — speak now, or Ctrl-C to stop]"
 
     turn_count = 0
+    latencies: list[float] = []
 
     def on_turn_start(turn: int) -> None:
         nonlocal turn_count
@@ -44,6 +45,16 @@ def main() -> None:  # pragma: no cover — interactive entry point
     def on_exchange(exchange: dict) -> None:
         print(f"  you>    {exchange['you']}")
         print(f"  parker> {exchange['parker']}")
+        # Speech can start once ASR + routing (brain on answer turns) are
+        # done — this is Parker's added delay after the person stops talking.
+        to_speech = exchange["asr_seconds"] + exchange["route_seconds"]
+        latencies.append(to_speech)
+        slow = "  ← over the 4s budget" if to_speech > 4.0 else ""
+        print(
+            f"  [latency: asr {exchange['asr_seconds']:.2f}s + "
+            f"{exchange['kind']} {exchange['route_seconds']:.2f}s "
+            f"→ speech starts {to_speech:.2f}s after you stop]{slow}"
+        )
         # Speaking blocks until done so the next window never records
         # Parker's own voice.
         speak(exchange["parker"])
@@ -65,6 +76,12 @@ def main() -> None:  # pragma: no cover — interactive entry point
     )
 
     print(f"\nStopped after {turn_count} turn(s). Review staged intents at /parker/review/ui")
+    if latencies:
+        print(
+            f"Session latency (utterance end → speech start): "
+            f"mean {sum(latencies) / len(latencies):.2f}s, max {max(latencies):.2f}s "
+            f"over {len(latencies)} exchange(s)"
+        )
     db.close()
 
 

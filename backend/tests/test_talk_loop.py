@@ -171,3 +171,13 @@ def test_recordings_deleted_between_turns(db):
     assert len(seen_paths) == 2
     for path in seen_paths:
         assert not path.exists()
+
+
+def test_exchanges_carry_per_turn_latency_fields(db):
+    """Every exchange reports asr/route seconds for the live latency line."""
+    exchanges = _run(db, [["Remind me to do my stretches"], ["What day is it today?"]])
+
+    assert len(exchanges) == 2
+    for exchange in exchanges:
+        assert exchange["asr_seconds"] >= 0.0
+        assert exchange["route_seconds"] >= 0.0
