@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from app.conversation.repair import DEFAULT_QUESTION, build_repair_prompt
+from app.conversation.repair import DEFAULT_QUESTION, MIN_CANDIDATES, build_repair_prompt
 from app.db.models import CallLog, Medication, MoodEntry
 from app.parker.pipeline import capture_intent
 from app.escalation.engine import create_escalation
@@ -202,12 +202,16 @@ def handle_offer_repair_choices(
     call_log_id: int,
     candidates: list[dict[str, Any]],
     question: str = DEFAULT_QUESTION,
+    allow_single: bool = False,
 ) -> dict[str, Any]:
     """Validate and format repair choices for the agent to read aloud.
 
     Conversation-level only: persists nothing and commits to nothing. A
     rejected candidate set returns status "rejected" with the reason so the
     model can propose a corrected set.
+
+    ``allow_single`` permits the one-candidate confirmation form used for
+    brain-proposed actions; ambiguity repair keeps the 2-choice minimum.
     """
 
     del db, call_log_id
@@ -215,6 +219,7 @@ def handle_offer_repair_choices(
         prompt = build_repair_prompt(
             [(item.get("label", ""), item.get("action_type")) for item in candidates],
             question=question,
+            min_candidates=1 if allow_single else MIN_CANDIDATES,
         )
     except ValueError as exc:
         return {"status": "rejected", "message": str(exc)}
