@@ -201,3 +201,59 @@ def test_replay_populates_the_screen_with_pending_cards(db):
     assert state["awaiting"] == AWAITING_CHOICE
     assert len(state["choices"]) >= 2
     assert db.query(ScreenState).count() == 1  # still a mirror, not a log
+
+
+# ---------------------------------------------------------------------------
+# The /parker/screen surface: read-only, unauthenticated, degrades gracefully
+# ---------------------------------------------------------------------------
+
+
+def test_screen_state_endpoint_degrades_gracefully_when_empty(db):
+    response = client.get("/parker/screen/state")
+
+    assert response.status_code == 200
+    assert response.json() == {"empty": True}
+
+
+def test_screen_state_endpoint_reflects_the_current_exchange(db):
+    session = _session(db)
+    spoken = session.handle("Call... the... you know... the one with the garden...")
+
+    payload = client.get("/parker/screen/state").json()
+    assert payload["empty"] is False
+    assert payload["heard"] == "Call... the... you know... the one with the garden..."
+    assert payload["speech"] == spoken["speech"]
+    assert payload["awaiting"] == AWAITING_CHOICE
+    assert [c["position"] for c in payload["choices"]] == [
+        c["position"] for c in spoken["choices"]
+    ]
+    # Only position+label cross the wire — no capture internals.
+    assert all(set(c) == {"position", "label"} for c in payload["choices"])
+
+
+def test_screen_page_serves_the_live_surface(db):
+    response = client.get("/parker/screen")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Parker is listening" in html  # graceful idle state
+    assert "/parker/screen/state" in html  # polls the state mirror
+    assert 'id="choices"' in html and 'id="speech"' in html
+    assert "Say the number" in html  # cards carry the spoken cue
+
+
+def test_screen_page_is_output_only_no_input_affordances(db):
+    html = client.get("/parker/screen").text
+
+    for affordance in ("<button", "<input", "<form", "<select", "<textarea", "onclick", "<a "):
+        assert affordance not in html, f"voice-only screen must not ship {affordance!r}"
+
+
+def test_screen_stays_open_when_the_caregiver_dashboard_is_locked(db, monkeypatch):
+    monkeypatch.setattr(settings, "dashboard_password", "open-sesame")
+
+    # The caregiver decision surface locks...
+    assert client.get("/parker/review").status_code == 401
+    # ...but the read-only room screen never faces a login.
+    assert client.get("/parker/screen").status_code == 200
+    assert client.get("/parker/screen/state").status_code == 200

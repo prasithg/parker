@@ -41,6 +41,8 @@ from app.parker.pipeline import (
     stage_resolved_actions,
 )
 from app.parker.review_ui import REVIEW_PAGE_HTML
+from app.parker.screen import get_screen_state, serialize_screen_state
+from app.parker.screen_ui import SCREEN_PAGE_HTML
 
 router = APIRouter()
 
@@ -326,6 +328,27 @@ def caregiver_review_ui() -> str:
     """Local, single-file caregiver review page over the /parker review APIs."""
 
     return REVIEW_PAGE_HTML
+
+
+# The live patient screen is deliberately outside the dashboard-auth seam:
+# it is read-only, holds nothing beyond what Parker just said aloud in the
+# room, and the person it serves should never face a login. Voice remains
+# the only input — the page has no buttons (pinned by tests).
+@router.get("/screen", response_class=HTMLResponse, include_in_schema=False)
+def patient_screen_page() -> str:
+    """Big-type live screen for the TV/monitor next to the person."""
+
+    return SCREEN_PAGE_HTML
+
+
+@router.get("/screen/state")
+def patient_screen_state(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Current-exchange mirror polled by the live screen (never a transcript)."""
+
+    state = get_screen_state(db)
+    if state is None:
+        return {"empty": True}
+    return {"empty": False, **serialize_screen_state(state)}
 
 
 @router.get("/outbox", dependencies=[Depends(require_dashboard_auth)])
