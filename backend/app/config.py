@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Anthropic (model-driven repair choices; falls back to hardcoded when unset)
     anthropic_api_key: str = ""
 
+    # Local voice output (macOS say; no cloud, no dependencies)
+    parker_tts_enabled: bool = True
+    parker_tts_voice: str = ""  # empty = system default voice
+    parker_tts_rate_wpm: int = 0  # 0 = system default rate
+
     # Learning flywheel v0 (both default OFF / empty; consent is explicit)
     # When consented, each repair exchange (hypotheses, offered choices, the
     # user's selection) is stored locally as a labeled example. Never audio.

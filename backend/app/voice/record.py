@@ -49,3 +49,61 @@ def load_local_recorder(sample_rate: int = SAMPLE_RATE) -> Recorder:
             wav.writeframes(frames.tobytes())
 
     return _record
+
+
+def load_vad_recorder(
+    sample_rate: int = SAMPLE_RATE,
+    *,
+    silence_after_speech_sec: float = 1.2,
+    start_grace_sec: float = 4.0,
+    energy_threshold: float = 300.0,
+) -> Recorder:
+    """Recorder with energy-based end-pointing — a drop-in ``Recorder``.
+
+    The ``seconds`` argument becomes the *maximum* window; recording ends
+    early once speech has been heard and is followed by
+    ``silence_after_speech_sec`` of quiet. Effortful speech pauses
+    mid-utterance, so the silence window is generous by default and never
+    cuts in before ``start_grace_sec`` if no speech has been detected yet.
+    Same privacy contract as the fixed recorder: the caller deletes the
+    file right after transcription.
+    """
+
+    try:
+        import numpy as np
+        import sounddevice as sd
+    except ImportError as exc:
+        raise RuntimeError(TALK_DEPS_HINT) from exc
+
+    chunk_sec = 0.1
+    chunk_frames = int(chunk_sec * sample_rate)
+
+    def _record(path: Path, seconds: float) -> None:
+        collected: list[bytes] = []
+        heard_speech = False
+        quiet_run = 0.0
+        elapsed = 0.0
+        with sd.InputStream(
+            samplerate=sample_rate, channels=1, dtype="int16", blocksize=chunk_frames
+        ) as stream:
+            while elapsed < seconds:
+                chunk, _overflowed = stream.read(chunk_frames)
+                collected.append(chunk.tobytes())
+                elapsed += chunk_sec
+                rms = float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2)))
+                if rms >= energy_threshold:
+                    heard_speech = True
+                    quiet_run = 0.0
+                else:
+                    quiet_run += chunk_sec
+                    if heard_speech and quiet_run >= silence_after_speech_sec:
+                        break
+                    if not heard_speech and elapsed >= start_grace_sec:
+                        break  # nothing said at all — end the window early
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate)
+            wav.writeframes(b"".join(collected))
+
+    return _record

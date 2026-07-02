@@ -147,7 +147,8 @@ migrate:
 	@echo "v0 uses create_tables() — no Alembic yet (use make reset-db for a fresh local DB)"
 
 # Continuous talk loop: one persistent TextSession so repair-choice state
-# carries across turns. Leave this running in a terminal; open the review
-# page in a browser as the caregiver view. Ctrl-C to stop.
+# carries across turns. Parker answers out loud (macOS say) and recording is
+# VAD end-pointed: SECONDS is the max window, a natural pause ends the turn.
+# Leave this running in a terminal; open the review page as the caregiver.
 talk-loop: backend-venv
-	cd backend && ./.venv/bin/python -m app.demo.talk_loop $(or $(SECONDS),6)
+	cd backend && ./.venv/bin/python -m app.demo.talk_loop $(or $(SECONDS),12)

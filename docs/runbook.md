@@ -118,16 +118,17 @@ macOS asks for microphone permission on first use. The recording is a temporary 
 
 ### Continuous loop: `make talk-loop`
 
-`make talk` is single-shot — a fresh session each time, which means a repair-choice offer in one run can't be answered in the next. `make talk-loop` keeps one session alive across all windows:
+`make talk` is single-shot — a fresh session each time, which means a repair-choice offer in one run can't be answered in the next. `make talk-loop` keeps one session alive across all windows, **answers out loud** (macOS `say`; set `PARKER_TTS_ENABLED=false` for text-only, `PARKER_TTS_VOICE`/`PARKER_TTS_RATE_WPM` to tune), and end-points each recording with voice-activity detection — pause naturally and the turn ends, no fixed-window countdown:
 
 ```bash
-make talk-loop            # 6-second windows, Ctrl-C to stop
-make talk-loop SECONDS=8
+make talk-loop            # VAD end-pointed, up to 12s per turn, Ctrl-C to stop
+make talk-loop SECONDS=20 # longer max window for slower speech
 ```
 
 Leave it running in a terminal while the caregiver review page is open in a browser. The flow:
-- Parker offers "1) reminder 2) message" → say "1" in the next window → captured.
+- Parker offers "1) reminder 2) message" aloud → say "1" in the next window → captured.
 - Silence (background noise only) prints a cue and keeps listening.
+- Parker never listens while speaking, so it cannot transcribe itself.
 - Ctrl-C stops the loop and prints how many turns ran.
 
 ### Real-audio eval: `make eval-audio-real`
