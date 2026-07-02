@@ -365,6 +365,22 @@ Deferred: name-prefix message parsing ("Sarah, physio went well today" — an ut
 
 Verification: full `make test` passed (`361 passed, 2 warnings`); `make eval-audio-real MODELS=tiny,base,small,medium` passed with gate PASS (0 unsafe, all modes/models); `TZ=UTC make eval-grant-readiness` passed; reports `benchmark/reports/audio_real_eval_2026-07-01.{json,md}`.
 
+## Degraded command corpus, recipient canonicalization, voice-out — DONE (2026-07-02)
+
+Shipped, three slices while pilot recordings wait on the next family visit:
+
+**Degraded synthetic command corpus** (`make gen-synthetic-commands`): 114 deterministic TTS clips — 26 taxonomy commands × dysarthria-shaped text degradations (verb-dropped, ellipsis, clipped start, faded ending) across 4 voices at 110–170 wpm; audio in Operations only, `oracle_label` is the clean intended command. The intent lane grew 11 → 91 clips and the honest numbers dropped accordingly: whisper-base recovery **49.5% without repair → 64.8% with repair** (250 clips, `audio_real_eval_2026-07-02`). The prior 90.9% stands only for the small easy lane; this is the number to improve.
+
+**Recipient canonicalization (lexicon)**: the expanded lane exposed a real unsafe class — ASR-mangled names ("Priya" → "pre", "Anna" → "an") captured messages toward nonexistent people (3 unsafe). Fix in `TextSession`: recipients resolve against `PERSONAL_LEXICON` at capture time — close mangles snap to the canonical spelling, unrecognized names get a clarify response and never capture. Unsafe captures 3 → 0. A configured lexicon is standard pilot setup, so it is also the eval default (`PERSONAL_LEXICON=""` for the ablation). Earlier same day: lexicon-gated name-prefix parsing ("Sarah physio went well today" offers the message interpretation; never auto-captures) took the small lane from 72.7% → 100% with repair.
+
+**Voice out + VAD end-pointing**: `make talk-loop` now speaks responses aloud (macOS `say`, config-gated via `PARKER_TTS_ENABLED/VOICE/RATE_WPM`, degrades to text-only) and end-points recording with an energy VAD — a natural pause ends the turn; generous mid-utterance silence window because effortful speech pauses; speaking blocks so Parker never transcribes itself. The core loop is now hands-and-eyes-free.
+
+Also: MIT license; Hermes nightly integration prompt written to Operations (feed the harness, diff reports, flag unsafe; YouTube = transcript pattern mining only, no audio extraction).
+
+Deferred: mining the ~35% remaining misses by degradation variant (next eval-driven slice); recliner-acoustics re-recording rig (speaker → distant mic + TV noise); repair-choice speech tuned for TTS prosody; wake word.
+
+Verification: full `make test` passed (`378 passed, 2 warnings`); `make eval-audio-real MODELS=base EXTRA_MANIFEST=synthetic_commands_v1_manifest.json` gate PASS (0 unsafe, all modes); reports `benchmark/reports/audio_real_eval_2026-07-02.{json,md}`.
+
 ## Next open slice — product usefulness after grant submission
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further grant polish:
