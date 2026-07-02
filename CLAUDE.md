@@ -76,6 +76,26 @@ Run tests before final response if you modify code.
 
 Release/update rule: Parker is a living public project. Commit/push ready milestones with green tests/evals and current docs; do not wait for Pras for in-scope ready work, but do not push midstream half-finished slices.
 
+## Multi-session working agreement
+
+Multiple Claude Code sessions (plus a Hermes agent) may share this working
+directory simultaneously. Rules for every agent session:
+
+- On start, check `git fetch && git status`. If the tree is dirty with
+  changes you did not make, STOP and ask — another live session may own
+  them. Never stash, hard-reset, discard, or commit someone else's work.
+- Do all non-trivial work on a feature branch (one branch per session);
+  merge to main only with a clean tree after a fresh `git pull --ff-only`.
+- Destructive git commands (hard resets, stashing, checkout/restore
+  discards, forced cleans, force pushes, autostash rebases, forced branch
+  deletion) are denied by the PreToolUse hook in `.claude/settings.json`.
+  If you hit the block, the answer is coordination, not workaround — a
+  human can always run the command manually. Note: the guard matches the
+  whole Bash command string, so avoid quoting those literal git
+  incantations inside commit messages or heredocs.
+- The SessionStart hook prints the shared-checkout state; read it before
+  touching anything.
+
 ## Workspace contract
 
 - Code/docs tied to implementation: this repo under `~/Development`.
