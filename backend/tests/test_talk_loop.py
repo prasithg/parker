@@ -40,10 +40,14 @@ def _run(db, turns: list[list[str]], *, call_sid="TEST-LOOP") -> list[dict]:
     )
 
 
-def test_single_turn_capture(db):
+def test_single_turn_capture_then_confirmation_offer(db):
     exchanges = _run(db, [["Remind me to do my stretches"]])
 
-    assert [e["kind"] for e in exchanges] == ["captured"]
+    # The capture stages on the per-turn tick and Parker immediately offers
+    # it for the patient's own spoken confirmation.
+    assert [e["kind"] for e in exchanges] == ["captured", "confirm_offer"]
+    assert exchanges[1]["you"] == ""  # Parker-initiated
+    assert "yes or no" in exchanges[1]["parker"]
     assert db.query(CapturedIntent).one().requested_action == "remind"
 
 
@@ -55,7 +59,7 @@ def test_repair_choice_selection_spans_turns(db):
     ])
 
     kinds = [e["kind"] for e in exchanges]
-    assert kinds == ["choices", "captured"]
+    assert kinds == ["choices", "captured", "confirm_offer"]
     assert db.query(CapturedIntent).one().requested_action == "reminder"
 
 
@@ -65,7 +69,12 @@ def test_multiple_captures_across_turns(db):
         ["Tell Sarah the physio visit went well"],
     ])
 
-    assert [e["kind"] for e in exchanges] == ["captured", "captured"]
+    # Each turn: capture -> tick -> confirmation offer. The unanswered offer
+    # from turn 1 is deferred by the new utterance (the reminder stays staged
+    # for the review page) and the message gets its own offer.
+    assert [e["kind"] for e in exchanges] == [
+        "captured", "confirm_offer", "captured", "confirm_offer",
+    ]
     intents = db.query(CapturedIntent).order_by(CapturedIntent.id).all()
     assert intents[0].requested_action == "remind"
     assert intents[1].requested_action == "message"
@@ -79,7 +88,7 @@ def test_silent_turn_skipped_session_continues(db):
         ["Remind me to stretch"],    # next turn works normally
     ])
 
-    assert [e["kind"] for e in exchanges] == ["captured"]
+    assert [e["kind"] for e in exchanges] == ["captured", "confirm_offer"]
     assert db.query(CapturedIntent).count() == 1
 
 
@@ -92,7 +101,7 @@ def test_silence_then_repair_choice_then_selection(db):
     ])
 
     kinds = [e["kind"] for e in exchanges]
-    assert kinds == ["choices", "captured"]
+    assert kinds == ["choices", "captured", "confirm_offer"]
     assert db.query(CapturedIntent).one() is not None
 
 
@@ -143,9 +152,8 @@ def test_keyboard_interrupt_returns_exchanges_so_far(db):
         call_sid="TEST-INTERRUPT",
     )
 
-    # First turn captured before the interrupt
-    assert len(exchanges) == 1
-    assert exchanges[0]["kind"] == "captured"
+    # First turn captured (and offered for confirmation) before the interrupt
+    assert [e["kind"] for e in exchanges] == ["captured", "confirm_offer"]
 
 
 def test_recordings_deleted_between_turns(db):
@@ -177,7 +185,96 @@ def test_exchanges_carry_per_turn_latency_fields(db):
     """Every exchange reports asr/route seconds for the live latency line."""
     exchanges = _run(db, [["Remind me to do my stretches"], ["What day is it today?"]])
 
-    assert len(exchanges) == 2
+    # captured + its confirm offer, then the question (which defers the offer)
+    assert len(exchanges) == 3
     for exchange in exchanges:
         assert exchange["asr_seconds"] >= 0.0
         assert exchange["route_seconds"] >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Voice confirmation: the patient's own yes is the gate (capability model)
+# ---------------------------------------------------------------------------
+
+
+def test_spoken_yes_confirms_and_executes_as_patient(db):
+    from app.db.models import StagedAction
+
+    exchanges = _run(db, [
+        ["Remind me to do my stretches"],
+        ["yes"],
+    ])
+
+    kinds = [e["kind"] for e in exchanges]
+    assert kinds == ["captured", "confirm_offer", "executed"]
+    action = db.query(StagedAction).one()
+    assert action.status == "executed"
+    assert action.confirmed_by == "patient"  # his confirmation, nobody else's
+    assert exchanges[-1]["parker"].startswith("Done")
+
+
+def test_spoken_no_cancels_and_stays_visible(db):
+    from app.db.models import StagedAction
+
+    exchanges = _run(db, [
+        ["Remind me to do my stretches"],
+        ["no"],
+    ])
+
+    assert exchanges[-1]["kind"] == "cancelled"
+    action = db.query(StagedAction).one()
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "patient"
+
+
+def test_unrelated_reply_defers_offer_and_never_nags_again(db):
+    from app.db.models import StagedAction
+
+    exchanges = _run(db, [
+        ["Remind me to do my stretches"],
+        ["What day is it today?"],   # not a yes/no: defer, answer the question
+        ["Tell Sarah hi there now"],  # later turn: the old offer must not return
+    ])
+
+    kinds = [e["kind"] for e in exchanges]
+    assert kinds == ["captured", "confirm_offer", "answer", "captured", "confirm_offer"]
+    reminder = (
+        db.query(StagedAction).filter(StagedAction.action_type == "reminder").one()
+    )
+    assert reminder.status == "staged"  # deferred, awaiting review/resurface — not lost
+
+
+def test_voice_confirmed_message_to_allowlisted_contact_releases(db, monkeypatch):
+    from app.config import settings
+    from app.db.models import OutboxMessage
+
+    monkeypatch.setattr(settings, "parker_family_contacts", "Sarah")
+
+    exchanges = _run(db, [
+        ["Tell Sarah the physio visit went well"],
+        ["yes"],
+    ])
+
+    assert exchanges[-1]["kind"] == "executed"
+    assert "released" in exchanges[-1]["parker"]
+    message = db.query(OutboxMessage).one()
+    assert message.status == "released_local"
+    assert message.sent_at is None  # capability, not transport: still local
+
+
+def test_voice_confirmed_message_off_allowlist_waits_for_family(db, monkeypatch):
+    from app.config import settings
+    from app.db.models import OutboxMessage
+
+    monkeypatch.setattr(settings, "parker_family_contacts", "Sarah")
+    monkeypatch.setattr(settings, "personal_lexicon", "Dave")
+
+    exchanges = _run(db, [
+        ["Tell Dave the physio visit went well"],
+        ["yes"],
+    ])
+
+    assert exchanges[-1]["kind"] == "executed"
+    assert "family approval" in exchanges[-1]["parker"]
+    message = db.query(OutboxMessage).one()
+    assert message.status == "queued_local"  # the edge stays gated

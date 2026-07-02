@@ -45,18 +45,20 @@ def main() -> None:  # pragma: no cover — interactive entry point
         print(f"\n{listening_hint}")
 
     def on_exchange(exchange: dict) -> None:
-        print(f"  you>    {exchange['you']}")
+        if exchange["you"]:
+            print(f"  you>    {exchange['you']}")
         print(f"  parker> {exchange['parker']}")
-        # Speech can start once ASR + routing (brain on answer turns) are
-        # done — this is Parker's added delay after the person stops talking.
-        to_speech = exchange["asr_seconds"] + exchange["route_seconds"]
-        latencies.append(to_speech)
-        slow = "  ← over the 4s budget" if to_speech > 4.0 else ""
-        print(
-            f"  [latency: asr {exchange['asr_seconds']:.2f}s + "
-            f"{exchange['kind']} {exchange['route_seconds']:.2f}s "
-            f"→ speech starts {to_speech:.2f}s after you stop]{slow}"
-        )
+        if exchange["kind"] != "confirm_offer":  # Parker-initiated turns have no latency story
+            # Speech can start once ASR + routing (brain on answer turns) are
+            # done — this is Parker's added delay after the person stops talking.
+            to_speech = exchange["asr_seconds"] + exchange["route_seconds"]
+            latencies.append(to_speech)
+            slow = "  ← over the 4s budget" if to_speech > 4.0 else ""
+            print(
+                f"  [latency: asr {exchange['asr_seconds']:.2f}s + "
+                f"{exchange['kind']} {exchange['route_seconds']:.2f}s "
+                f"→ speech starts {to_speech:.2f}s after you stop]{slow}"
+            )
         # Speaking blocks until done so the next window never records
         # Parker's own voice.
         speak(exchange["parker"])

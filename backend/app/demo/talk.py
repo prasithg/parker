@@ -90,7 +90,11 @@ def run_talk_loop(
 
     One ``TextSession`` lives for the whole conversation so repair-choice
     state carries across recording windows. Each turn: record → transcribe
-    → feed each utterance to the session → tick. Runs until
+    → feed each utterance to the session → tick → offer the newest staged
+    action for a spoken yes/no (``confirm_offer`` exchanges have an empty
+    ``you`` — Parker speaks first). A "yes" in the next window confirms and
+    executes through the normal pipeline as the patient; "no" cancels;
+    anything else defers to the review page. Runs until
     ``KeyboardInterrupt`` (interactive use) or ``max_turns`` is reached
     (tests). Returns all exchanges from all turns.
     """
@@ -145,6 +149,19 @@ def run_talk_loop(
 
             resolve_captured_intents(db)
             stage_resolved_actions(db)
+
+            offer = session.offer_pending_confirmation()
+            if offer is not None:
+                exchange = {
+                    "you": "",  # Parker-initiated: there was no user utterance
+                    "parker": offer["speech"],
+                    "kind": offer["kind"],
+                    "asr_seconds": 0.0,
+                    "route_seconds": 0.0,
+                }
+                all_exchanges.append(exchange)
+                if on_exchange:
+                    on_exchange(exchange)
 
     except KeyboardInterrupt:
         pass

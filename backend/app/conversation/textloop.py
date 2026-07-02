@@ -4,11 +4,20 @@ Run with ``make repl``. Each typed line is treated as an utterance and
 routed deterministically (keyword rules, no model, no audio) through the
 same tools a voice agent would call: ``offer_repair_choices`` for
 ambiguous intents and ``capture_intent`` for clear ones. Captured intents
-then flow through the normal resolve → stage → confirm pipeline — this
-loop never confirms or executes anything itself.
+flow through the normal resolve → stage → confirm pipeline.
+
+Confirmation is conversational (capability trust model, 2026-07): after a
+tick stages an action from this session, ``offer_pending_confirmation``
+asks the patient directly, and a spoken "yes" confirms AND executes it
+through the same pipeline functions (``confirmed_by="patient"``, recorded)
+— within an admin-enabled capability the patient's own confirmation is the
+only gate. "No" cancels. Anything else defers: the action stays staged for
+the review page, never silently acted on.
 
 Safety mirrors the action policy: medication-change requests are refused,
-purchases are routed to human approval, and nothing external happens.
+purchases are routed to human approval, prohibited tiers are never
+confirmable by anyone, and messages release only inside the admin's
+family-contact allowlist (otherwise they queue for caregiver approval).
 """
 
 from __future__ import annotations
@@ -198,6 +207,36 @@ CONTENTLESS_MESSAGE_BODIES = {
     "tonight",
     "please",
 }
+# Spoken yes/no vocabulary for the conversational confirmation seam. Only
+# consulted while a staged action is awaiting the patient's confirmation;
+# bare control words with no pending context keep their no-op handling.
+CONFIRM_YES_PHRASES = {
+    "yes",
+    "yeah",
+    "yep",
+    "yes please",
+    "go",
+    "go ahead",
+    "okay",
+    "ok",
+    "do it",
+    "sure",
+    "please do",
+}
+CONFIRM_NO_PHRASES = {
+    "no",
+    "nope",
+    "nah",
+    "not now",
+    "cancel",
+    "cancel that",
+    "stop",
+    "don't",
+    "dont",
+    "no thanks",
+    "no thank you",
+}
+
 NO_CONTEXT_CONTROL_RESPONSES = {
     "yes": "I heard yes, but there isn't anything waiting for confirmation.",
     "yeah": "I heard yes, but there isn't anything waiting for confirmation.",
@@ -715,6 +754,11 @@ class TextSession:
         self._brain_history: list[Message] = []
         self._pending_choices: Optional[list[dict[str, Any]]] = None
         self._pending_utterance: Optional[str] = None
+        # Staged-action id awaiting the patient's spoken yes/no, and ids
+        # already offered once this session (a deferred offer is not nagged
+        # again — the action stays staged for the review page instead).
+        self._pending_confirmation: Optional[int] = None
+        self._offered_confirmation_ids: set[int] = set()
         # Labels from the most recently offered (and user-rejected) repair choices.
         # Passed to suggest_repair_candidates on the next offer so the model can
         # generate genuinely different alternatives instead of repeating itself.
@@ -736,6 +780,12 @@ class TextSession:
         self._current_alternates = [a for a in (alternates or []) if a.strip() and a.strip() != utterance]
         if not utterance:
             return {"kind": "noop", "speech": "I'm listening."}
+        if self._pending_confirmation is not None:
+            handled = self._handle_confirmation_reply(utterance)
+            if handled is not None:
+                return handled
+            # Not a yes/no: the offer is deferred (action stays staged for
+            # review) and the utterance routes normally below.
         if self._pending_choices is not None:
             return self._handle_selection(utterance)
 
@@ -1045,6 +1095,138 @@ class TextSession:
             .order_by(StagedAction.created_at.desc(), StagedAction.id.desc())
             .first()
         )
+
+    # ------------------------------------------------------------------
+    # Conversational confirmation: the patient's own yes is the gate
+    # ------------------------------------------------------------------
+
+    def offer_pending_confirmation(self) -> dict[str, Any] | None:
+        """Offer the latest staged action from this session for a spoken yes/no.
+
+        Called by the voice loop after each tick. Only user-confirmable
+        (CONFIRM_USER) actions are ever offered; each staged action is
+        offered at most once per session — a deferred or ignored offer
+        leaves the action staged for resurfacing and the review page,
+        never silently acted on.
+        """
+
+        from app.parker.policy import CONFIRM_USER, confirmation_level
+
+        if self._pending_confirmation is not None or self._pending_choices is not None:
+            return None
+        action = self._latest_active_staged_action()
+        if action is None or action.status != "staged":
+            return None
+        if action.id in self._offered_confirmation_ids:
+            return None
+        if confirmation_level(action.action_type) != CONFIRM_USER:
+            return None
+        self._offered_confirmation_ids.add(action.id)
+        self._pending_confirmation = action.id
+        description = self._describe_staged_action(action)
+        return {
+            "kind": "confirm_offer",
+            "speech": f"Ready when you are: {description}. Shall I go ahead — yes or no?",
+            "staged_action_id": action.id,
+        }
+
+    def _handle_confirmation_reply(self, utterance: str) -> dict[str, Any] | None:
+        from app.parker.pipeline import (
+            cancel_staged_action,
+            confirm_staged_action,
+            execute_staged_action,
+        )
+
+        action_id = self._pending_confirmation
+        assert action_id is not None
+        normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
+        normalized = re.sub(r"\s+", " ", normalized)
+        if normalized in CONFIRM_YES_PHRASES:
+            self._pending_confirmation = None
+            confirm_staged_action(self.db, action_id, confirmed_by="patient")
+            executed = execute_staged_action(self.db, action_id)
+            return self._speech_for_execution(executed)
+        if normalized in CONFIRM_NO_PHRASES:
+            self._pending_confirmation = None
+            cancel_staged_action(self.db, action_id, cancelled_by="patient")
+            return {
+                "kind": "cancelled",
+                "speech": "Okay — cancelled. Nothing will run unless you ask again.",
+                "cancelled_staged_action_id": action_id,
+            }
+        self._pending_confirmation = None  # deferred; route the utterance normally
+        return None
+
+    def _describe_staged_action(self, action) -> str:
+        import json as _json
+
+        try:
+            payload = _json.loads(action.action_payload or "{}")
+        except ValueError:
+            payload = {}
+        subject = (payload.get("subject") or "").strip() or action.action_type
+        if action.action_type == "family_message":
+            recipient = payload.get("recipient") or "family"
+            body = (payload.get("intent_text") or subject).strip()
+            return f"a message to {recipient} — “{body}”"
+        if action.action_type == "reminder":
+            return f"a reminder about “{subject}”"
+        if action.action_type == "exercise_start":
+            return f"starting “{subject}”"
+        if action.action_type == "media_playlist":
+            return f"putting on “{subject}”"
+        if action.action_type == "open_links":
+            return f"showing “{subject}” on the family computer"
+        return f"“{subject}”"
+
+    def _speech_for_execution(self, action) -> dict[str, Any]:
+        """Relay an execution outcome as something Parker can say aloud."""
+
+        import json as _json
+
+        result = action.execution_result or ""
+        try:
+            payload = _json.loads(action.action_payload or "{}")
+        except ValueError:
+            payload = {}
+        if action.status == "executed":
+            if action.action_type == "family_message":
+                recipient = payload.get("recipient") or "family"
+                if "released" in result:
+                    speech = (
+                        f"Done — your message to {recipient} is released. "
+                        "The family can see it, and it stays on this machine for now."
+                    )
+                else:
+                    speech = (
+                        f"Done — your message to {recipient} is saved and waiting "
+                        "for family approval before anything else happens."
+                    )
+            elif result.startswith("openclaw skill completed: "):
+                speech = f"Done — {result.removeprefix('openclaw skill completed: ')}"
+            elif action.action_type == "exercise_start":
+                speech = f"Done — {payload.get('subject') or 'your exercise'} is starting."
+            elif action.action_type == "reminder":
+                speech = f"Done — I'll keep bringing up “{payload.get('subject') or 'that'}” until it's handled."
+            else:
+                speech = f"Done — {result}"
+            return {"kind": "executed", "speech": speech, "staged_action_id": action.id}
+        if action.status == "failed":
+            detail = result.removeprefix("openclaw skill failed (no retry was attempted): ")
+            return {
+                "kind": "execution_failed",
+                "speech": (
+                    f"That didn't work — {detail}. I've put it on the family review "
+                    "page, and I won't retry on my own."
+                ),
+                "staged_action_id": action.id,
+                "flag_for_family": True,
+            }
+        return {
+            "kind": "blocked",
+            "speech": f"I couldn't run that — {result}",
+            "staged_action_id": action.id,
+        }
 
     def _latest_cancellable_outbox_message(self):
         from app.db.models import CapturedIntent, OutboxMessage, ResolutionResult, StagedAction
