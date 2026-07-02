@@ -373,7 +373,7 @@
       "upgrade_path": "Build a repair-quality rubric, run blinded grading on synthetic fixtures, then add consented accessibility feedback only after approval."
     }
   ],
-  "date": "2026-07-02",
+  "date": "2026-07-01",
   "eval": "construct_validity_matrix_v0",
   "evidence_paths_checked": [
     "benchmark/reports/caregiver_state_legibility_eval_latest.json",

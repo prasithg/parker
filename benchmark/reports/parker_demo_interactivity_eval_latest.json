@@ -6,7 +6,7 @@
     "simplicity_and_generality": "Plain JSON traces can be produced by Parker, another voice agent, or a public benchmark runner; metrics are independent of Parker internals."
   },
   "current_product_trace_note": "TextSession handles changed-mind draft revisions and cancel-only steering: it cancels prior local staged drafts without duplicating them, and can cancel queued local outbox messages before any external send path exists.",
-  "date": "2026-07-02",
+  "date": "2026-07-01",
   "failures": [],
   "metrics": {
     "dimension_scores": {
