@@ -28,25 +28,32 @@ microphone near where the user sits, and the user's own macOS account.
 
 1. **Install.** Download `Parker.dmg`, drag Parker.app into Applications
    under the user's account. No Python, no terminal, no dependencies.
-   **[gap: Session F+G, in flight — Part 1 is its acceptance checklist]**
+   *(shipped 2026-07-02 — Parker.app, Tauri v2 shell + PyInstaller
+   sidecar, acceptance-tested from the dmg; see docs/desktop.md.
+   Unsigned build: first launch needs right-click → Open. **[gap:
+   signing/notarization — after the first family install]**)*
 2. **Mic check.** Onboarding asks for microphone permission, downloads the
    local speech model (one-time; speech recognition is local forever after),
    then has you say a sentence and repeats back what it heard. Do this
    *from the user's chair*, at conversation volume, with the TV murmuring —
-   not leaning into the mic. **[gap: F+G]**
+   not leaning into the mic. *(shipped — onboarding wizard with mic check,
+   model download with progress, TTS preview; macOS's microphone Allow
+   click is yours by design)*
 3. **Connect intelligence.** Paste one Anthropic API key. This powers the
    brain — open questions and computer actions. Everything routine
    (reminders, repair, confirmation) runs locally and works even with no
    key at all; Parker must say so and degrade gracefully, not break.
    Fast conversational replies route to a fast model; heavier agent work
-   routes to a bigger one — same key, per-task routing. **[gap: key entry
-   UI is F+G; per-task model routing not yet built]**
+   routes to a bigger one — same key, per-task routing. **[gap: key entry —
+   the engine deliberately refuses secrets in config.json, so the wizard
+   needs a Keychain-backed field; per-task model routing not yet built.
+   Everything local already runs keyless (brain-lane keyless gate PASS)]**
 4. **Pick the voice.** Parker speaks. v0 ships with the best local macOS
    voices (download a premium one in the picker — free, offline). A
    natural cloud voice is a later admin toggle; the aspiration is a warm,
    familiar timbre the user *wants* to answer — licensed voices only,
-   never a cloned real person without consent. *(exists:
-   `PARKER_TTS_VOICE`; picker is **[gap: F+G]**)*
+   never a cloned real person without consent. *(shipped: voice list +
+   spoken preview in the wizard, backed by /setup/tts-voices)*
 5. **Connect his world.** This is what separates Parker from a smart
    speaker. v0 connects exactly two sources:
    - **Calendar** (read + the one write scope: adding events)
@@ -61,7 +68,8 @@ microphone near where the user sits, and the user's own macOS account.
 6. **Teach it the names.** The personal lexicon: family names, doctors,
    places ("Sarah", "Priya", "Leander"). This is what makes names survive
    imperfect speech recognition on the first try. *(exists:
-   `PERSONAL_LEXICON`; settings surface **[gap: F+G]**)*
+   `PERSONAL_LEXICON`; **[gap: settings surface beyond re-running the
+   wizard]**)*
 7. **Set guardrails once.** Approve capabilities, not actions: answers,
    reminders, calendar writes, exercises, and computer actions Parker may
    take on his Mac. Within an approved capability, the user's own spoken
@@ -132,9 +140,10 @@ after one repair ≥90% (harness today: 82% on 333 real+synthetic clips,
 
 ## The slice queue (what Day 1 exposes, ranked)
 
-1. **Install/onboarding** — Session F+G (Tauri + sidecar), in flight.
-   Now must also include: API-key entry with graceful no-key degrade,
-   voice picker, context sign-ins, lexicon/guardrail settings surfaces.
+1. **Onboarding round 2** — Parker.app shipped (2026-07-02) with wizard,
+   mic check, model download, voice preview, tray, autostart. Remaining:
+   Keychain-backed API-key entry, context sign-ins (Google CLI connector),
+   lexicon/guardrail settings surfaces, signing/notarization.
 2. **Context layer** — local index over calendar + YouTube history only;
    retrieval into brain answers with a privacy contract (local index,
    minimal excerpts to the model, nothing stored server-side) and its own
