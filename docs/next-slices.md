@@ -468,6 +468,63 @@ Operations artifacts: `/Users/prasithgovin/Operations/parker-autodata-nightly/ru
 
 Verification: `backend/.venv/bin/pytest backend/tests/test_audio_autodata_evaluator.py -q` (13 passed, 1 warning); `TZ=UTC make eval-audio-autodata` (31/31 accepted, 0 unsafe); `TZ=UTC make eval-release-readiness` (gate PASS); full `TZ=UTC make test` (530 passed, 2 warnings).
 
+## Parker.app — the desktop harness — DONE (2026-07-02, Session F+G)
+
+Shipped: Parker as a downloadable macOS app — Tauri v2 menu-bar shell +
+the whole Python engine as a PyInstaller onedir sidecar (183 MB; dmg
+99 MB), installed and acceptance-tested from the dmg on this machine.
+ADR: `docs/desktop-architecture.md`; lifecycle: `docs/desktop.md`.
+
+Four slices in one arc: **(1) app-ified engine** — `app/paths.py`
+(PARKER_HOME; dev checkouts keep byte-identical repo paths),
+config.json layered under env (secrets refused on write AND dropped on
+read), the `parker` CLI (serve with port preflight + `--parent-pid`
+orphan watchdog, talk, onboard, doctor, download-model, selftest,
+version), `/setup` surface (status/config/model-download with progress/
+mic-check/tts-voices/tts-preview) and `/parker/loop/state` for the tray.
+**(2) sidecar** — `backend/parker.spec` (committed), `make sidecar`,
+`scripts/sidecar_smoke.sh` (clean shell: selftest + native-lib probes +
+/health + doctor; whisper-base loads inside the bundle). **(3) shell**
+— `desktop/` (Rust-only, no node): generic SidecarManager (engine now,
+talk loop second, future OpenClaw gateway third), free-port spawn, 45s
+health wait, 1→15s crash backoff, single-instance, tray state icon
+mirroring the loop, windows = engine's own pages, onboarding wizard
+served BY the engine (`/setup/ui`, works in a plain browser too),
+autostart-once after onboarding. **(4) acceptance on this machine** —
+real dmg install (3× across engine rebuilds — config/model/history
+survived every reinstall), real 150 MB model download to
+`Application Support/Parker/models`, spoken conversation through the
+installed app (whisper-base + VAD + `say`, sub-second added latency):
+pharmacy-reminder capture → spoken offer → spoken "Yes, go ahead" →
+executed `confirmed_by=patient`; dad-screen state mirrored every
+exchange live; quit killed both processes; relaunch resumed straight to
+tray; bundled `parker doctor` all green.
+
+Tester zero earned three product fixes the suite couldn't see:
+whisper echoing the lexicon bias prompt on silent windows (now
+filtered, pinned with the verbatim live artifact); "Yes, go ahead." not
+matching the exact-phrase confirmation set (now a bounded
+all-affirmative token rule, mirrored for no); frozen binaries ignoring
+PYTHONUNBUFFERED so talk.log wasn't tail-able (loop now line-buffers
+itself).
+
+Deferred: signing/notarization + auto-updater (checklist in
+docs/desktop.md); Settings UI beyond re-opening the wizard; the second
+OpenClaw-gateway sidecar (manager is ready); SIGINT handling in the
+frozen talk binary (shell uses SIGKILL, unaffected); bare "No" with a
+stale draft routes to the changed-mind revision path (observed live —
+should no-op or cancel); wake-word/addressed-to-me gating (ambient
+windows still draw nuisance choices — pre-existing, now very visible on
+the dad screen); TCC mic-permission Allow click needs a human (by
+design).
+
+Verification: full `TZ=UTC make test` (600 passed), sidecar smoke PASS,
+`TZ=UTC make eval-release-readiness` PASS, `make eval-audio-real
+MODELS=base EXTRA_MANIFEST=synthetic_commands_v1_manifest.json`
+(58.27→76.26→82.01, 0 unsafe — byte-identical, all-cache),
+`make eval-hands` 8/8, `make eval-audio-autodata` 31/31, brain-lane
+keyless PASS, acceptance transcript in the session summary.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:
