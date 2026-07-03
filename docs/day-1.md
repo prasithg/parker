@@ -14,7 +14,7 @@ Two people have a Day 1, and they are different products:
 **v0 scope decision (2026-07-02):** Parker does not send anything out of the
 house. No external messages, no calls, no posts. It is an assistant that
 listens, talks back, answers well because it has context on the user's own
-digital life (browsing, YouTube, mail, calendar), and acts *on the user's own
+digital life (his YouTube watching and his calendar, to start), and acts *on the user's own
 computer* — opening things, finding things, putting things on the calendar.
 Family stays informed through the digest they check, not through messages
 Parker pushes. Outbound send paths return in a later version, deliberately.
@@ -48,13 +48,15 @@ microphone near where the user sits, and the user's own macOS account.
    never a cloned real person without consent. *(exists:
    `PARKER_TTS_VOICE`; picker is **[gap: F+G]**)*
 5. **Connect his world.** This is what separates Parker from a smart
-   speaker. Sign in / point Parker at, read-only:
+   speaker. v0 connects exactly two sources:
    - **Calendar** (read + the one write scope: adding events)
-   - **Mail** (read-only)
-   - **Browsing history & YouTube** (his Chrome profile, local read)
-   All of it stays on the Mac: context is indexed locally, only the
-   minimum needed for an answer ever goes to the model, raw data is never
-   uploaded wholesale or stored by Parker beyond its local index.
+   - **YouTube history** (read-only — it's where he spends his time, and
+     it powers the "that video I was watching" moments)
+   Deliberately NOT in v0: mail and general browsing history — the most
+   sensitive data in his life, added later one source at a time as each
+   earns its place. What is connected stays on the Mac: indexed locally,
+   only the minimum needed for an answer ever goes to the model, raw data
+   never uploaded wholesale or stored beyond Parker's local index.
    **[gap: context layer — biggest unbuilt piece of v0]**
 6. **Teach it the names.** The personal lexicon: family names, doctors,
    places ("Sarah", "Priya", "Leander"). This is what makes names survive
@@ -116,7 +118,7 @@ didn't ask for. *(exists — this is the harness's protected metric)*
 
 What he should *never* experience on Day 1: repeating himself more than
 once per request; Parker acting without his yes; anyone else approving his
-requests; any hint his voice or his mail leaves the house (it doesn't).
+requests; any hint his voice or his history leaves the house (it doesn't).
 
 **Success criterion: within the first ten minutes in the chair — one
 question about his own life answered correctly, one reminder set by voice
@@ -133,10 +135,12 @@ after one repair ≥90% (harness today: 82% on 333 real+synthetic clips,
 1. **Install/onboarding** — Session F+G (Tauri + sidecar), in flight.
    Now must also include: API-key entry with graceful no-key degrade,
    voice picker, context sign-ins, lexicon/guardrail settings surfaces.
-2. **Context layer** — local index over calendar, mail, browsing/YouTube
-   history; retrieval into brain answers with a privacy contract (local
-   index, minimal excerpts to the model, nothing stored server-side).
-   The biggest unbuilt piece of the v0 story.
+2. **Context layer** — local index over calendar + YouTube history only;
+   retrieval into brain answers with a privacy contract (local index,
+   minimal excerpts to the model, nothing stored server-side) and its own
+   leak-guard tests, same rigor as the audio pipeline. Mail and browsing
+   history are explicitly deferred; the layer should make adding a source
+   cheap so they can come later, one at a time.
 3. **Hands-free invocation + latency** — wake entry so nobody launches
    anything, plus streaming so replies feel conversational (brain tail
    currently 11.76 s max). If Haiku-class routing isn't fast enough,
