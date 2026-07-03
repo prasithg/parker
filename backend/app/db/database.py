@@ -21,6 +21,7 @@ def create_tables():
     import app.evening.session  # noqa: F401
     import app.exercises.session  # noqa: F401
     import app.memory.models  # noqa: F401
+    import app.parker.loop_state  # noqa: F401
     import app.parker.screen  # noqa: F401
 
     Base.metadata.create_all(bind=engine)

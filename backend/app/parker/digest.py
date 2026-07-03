@@ -409,8 +409,11 @@ def render_digest_page(db: Session, *, now: Optional[datetime] = None) -> str:
 
 
 def default_digest_dir() -> Path:
-    # backend/digests/ next to the local DB; gitignored, local only.
-    return Path(__file__).resolve().parents[2] / "digests"
+    # PARKER_HOME/digests — backend/digests/ in a dev checkout (gitignored),
+    # ~/Library/Application Support/Parker/digests in the desktop app.
+    from app import paths
+
+    return paths.digests_dir()
 
 
 def write_digest_file(

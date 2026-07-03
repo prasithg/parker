@@ -10,3 +10,10 @@ node_modules/
 .venv*/
 # Local family digests (make digest) — artifacts stay on this machine.
 backend/digests/
+# Whisper weights when a dev checkout has no HF cache (PARKER_HOME/models).
+backend/models/
+# Python packaging metadata from `pip install -e backend`.
+backend/*.egg-info/
+# PyInstaller sidecar build artifacts (the .spec IS committed).
+backend/build/
+backend/dist/

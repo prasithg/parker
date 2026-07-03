@@ -1,6 +1,83 @@
-"""Configuration loaded from environment variables."""
+"""Configuration loaded from environment variables and the family config file.
 
-from pydantic_settings import BaseSettings
+Precedence (first wins): explicit env vars > ``.env`` (dev convenience) >
+``PARKER_HOME/config.json`` (family-administered, written by the
+onboarding wizard / ``parker onboard``) > code defaults.
+
+The config file NEVER carries secrets: key/token/password fields are
+dropped on read even if someone hand-edits them in (and the write path in
+``app.parker.family_config`` refuses them). Secrets are env-or-keychain
+only.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from pydantic import Field
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
+logger = logging.getLogger("parker.config")
+
+# Settings fields that must never be read from config.json.
+SECRET_SETTINGS_KEYS = frozenset(
+    {
+        "anthropic_api_key",
+        "openai_api_key",
+        "elevenlabs_api_key",
+        "twilio_account_sid",
+        "twilio_auth_token",
+        "twilio_phone_number",
+        "dashboard_password",
+        "parker_openclaw_gateway_token",
+    }
+)
+
+
+def _default_database_url() -> str:
+    from app import paths
+
+    return paths.default_database_url()
+
+
+class FamilyConfigFileSource(PydanticBaseSettingsSource):
+    """``PARKER_HOME/config.json`` as a low-precedence settings source.
+
+    Unknown keys are ignored (they may be app-level metadata like
+    ``onboarding_completed``); secret keys are dropped unconditionally; a
+    missing or malformed file contributes nothing — the engine must boot
+    on a broken config file, never crash.
+    """
+
+    def _read_file(self) -> dict[str, Any]:
+        from app import paths
+
+        try:
+            raw = json.loads(paths.config_path().read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            logger.warning("ignoring unreadable config file %s: %s", paths.config_path(), exc)
+            return {}
+        if not isinstance(raw, dict):
+            logger.warning("ignoring config file %s: top level is not an object", paths.config_path())
+            return {}
+        fields = self.settings_cls.model_fields
+        return {
+            key: value
+            for key, value in raw.items()
+            if key in fields and key not in SECRET_SETTINGS_KEYS
+        }
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        # Unused — __call__ supplies the whole mapping at once.
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return self._read_file()
 
 
 class Settings(BaseSettings):
@@ -8,29 +85,29 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
-    
+
     # ElevenLabs (voice cloning is optional and consent-gated; not the product)
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""  # cloned voice ID
     voice_clone_consented: bool = False  # explicit family consent recorded
-    
+
     # OpenAI
     openai_api_key: str = ""
     openai_realtime_model: str = "gpt-4o-realtime-preview-2024-12-17"
     openai_realtime_voice: str = "alloy"
-    
+
     # Patient
     patient_phone_number: str = ""
     patient_name: str = "Dad"
-    
-    # Database
-    database_url: str = "sqlite:///./parker.db"
+
+    # Database (default resolves through app.paths / PARKER_HOME)
+    database_url: str = Field(default_factory=_default_database_url)
     dose_verification_window_minutes: int = 30
 
     # Parker non-response escalation candidates
     parker_non_response_resurface_threshold: int = 3
     parker_non_response_quiet_minutes: int = 30
-    
+
     # Dashboard auth
     dashboard_username: str = "family"
     dashboard_password: str = ""
@@ -76,6 +153,23 @@ class Settings(BaseSettings):
     parker_openclaw_gateway_token: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            FamilyConfigFileSource(settings_cls),
+            file_secret_settings,
+        )
 
 
 settings = Settings()

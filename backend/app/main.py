@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 
+from app import __version__
 from app.calls.router import router as calls_router
 from app.calls.scheduler import setup_scheduler
 from app.config import settings
@@ -14,6 +15,7 @@ from app.memory.router import router as memory_router
 from app.db.database import SessionLocal, create_tables
 from app.meds.verification_router import router as dose_verification_router
 from app.parker.router import router as parker_router
+from app.parker.setup_api import router as setup_router
 
 
 @asynccontextmanager
@@ -38,7 +40,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Parker",
     description="Family-aware home assistant for effortful speech (local v0)",
-    version="0.2.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -48,6 +50,7 @@ app.include_router(escalation_router, prefix="/escalations", tags=["escalations"
 app.include_router(memory_router, prefix="/memory", tags=["memory"])
 app.include_router(dose_verification_router, tags=["dose-verification"])
 app.include_router(parker_router, prefix="/parker", tags=["parker"])
+app.include_router(setup_router, prefix="/setup", tags=["setup"])
 
 
 @app.get("/health")

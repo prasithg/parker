@@ -12,6 +12,7 @@ backend-venv:
 	fi
 	@if [ ! -x "$(BACKEND_PYTHON)" ]; then python3.11 -m venv backend/.venv; fi
 	$(BACKEND_PIP) install -r backend/requirements.txt
+	$(BACKEND_PIP) install --quiet -e backend
 
 install: backend-venv
 	cd dashboard && npm install

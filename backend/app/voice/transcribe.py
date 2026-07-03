@@ -83,7 +83,17 @@ def load_local_transcriber(
     except ImportError as exc:
         raise RuntimeError(VOICE_DEPS_HINT) from exc
 
-    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    from app import paths
+
+    # PARKER_HOME/models when the app downloaded the weights; an existing
+    # HF-cache copy keeps being used as-is (None = faster-whisper default).
+    download_root = paths.whisper_download_root(model_size)
+    model = WhisperModel(
+        model_size,
+        device="cpu",
+        compute_type="int8",
+        download_root=str(download_root) if download_root is not None else None,
+    )
     prompt = initial_prompt if initial_prompt is not None else lexicon_initial_prompt()
 
     def _transcribe(audio_path: Path) -> list[str]:
