@@ -13,8 +13,12 @@ class Base(DeclarativeBase):
     pass
 
 
-def create_tables():
-    """Create all tables (v0 — no Alembic migration yet)."""
+def create_tables(bind=None):
+    """Create all tables (v0 — no Alembic migration yet).
+
+    ``bind`` defaults to the global engine; ``parker selftest`` passes a
+    private in-memory engine so a self-check never touches real state.
+    """
     from app.db.models import Base  # noqa: F811 — ensure core models imported
     import app.conversation.repair_events  # noqa: F401
     import app.escalation.models  # noqa: F401
@@ -24,7 +28,7 @@ def create_tables():
     import app.parker.loop_state  # noqa: F401
     import app.parker.screen  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=bind if bind is not None else engine)
 
 
 def get_db():

@@ -36,6 +36,16 @@ def test_version_prints_the_engine_version(capsys):
     assert __version__ in capsys.readouterr().out
 
 
+def test_selftest_runs_one_engine_turn_in_memory(capsys):
+    """The bundle smoke check: capture + stage + refusal, no real DB touched."""
+
+    assert cli.main(["selftest"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["ok"] is True
+    assert report["staged_actions"] == 1
+    assert [t["kind"] for t in report["turns"]] == ["captured", "refused"]
+
+
 # --- serve preflight -------------------------------------------------------
 
 

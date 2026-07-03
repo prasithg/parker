@@ -1,0 +1,4 @@
+# Sidecar build deps (make sidecar). Deliberately separate from
+# requirements.txt: PyInstaller is only needed to package the engine as
+# the desktop app's bundled binary, never to run or test it.
+pyinstaller>=6.10

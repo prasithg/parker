@@ -160,6 +160,113 @@ def cmd_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_selftest(args: argparse.Namespace) -> int:
+    """One real engine turn on an in-memory DB — proves the bundle works.
+
+    Exercises the whole keyless core (TextSession routing, capture,
+    resolve, stage, screen-state publish) without audio deps, network,
+    or touching the real database. The sidecar smoke script runs this.
+    """
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.conversation.textloop import TextSession
+    from app.db.database import create_tables
+    from app.db.models import CallLog, StagedAction
+    from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_tables(bind=engine)
+    db = sessionmaker(bind=engine)()
+
+    call = CallLog(call_sid="SELFTEST", call_type="selftest")
+    db.add(call)
+    db.commit()
+    db.refresh(call)
+
+    session = TextSession(db, call.id)
+    turns = []
+    response = session.handle("Remind me to take a short walk this afternoon")
+    turns.append({"you": "Remind me to take a short walk this afternoon", **response})
+    resolve_captured_intents(db)
+    stage_resolved_actions(db)
+    staged = db.query(StagedAction).count()
+
+    refusal = session.handle("Double my medication dose tonight")
+    turns.append({"you": "Double my medication dose tonight", **refusal})
+
+    ok = (
+        turns[0].get("kind") == "captured"
+        and staged == 1
+        and turns[1].get("kind") == "refused"
+    )
+    print(
+        json.dumps(
+            {
+                "ok": ok,
+                "version": __version__,
+                "staged_actions": staged,
+                "voice_deps": _probe_voice_deps(load_model=args.load_model),
+                "turns": [
+                    {"you": t["you"], "kind": t.get("kind"), "parker": t.get("speech")}
+                    for t in turns
+                ],
+            },
+            indent=2,
+        )
+    )
+    db.close()
+    return 0 if ok else 1
+
+
+def _probe_voice_deps(*, load_model: bool = False) -> dict:
+    """Can this build hear and speak? Import-level probes for the bundle.
+
+    The engine core stays keyless/audio-free (selftest's exit code never
+    depends on these), but the sidecar smoke script asserts them — a
+    bundle whose ctranslate2/PortAudio dylibs went missing must fail the
+    smoke, not the first family conversation.
+    """
+
+    from app import paths
+    from app.voice.transcribe import DEFAULT_ASR_MODEL
+
+    probes: dict = {"faster_whisper": False, "sounddevice": False, "model_loadable": None}
+    try:
+        import faster_whisper  # noqa: F401
+
+        probes["faster_whisper"] = True
+    except Exception as exc:  # noqa: BLE001 — report, never crash
+        probes["faster_whisper_error"] = str(exc)
+    try:
+        import sounddevice  # noqa: F401
+
+        probes["sounddevice"] = True
+    except Exception as exc:  # noqa: BLE001
+        probes["sounddevice_error"] = str(exc)
+
+    if (
+        load_model
+        and probes["faster_whisper"]
+        and paths.whisper_model_location(DEFAULT_ASR_MODEL) != "missing"
+    ):
+        try:
+            from app.voice.transcribe import load_local_transcriber
+
+            load_local_transcriber(model_size=DEFAULT_ASR_MODEL)
+            probes["model_loadable"] = True
+        except Exception as exc:  # noqa: BLE001
+            probes["model_loadable"] = False
+            probes["model_load_error"] = str(exc)
+    return probes
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="parker", description="Parker engine — voice assistant for effortful speech"
@@ -200,6 +307,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     version = sub.add_parser("version", help="print the engine version")
     version.set_defaults(func=cmd_version)
+
+    selftest = sub.add_parser(
+        "selftest", help="one engine turn on an in-memory DB (bundle smoke check)"
+    )
+    selftest.add_argument(
+        "--load-model",
+        action="store_true",
+        help="also load the whisper model if present (bundle native-lib probe)",
+    )
+    selftest.set_defaults(func=cmd_selftest)
 
     return parser
 

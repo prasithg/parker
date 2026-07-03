@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo digest voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo digest voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -162,6 +162,15 @@ talk: backend-venv
 
 migrate:
 	@echo "v0 uses create_tables() — no Alembic yet (use make reset-db for a fresh local DB)"
+
+# Bundle the engine as the desktop app's sidecar binary (PyInstaller
+# onedir; docs/desktop-architecture.md). Output: backend/dist/parker/.
+# Voice deps must be installed — the bundle carries faster-whisper and
+# sounddevice so the app never needs pip on a family machine.
+sidecar: backend-venv voice-deps
+	$(BACKEND_PIP) install --quiet -r backend/requirements-build.txt
+	cd backend && ./.venv/bin/pyinstaller parker.spec --noconfirm
+	@echo "Sidecar built: backend/dist/parker/parker — verify with scripts/sidecar_smoke.sh"
 
 # Continuous talk loop: one persistent TextSession so repair-choice state
 # carries across turns. Parker answers out loud (macOS say) and recording is
