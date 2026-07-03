@@ -140,7 +140,12 @@ after one repair ≥90% (harness today: 82% on 333 real+synthetic clips,
    minimal excerpts to the model, nothing stored server-side) and its own
    leak-guard tests, same rigor as the audio pipeline. Mail and browsing
    history are explicitly deferred; the layer should make adding a source
-   cheap so they can come later, one at a time.
+   cheap so they can come later, one at a time. Google access goes through
+   an existing CLI (gogcli or Google's official Workspace CLI) as the
+   connector — Parker does not build its own OAuth stack. Note: no official
+   API exposes YouTube watch history; candidate routes are Chrome local
+   history filtered to youtube.com (fresh, local, domain-scoped) with
+   Google Takeout export as backfill — decide in this slice's spec.
 3. **Hands-free invocation + latency** — wake entry so nobody launches
    anything, plus streaming so replies feel conversational (brain tail
    currently 11.76 s max). If Haiku-class routing isn't fast enough,
