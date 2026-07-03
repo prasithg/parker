@@ -17,6 +17,7 @@ import threading
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app import paths
@@ -105,6 +106,15 @@ class ModelDownloadManager:
 download_manager = ModelDownloadManager()
 
 
+@router.get("/ui", response_class=HTMLResponse, include_in_schema=False)
+def setup_wizard_page() -> str:
+    """The onboarding wizard — the desktop shell's first-run window."""
+
+    from app.parker.setup_ui import SETUP_PAGE_HTML
+
+    return SETUP_PAGE_HTML
+
+
 @router.get("/status")
 def setup_status() -> dict[str, Any]:
     """Everything the shell needs to decide 'wizard or straight to tray'."""
@@ -137,6 +147,60 @@ def setup_config(update: ConfigUpdate) -> dict[str, Any]:
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"could not write config file: {exc}") from exc
     return {"written": written, "config_path": str(paths.config_path())}
+
+
+class MicCheckRequest(BaseModel):
+    seconds: float = 1.5
+
+
+@router.post("/mic-check")
+def setup_mic_check(request: MicCheckRequest) -> dict[str, Any]:
+    """Open the default input for a moment and report the level.
+
+    This is the wizard's TCC moment: the first real input-stream open,
+    so the macOS microphone permission prompt appears here — in context,
+    next to a level meter — attributed to the app that spawned the
+    engine. Frames are discarded in memory; nothing is written.
+    """
+
+    from app.voice.record import sample_mic_level
+
+    try:
+        return {"ok": True, **sample_mic_level(request.seconds)}
+    except RuntimeError as exc:  # voice deps missing
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — PortAudio raises its own hierarchy
+        raise HTTPException(
+            status_code=503,
+            detail=f"could not open the microphone: {exc}",
+        ) from exc
+
+
+@router.get("/tts-voices")
+def setup_tts_voices() -> dict[str, Any]:
+    """Installed `say` voices for the wizard's voice picker."""
+
+    from app.voice.speak import list_say_voices
+
+    return {"voices": list_say_voices(), "current": settings.parker_tts_voice}
+
+
+class TtsPreviewRequest(BaseModel):
+    voice: str = ""
+    rate_wpm: int = 0
+    text: str = "Hello — I'm Parker. This is how I'll sound."
+
+
+@router.post("/tts-preview")
+def setup_tts_preview(request: TtsPreviewRequest) -> dict[str, Any]:
+    """Speak one preview line with an explicit voice (not the saved one)."""
+
+    from app.voice.speak import speak_once
+
+    spoke = speak_once(
+        request.text[:200], voice=request.voice, rate_wpm=max(0, request.rate_wpm)
+    )
+    return {"spoke": spoke}
 
 
 class ModelDownloadRequest(BaseModel):

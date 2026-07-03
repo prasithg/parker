@@ -1,0 +1,24 @@
+[package]
+name = "parker-desktop"
+version = "0.3.0"
+description = "Parker — family-aware voice assistant for effortful speech (desktop shell)"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "parker_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Blocking HTTP for engine health/status polls from plain threads —
+# deliberately not an async stack; the shell is a process babysitter.
+ureq = { version = "2", features = ["json"] }
+dirs = "6"
