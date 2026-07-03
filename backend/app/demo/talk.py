@@ -85,6 +85,7 @@ def run_talk_loop(
     on_turn_start: Optional[Callable[[int], None]] = None,
     on_exchange: Optional[Callable[[dict[str, Any]], None]] = None,
     on_silence: Optional[Callable[[], None]] = None,
+    on_state: Optional[Callable[[str], None]] = None,
 ) -> list[dict[str, Any]]:
     """Continuous listen→route loop over one persistent TextSession.
 
@@ -120,6 +121,11 @@ def run_talk_loop(
             if on_turn_start:
                 on_turn_start(turn)
 
+            # Loop state for the tray icon: listening while the window is
+            # open, processing once we have words to route. The speaking
+            # transition lives with the caller that owns TTS.
+            if on_state:
+                on_state("listening")
             lines, asr_seconds = _record_one(record, transcriber, seconds)
             turn += 1
 
@@ -128,6 +134,8 @@ def run_talk_loop(
                     on_silence()
                 continue
 
+            if on_state:
+                on_state("processing")
             for line in lines:
                 route_started = time.monotonic()
                 response = session.handle(line)

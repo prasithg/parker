@@ -352,6 +352,17 @@ def patient_screen_state(db: Session = Depends(get_db)) -> dict[str, Any]:
     return {"empty": False, **serialize_screen_state(state)}
 
 
+# Open like the screen state: it leaks nothing beyond whether the talk
+# loop is listening — the desktop shell polls it for the tray icon.
+@router.get("/loop/state")
+def voice_loop_state(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Talk-loop runtime state (idle/listening/processing/speaking)."""
+
+    from app.parker.loop_state import get_loop_state
+
+    return get_loop_state(db)
+
+
 # The digest aggregates message bodies, so it sits with the caregiver
 # decision surface behind the same opt-in auth seam as /parker/review.
 @router.get(

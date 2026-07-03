@@ -1,11 +1,14 @@
-"""Continuous talk loop CLI — ``make talk-loop``.
+"""Continuous talk loop CLI — ``make talk-loop`` / ``parker talk``.
 
 Wraps ``run_talk_loop`` with an interactive terminal UI: prints a
 listening prompt before each window, prints Parker's response after,
 and exits cleanly on Ctrl-C with a final summary of what was staged.
 
-This is the entry point a pilot user leaves running in a terminal while
-the caregiver review page stays open in the browser.
+This is the entry point a pilot user leaves running while the caregiver
+review page stays open in the browser. The desktop shell runs the same
+loop as its second sidecar process; the loop publishes its state
+(listening/processing/speaking) to the local DB so the tray icon can
+mirror it.
 """
 
 from __future__ import annotations
@@ -16,12 +19,28 @@ from app.demo.talk import DEFAULT_SECONDS, run_talk_loop
 from app.voice.speak import load_local_speaker
 
 
-def main() -> None:  # pragma: no cover — interactive entry point
+def run_cli_loop(seconds: float = DEFAULT_SECONDS, server_port: int = 8000) -> None:
+    """The interactive loop shared by ``make talk-loop`` and ``parker talk``."""
+
+    # Line-buffer the transcript even when stdout is a file: the desktop
+    # shell redirects this loop to PARKER_HOME/logs/talk.log, and a frozen
+    # (PyInstaller) interpreter ignores PYTHONUNBUFFERED — a family member
+    # tailing the log must see turns as they happen, not on exit.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, OSError):  # pragma: no cover — non-file streams
+            pass
+
     from app.db.database import SessionLocal, create_tables
     from app.parker.hands import configure_hands_from_settings
+    from app.parker.loop_state import (
+        STATE_IDLE,
+        STATE_SPEAKING,
+        publish_loop_state,
+    )
     from app.voice.record import load_local_recorder, load_vad_recorder
 
-    seconds = float(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SECONDS
     create_tables()
     configure_hands_from_settings()
     db = SessionLocal()
@@ -61,6 +80,7 @@ def main() -> None:  # pragma: no cover — interactive entry point
             )
         # Speaking blocks until done so the next window never records
         # Parker's own voice.
+        publish_loop_state(db, STATE_SPEAKING)
         speak(exchange["parker"])
 
     def on_silence() -> None:
@@ -68,25 +88,34 @@ def main() -> None:  # pragma: no cover — interactive entry point
 
     print("Parker talk loop — continuous voice conversation.")
     print("Parker answers out loud (set PARKER_TTS_ENABLED=false for text-only).")
-    print("Open http://localhost:8000/parker/review/ui as the caregiver view.\n")
+    print(f"Open http://localhost:{server_port}/parker/review/ui as the caregiver view.\n")
 
-    run_talk_loop(
-        db,
-        seconds=seconds,
-        recorder=recorder,
-        on_turn_start=on_turn_start,
-        on_exchange=on_exchange,
-        on_silence=on_silence,
-    )
-
-    print(f"\nStopped after {turn_count} turn(s). Review staged intents at /parker/review/ui")
-    if latencies:
-        print(
-            f"Session latency (utterance end → speech start): "
-            f"mean {sum(latencies) / len(latencies):.2f}s, max {max(latencies):.2f}s "
-            f"over {len(latencies)} exchange(s)"
+    try:
+        run_talk_loop(
+            db,
+            seconds=seconds,
+            recorder=recorder,
+            on_turn_start=on_turn_start,
+            on_exchange=on_exchange,
+            on_silence=on_silence,
+            on_state=lambda state: publish_loop_state(db, state),
         )
-    db.close()
+    finally:
+        publish_loop_state(db, STATE_IDLE)
+
+        print(f"\nStopped after {turn_count} turn(s). Review staged intents at /parker/review/ui")
+        if latencies:
+            print(
+                f"Session latency (utterance end → speech start): "
+                f"mean {sum(latencies) / len(latencies):.2f}s, max {max(latencies):.2f}s "
+                f"over {len(latencies)} exchange(s)"
+            )
+        db.close()
+
+
+def main() -> None:  # pragma: no cover — interactive entry point
+    seconds = float(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SECONDS
+    run_cli_loop(seconds=seconds)
 
 
 if __name__ == "__main__":  # pragma: no cover

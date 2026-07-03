@@ -116,13 +116,28 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 | Eval harness | real-audio harness + full synthetic suite (see above) | pilot-voice longitudinal tracking, human-graded repair quality |
 | Voice out / live loop | macOS `say` TTS + energy-VAD end-pointing in `make talk-loop`, per-turn latency line; no external send path exists | wake word, realtime models (gpt-realtime family) |
 
+## Parker as an app (beta)
+
+Parker is installable as a macOS menu-bar app — drag a dmg to
+Applications, no Python, no terminal. A Tauri v2 shell bundles the whole
+engine as a sidecar binary; onboarding is a guided wizard (mic
+permission, voice picker, plain-language consent, one-time local
+speech-model download), and daily use is a tray menu: Start/Pause
+Listening, the Dad Screen, Family Review, the Daily Digest. Unsigned
+beta, Apple silicon; acceptance-tested end-to-end from the dmg,
+including a spoken conversation confirmed with a spoken "Yes, go
+ahead". Build it with `make sidecar && cd desktop/src-tauri && cargo
+tauri build`; the full lifecycle (install → onboard → update →
+uninstall) is in [docs/desktop.md](docs/desktop.md), the architecture
+in [docs/desktop-architecture.md](docs/desktop-architecture.md).
+
 ## Setup
 
 The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (420 tests as of 2026-07-02)
+make test            # full backend suite should pass (600 tests as of 2026-07-02)
 ```
 
 **Fastest demo** (three commands, zero config):

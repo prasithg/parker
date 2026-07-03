@@ -1,0 +1,24 @@
+# Packaging for the `parker` console script (and the PyInstaller sidecar
+# entry). Dependencies stay in requirements.txt — this install is
+# script-and-package only, so `pip install -e backend` never fights the
+# requirements files.
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parker-engine"
+description = "Parker — family-aware voice assistant engine for effortful speech"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dynamic = ["version"]
+
+[project.scripts]
+parker = "app.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["app*"]

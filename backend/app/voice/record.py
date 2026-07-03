@@ -51,6 +51,63 @@ def load_local_recorder(sample_rate: int = SAMPLE_RATE) -> Recorder:
     return _record
 
 
+def sample_mic_level(
+    seconds: float = 1.5,
+    sample_rate: int = SAMPLE_RATE,
+    *,
+    sampler: Callable[[float], tuple[bytes, str]] | None = None,
+) -> dict:
+    """Read a short window from the default mic and return level stats.
+
+    This is the onboarding wizard's microphone moment: the first real
+    input-stream open, so macOS raises the TCC permission prompt here —
+    in context, with a level meter — instead of at some random first
+    conversation. Frames live in memory only and are discarded; even the
+    talk loop's temporary-file contract is stronger than needed here.
+
+    ``sampler`` is injectable for tests: it returns (raw int16 bytes,
+    device name).
+    """
+
+    def _default_sampler(window: float) -> tuple[bytes, str]:
+        try:
+            import sounddevice as sd
+        except ImportError as exc:
+            raise RuntimeError(TALK_DEPS_HINT) from exc
+        device = sd.query_devices(kind="input")
+        name = device.get("name", "unknown") if isinstance(device, dict) else "unknown"
+        frames = sd.rec(
+            int(window * sample_rate), samplerate=sample_rate, channels=1, dtype="int16"
+        )
+        sd.wait()
+        return frames.tobytes(), name
+
+    window = min(max(seconds, 0.2), 5.0)
+    raw, device_name = (sampler or _default_sampler)(window)
+    rms, peak = _int16_rms_peak(raw)
+    return {
+        "seconds": window,
+        "rms": round(rms, 1),
+        "peak": peak,
+        "device": device_name,
+        # A dead mic (or a denied permission) reads all-zero; the wizard
+        # uses this to say "we can't hear anything" instead of a raw number.
+        "heard_anything": peak > 0,
+    }
+
+
+def _int16_rms_peak(raw: bytes) -> tuple[float, int]:
+    import struct
+
+    count = len(raw) // 2
+    if count == 0:
+        return 0.0, 0
+    values = struct.unpack(f"<{count}h", raw[: count * 2])
+    peak = max(abs(v) for v in values)
+    rms = (sum(v * v for v in values) / count) ** 0.5
+    return rms, peak
+
+
 def load_vad_recorder(
     sample_rate: int = SAMPLE_RATE,
     *,

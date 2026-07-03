@@ -278,3 +278,59 @@ def test_voice_confirmed_message_off_allowlist_waits_for_family(db, monkeypatch)
     assert "family approval" in exchanges[-1]["parker"]
     message = db.query(OutboxMessage).one()
     assert message.status == "queued_local"  # the edge stays gated
+
+
+def test_spoken_compound_yes_confirms(db):
+    """"Yes, go ahead." — heard verbatim from the first desktop install,
+    where it fell through to repair choices instead of confirming."""
+    from app.db.models import StagedAction
+
+    exchanges = _run(db, [
+        ["Remind me to call the pharmacy tomorrow morning"],
+        ["Yes, go ahead."],
+    ])
+
+    assert [e["kind"] for e in exchanges] == ["captured", "confirm_offer", "executed"]
+    action = db.query(StagedAction).one()
+    assert action.status == "executed"
+    assert action.confirmed_by == "patient"
+
+
+def test_spoken_compound_no_cancels(db):
+    from app.db.models import StagedAction
+
+    exchanges = _run(db, [
+        ["Remind me to call the pharmacy tomorrow morning"],
+        ["No, not now."],
+    ])
+
+    assert exchanges[-1]["kind"] == "cancelled"
+    assert db.query(StagedAction).one().status == "cancelled"
+
+
+def test_mixed_confirmation_reply_still_defers(db):
+    """Anything not clearly yes/no defers — the safe default is unchanged."""
+    from app.db.models import StagedAction
+
+    exchanges = _run(db, [
+        ["Remind me to call the pharmacy tomorrow morning"],
+        ["Yes, but make it the afternoon instead"],
+    ])
+
+    # Not executed by the ambiguous reply; the action stays for review or
+    # the changed-mind revision path.
+    action = db.query(StagedAction).order_by(StagedAction.id).first()
+    assert action.status != "executed"
+    assert "executed" not in [e["kind"] for e in exchanges]
+
+
+def test_please_dont_defers_rather_than_guessing(db):
+    from app.db.models import StagedAction
+
+    _run(db, [
+        ["Remind me to call the pharmacy tomorrow morning"],
+        ["please don't"],
+    ])
+    # "please" leads the yes-vocabulary but "don't" is not in it, and the
+    # no-rule requires a negative lead — ambiguous, so defer (still staged).
+    assert db.query(StagedAction).one().status == "staged"

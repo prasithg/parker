@@ -191,3 +191,40 @@ def test_voice_demo_never_copies_or_writes_audio(db, audio_file, tmp_path):
 
     assert audio_file.read_bytes() == original_bytes
     assert {p.name for p in tmp_path.iterdir()} == before
+
+
+# --- prompt-echo hallucination guard ---------------------------------------
+# Observed live from the installed desktop app: on a silent window, Whisper
+# echoed its lexicon initial prompt back as the transcript, which drew
+# nuisance repair choices on the dad screen. The filter drops those lines.
+
+def test_prompt_echo_verbatim_from_the_desktop_app_is_dropped():
+    from app.voice.transcribe import filter_prompt_echo
+
+    prompt = "Words and names likely in this speech: Sarah, Michael, physio, bridge night."
+    # The exact "heard" text captured from the live screen state (colon
+    # became a comma, trailing period dropped — token overlap still ~1.0).
+    hallucinated = "Words and names likely in this speech, Sarah, Michael, physio, bridge night"
+    assert filter_prompt_echo([hallucinated], prompt) == []
+
+
+def test_real_commands_with_lexicon_names_survive_the_filter():
+    from app.voice.transcribe import filter_prompt_echo
+
+    prompt = "Words and names likely in this speech: Sarah, Michael, physio, bridge night."
+    lines = [
+        "Remind me to take a short walk this afternoon",
+        "Tell Sarah the physio visit went well",  # two prompt words, plenty of others
+        "Call... the... you know... the one with the garden...",
+    ]
+    assert filter_prompt_echo(lines, prompt) == lines
+
+
+def test_scaffold_only_echo_is_dropped_and_empty_prompt_passes_through():
+    from app.voice.transcribe import filter_prompt_echo
+
+    prompt = "Words and names likely in this speech: Sarah."
+    assert filter_prompt_echo(["Words and names likely in this speech"], prompt) == []
+    lines = ["Words and names likely in this speech"]
+    assert filter_prompt_echo(lines, None) == lines
+    assert filter_prompt_echo(lines, "") == lines

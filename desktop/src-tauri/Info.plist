@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Merged into the bundle's Info.plist by tauri-build. The mic usage
+       string is what macOS shows in the TCC permission prompt the
+       onboarding wizard triggers with its level check. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Parker listens so it can understand speech that takes effort. Audio is transcribed on this computer and never stored or sent anywhere.</string>
+  <!-- Menu-bar app: no Dock icon, no Cmd-Tab entry. -->
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>

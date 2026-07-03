@@ -154,8 +154,12 @@ def format_markdown(payload: dict[str, Any]) -> str:
     lines = [
         "# Real-audio eval — ASR -> TextSession route equivalence",
         "",
-        f"Date (UTC): {payload['date']}  ",
-        f"Clips scored: {payload['clips_scored']} (excluded: {payload['excluded']})  ",
+        # No markdown two-space hard breaks here: trailing whitespace on
+        # regenerated date lines trips `git diff --check` on every refresh.
+        f"Date (UTC): {payload['date']}",
+        "",
+        f"Clips scored: {payload['clips_scored']} (excluded: {payload['excluded']})",
+        "",
         "Oracle: self-referential — route(oracle transcript) vs route(ASR transcript).",
         "",
         "| model | intent clips | recovery (no repair) | recovery (repair) | recovery (repair+n-best) | unsafe (worst mode) | median WER | mean WER | s/clip |",

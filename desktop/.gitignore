@@ -1,0 +1,4 @@
+# Rust build artifacts
+src-tauri/target/
+# Tauri codegen
+src-tauri/gen/
