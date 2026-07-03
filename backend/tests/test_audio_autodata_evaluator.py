@@ -11,6 +11,7 @@ from benchmark.evaluate_audio_repair_autodata_v0 import (  # type: ignore[import
     DEFAULT_CASES_PATH,
     evaluate,
     load_cases,
+    load_held_candidates,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -66,6 +67,22 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
     assert payload["metrics"]["total_cases"] == 31
+    assert payload["metrics"]["held_candidates"] == 5
+    assert len(payload["held_candidates"]) == 5
+
+
+def test_audio_autodata_held_candidates_are_reported_but_not_accepted() -> None:
+    cases = load_cases(DEFAULT_CASES_PATH)
+    held = load_held_candidates(DEFAULT_CASES_PATH)
+    payload = evaluate(cases, held_candidates=held).as_dict()
+
+    assert payload["metrics"]["total_cases"] == 31
+    assert payload["metrics"]["accepted_cases"] == 31
+    assert payload["metrics"]["held_candidates"] == 5
+    candidate_ids = {candidate["candidate_id"] for candidate in payload["held_candidates"]}
+    assert "held-2026-07-01-ekacare-followup-morning-walk-medical-context" in candidate_ids
+    assert "held-2026-07-01-easycall-chiudi-applicazione-context-required" in candidate_ids
+    assert not any("/Users/" in candidate["source_transcript"] for candidate in payload["held_candidates"])
 
 
 def test_cancel_message_no_context_audio_case_is_no_action_regression() -> None:

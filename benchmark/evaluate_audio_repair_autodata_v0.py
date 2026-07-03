@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -135,11 +135,80 @@ class AudioAutodataCase:
 
 
 @dataclass(frozen=True)
+class HeldAudioAutodataCandidate:
+    """A useful audio-derived row that is intentionally not an accepted fixture yet."""
+
+    candidate_id: str
+    source_type: str
+    provenance: dict[str, Any]
+    source_transcript: str
+    source_intent_class: str
+    oracle_target: str
+    asr_hypotheses: list[str]
+    observed_weak_current: dict[str, Any]
+    hold_reason: str
+    promotion_blocker: str
+    safety_label: str
+    confusion_pairs: list[str]
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> "HeldAudioAutodataCandidate":
+        required = {
+            "candidate_id",
+            "source_type",
+            "provenance",
+            "source_transcript",
+            "source_intent_class",
+            "oracle_target",
+            "asr_hypotheses",
+            "observed_weak_current",
+            "hold_reason",
+            "promotion_blocker",
+            "safety_label",
+            "confusion_pairs",
+        }
+        candidate_id = str(row.get("candidate_id", "<unknown>"))
+        missing = required - set(row)
+        if missing:
+            raise ValueError(f"held audio-autodata candidate {candidate_id} missing fields: {sorted(missing)}")
+        source_type = str(row["source_type"])
+        if source_type not in SOURCE_TYPES:
+            raise ValueError(f"held audio-autodata candidate {candidate_id} invalid source_type: {source_type}")
+        if not isinstance(row["provenance"], dict):
+            raise ValueError(f"held audio-autodata candidate {candidate_id} provenance must be an object")
+        if source_type == "public_corpus_audio_derived" and not row["provenance"].get("source_url"):
+            raise ValueError(f"held audio-autodata candidate {candidate_id} needs a source_url")
+        if not isinstance(row["asr_hypotheses"], list) or not row["asr_hypotheses"]:
+            raise ValueError(f"held audio-autodata candidate {candidate_id} needs ASR hypotheses")
+        if not isinstance(row["observed_weak_current"], dict):
+            raise ValueError(f"held audio-autodata candidate {candidate_id} observed_weak_current must be an object")
+        if not isinstance(row["confusion_pairs"], list) or not row["confusion_pairs"]:
+            raise ValueError(f"held audio-autodata candidate {candidate_id} needs confusion_pairs")
+        if row.get("private_data", "none") != "none":
+            raise ValueError(f"held audio-autodata candidate {candidate_id} must contain no private data")
+        return cls(
+            candidate_id=candidate_id,
+            source_type=source_type,
+            provenance=row["provenance"],
+            source_transcript=str(row["source_transcript"]),
+            source_intent_class=str(row["source_intent_class"]),
+            oracle_target=str(row["oracle_target"]),
+            asr_hypotheses=[str(item) for item in row["asr_hypotheses"]],
+            observed_weak_current=row["observed_weak_current"],
+            hold_reason=str(row["hold_reason"]),
+            promotion_blocker=str(row["promotion_blocker"]),
+            safety_label=str(row["safety_label"]),
+            confusion_pairs=[str(item) for item in row["confusion_pairs"]],
+        )
+
+
+@dataclass(frozen=True)
 class AudioAutodataEvalResult:
     """Aggregate audio-autodata fixture gate."""
 
     cases: list[AudioAutodataCase]
     validation_failures: list[dict[str, str]]
+    held_candidates: list[HeldAudioAutodataCandidate] = field(default_factory=list)
 
     def metrics(self) -> dict[str, Any]:
         total = len(self.cases)
@@ -183,6 +252,7 @@ class AudioAutodataEvalResult:
         return {
             "total_cases": total,
             "accepted_cases": len(accepted),
+            "held_candidates": len(self.held_candidates),
             "synthetic_audio_derived_cases": len(synthetic),
             "public_corpus_audio_derived_cases": len(public),
             "hard_negative_or_no_action_cases": len(hard_negative),
@@ -226,6 +296,22 @@ class AudioAutodataEvalResult:
             "metrics": self.metrics(),
             "gate": self.gate(),
             "validation_failures": self.validation_failures,
+            "held_candidates": [
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "source_type": candidate.source_type,
+                    "source_transcript": candidate.source_transcript,
+                    "source_intent_class": candidate.source_intent_class,
+                    "oracle_target": candidate.oracle_target,
+                    "asr_hypotheses": candidate.asr_hypotheses,
+                    "observed_weak_current_result": candidate.observed_weak_current.get("result"),
+                    "hold_reason": candidate.hold_reason,
+                    "promotion_blocker": candidate.promotion_blocker,
+                    "safety_label": candidate.safety_label,
+                    "confusion_pairs": candidate.confusion_pairs,
+                }
+                for candidate in self.held_candidates
+            ],
             "cases": [
                 {
                     "case_id": case.case_id,
@@ -246,7 +332,7 @@ class AudioAutodataEvalResult:
         }
 
 
-def load_cases(path: Path = DEFAULT_CASES_PATH) -> list[AudioAutodataCase]:
+def _read_payload(path: Path) -> dict[str, Any]:
     try:
         parsed = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
@@ -256,6 +342,11 @@ def load_cases(path: Path = DEFAULT_CASES_PATH) -> list[AudioAutodataCase]:
     if parsed.get("private_data") != "none":
         raise ValueError(f"{path}: private_data must be 'none'")
     _reject_local_paths(parsed)
+    return parsed
+
+
+def load_cases(path: Path = DEFAULT_CASES_PATH) -> list[AudioAutodataCase]:
+    parsed = _read_payload(path)
     cases = [AudioAutodataCase.from_dict(row) for row in parsed["cases"]]
     seen: set[str] = set()
     for case in cases:
@@ -265,11 +356,28 @@ def load_cases(path: Path = DEFAULT_CASES_PATH) -> list[AudioAutodataCase]:
     return cases
 
 
-def evaluate(cases: list[AudioAutodataCase]) -> AudioAutodataEvalResult:
+def load_held_candidates(path: Path = DEFAULT_CASES_PATH) -> list[HeldAudioAutodataCandidate]:
+    parsed = _read_payload(path)
+    raw = parsed.get("held_candidates", [])
+    if not isinstance(raw, list):
+        raise ValueError(f"{path}: held_candidates must be a list when present")
+    candidates = [HeldAudioAutodataCandidate.from_dict(row) for row in raw]
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate.candidate_id in seen:
+            raise ValueError(f"duplicate held audio-autodata candidate_id: {candidate.candidate_id}")
+        seen.add(candidate.candidate_id)
+    return candidates
+
+
+def evaluate(
+    cases: list[AudioAutodataCase],
+    held_candidates: list[HeldAudioAutodataCandidate] | None = None,
+) -> AudioAutodataEvalResult:
     failures: list[dict[str, str]] = []
     for case in cases:
         failures.extend(_case_failures(case))
-    return AudioAutodataEvalResult(cases=cases, validation_failures=failures)
+    return AudioAutodataEvalResult(cases=cases, validation_failures=failures, held_candidates=held_candidates or [])
 
 
 def _case_failures(case: AudioAutodataCase) -> list[dict[str, str]]:
@@ -329,6 +437,7 @@ def format_summary(result: AudioAutodataEvalResult) -> str:
         "",
         f"Cases: {metrics['total_cases']} metadata-only audio-derived fixtures",
         f"Accepted fixtures: {metrics['accepted_cases']}/{metrics['total_cases']}",
+        f"Held candidates (not counted as accepted): {metrics['held_candidates']}",
         f"Synthetic audio-derived: {metrics['synthetic_audio_derived_cases']}",
         f"Public corpus audio-derived: {metrics['public_corpus_audio_derived_cases']}",
         f"Hard negative/no-action: {metrics['hard_negative_or_no_action_cases']}",
@@ -376,6 +485,20 @@ def format_markdown_report(result: AudioAutodataEvalResult, run_date: str) -> st
             f"weak={case['weak_current_result']}; oracle={case['strong_oracle_result']}; "
             f"final={case['final_action_type']}; safety={case['safety_label']}{source_note}; accepted={case['accepted']}"
         )
+    if payload["held_candidates"]:
+        lines.extend(["", "## Held candidate notes", ""])
+        lines.append(
+            "These audio-derived rows are useful learnings but are intentionally not counted as accepted fixtures until their promotion blocker is resolved."
+        )
+        lines.append("")
+        for candidate in payload["held_candidates"]:
+            hypotheses = "; ".join(candidate["asr_hypotheses"])
+            lines.append(
+                f"- `{candidate['candidate_id']}` ({candidate['source_type']}): "
+                f"source={candidate['source_transcript']!r}; ASR={hypotheses!r}; "
+                f"weak={candidate['observed_weak_current_result']}; safety={candidate['safety_label']}; "
+                f"hold={candidate['hold_reason']}; blocker={candidate['promotion_blocker']}"
+            )
     lines.append("")
     return "\n".join(lines)
 
@@ -411,7 +534,7 @@ def main() -> None:
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
     args = parser.parse_args()
 
-    result = evaluate(load_cases(args.cases))
+    result = evaluate(load_cases(args.cases), held_candidates=load_held_candidates(args.cases))
     if args.json:
         print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     else:
