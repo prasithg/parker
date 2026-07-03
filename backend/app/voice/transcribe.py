@@ -67,6 +67,37 @@ def lexicon_initial_prompt() -> str | None:
 DEFAULT_ASR_MODEL = "base"
 
 
+def filter_prompt_echo(lines: list[str], prompt: str | None) -> list[str]:
+    """Drop transcript lines that are the ASR bias prompt echoed back.
+
+    On silent or ambient windows, Whisper sometimes hallucinates its own
+    ``initial_prompt`` as the transcript — observed live from the desktop
+    app the first time a configured lexicon met an empty room: the "heard"
+    text was the lexicon sentence itself, which then drew nuisance repair
+    choices on the dad screen. A line almost entirely composed of prompt
+    words is an echo, not speech. Real commands survive easily: they carry
+    verbs and objects the prompt does not contain ("remind me to call
+    Sarah" shares only "Sarah" with the prompt).
+    """
+
+    if not prompt:
+        return lines
+
+    prompt_tokens = set(re.findall(r"[a-z']+", prompt.lower()))
+    if not prompt_tokens:
+        return lines
+
+    kept: list[str] = []
+    for line in lines:
+        tokens = re.findall(r"[a-z']+", line.lower())
+        if tokens:
+            overlap = sum(1 for token in tokens if token in prompt_tokens) / len(tokens)
+            if overlap >= 0.8:
+                continue
+        kept.append(line)
+    return kept
+
+
 def load_local_transcriber(
     model_size: str = DEFAULT_ASR_MODEL,
     language: str | None = "en",
@@ -98,7 +129,7 @@ def load_local_transcriber(
 
     def _transcribe(audio_path: Path) -> list[str]:
         segments, _info = model.transcribe(str(audio_path), language=language, initial_prompt=prompt)
-        return [segment.text for segment in segments]
+        return filter_prompt_echo([segment.text for segment in segments], prompt)
 
     return _transcribe
 

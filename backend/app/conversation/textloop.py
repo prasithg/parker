@@ -244,6 +244,41 @@ CONFIRM_NO_PHRASES = {
     "no thank you",
 }
 
+# Natural confirmations compound ("Yes, go ahead", "Okay, do it") — heard
+# verbatim from the first desktop-app install, where "Yes, go ahead."
+# fell through to repair choices. A short utterance made ONLY of
+# affirmative tokens, led by an affirmative, is a yes; the mirrored rule
+# holds for no. Negation tokens are absent from the yes vocabulary (and
+# vice versa), so the two can never cross-match; anything mixed
+# ("yes but change it") stays a deferral, which is the safe default.
+_CONFIRM_YES_TOKENS = {
+    "yes", "yeah", "yep", "okay", "ok", "sure", "please",
+    "go", "ahead", "do", "it", "fine", "alright",
+}
+_CONFIRM_YES_LEADS = {"yes", "yeah", "yep", "okay", "ok", "sure", "go", "do", "alright", "fine"}
+_CONFIRM_NO_TOKENS = {
+    "no", "nope", "nah", "not", "now", "cancel", "stop", "don't", "dont",
+    "thanks", "thank", "you", "never", "mind", "please", "that",
+}
+_CONFIRM_NO_LEADS = {"no", "nope", "nah", "cancel", "stop", "don't", "dont", "not", "never"}
+
+
+def _confirmation_reply_kind(normalized: str) -> str | None:
+    """'yes' | 'no' | None for a normalized utterance during confirmation."""
+
+    if normalized in CONFIRM_YES_PHRASES:
+        return "yes"
+    if normalized in CONFIRM_NO_PHRASES:
+        return "no"
+    tokens = normalized.split()
+    if not 1 <= len(tokens) <= 4:
+        return None
+    if tokens[0] in _CONFIRM_NO_LEADS and all(t in _CONFIRM_NO_TOKENS for t in tokens):
+        return "no"
+    if tokens[0] in _CONFIRM_YES_LEADS and all(t in _CONFIRM_YES_TOKENS for t in tokens):
+        return "yes"
+    return None
+
 # Spoken dismissal while repair choices are pending: equivalent to picking
 # "none of these" without knowing its number. Kept small and exact-match —
 # anything else while choices are pending is a digit selection, a
@@ -1259,12 +1294,13 @@ class TextSession:
         assert action_id is not None
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
-        if normalized in CONFIRM_YES_PHRASES:
+        reply_kind = _confirmation_reply_kind(normalized)
+        if reply_kind == "yes":
             self._pending_confirmation = None
             confirm_staged_action(self.db, action_id, confirmed_by="patient")
             executed = execute_staged_action(self.db, action_id)
             return self._speech_for_execution(executed)
-        if normalized in CONFIRM_NO_PHRASES:
+        if reply_kind == "no":
             self._pending_confirmation = None
             cancel_staged_action(self.db, action_id, cancelled_by="patient")
             return {

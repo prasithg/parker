@@ -22,6 +22,16 @@ from app.voice.speak import load_local_speaker
 def run_cli_loop(seconds: float = DEFAULT_SECONDS, server_port: int = 8000) -> None:
     """The interactive loop shared by ``make talk-loop`` and ``parker talk``."""
 
+    # Line-buffer the transcript even when stdout is a file: the desktop
+    # shell redirects this loop to PARKER_HOME/logs/talk.log, and a frozen
+    # (PyInstaller) interpreter ignores PYTHONUNBUFFERED — a family member
+    # tailing the log must see turns as they happen, not on exit.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, OSError):  # pragma: no cover — non-file streams
+            pass
+
     from app.db.database import SessionLocal, create_tables
     from app.parker.hands import configure_hands_from_settings
     from app.parker.loop_state import (

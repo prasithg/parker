@@ -9,6 +9,11 @@ set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BINARY="${1:-$REPO_ROOT/backend/dist/parker/parker}"
+# Absolutize: the checks below run from a neutral cwd.
+case "$BINARY" in
+  /*) ;;
+  *) BINARY="$(pwd)/$BINARY" ;;
+esac
 PORT=48123
 FAILURES=0
 
