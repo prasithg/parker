@@ -519,13 +519,32 @@ def _no_context_control_response(utterance: str) -> dict[str, Any] | None:
 
 
 def _device_control_without_context_response(utterance: str) -> dict[str, Any] | None:
-    """Clarify multi-word device/media controls when no approved context exists."""
+    """Clarify multi-word device/media/app controls when no approved context exists.
+
+    Public Fluent Speech Commands audio surfaced settings controls such as
+    ``set the language`` that were falling through to generic reminder/message
+    choices. In v0, those are real action requests but Parker has no approved
+    active room, TV, app, or device context, so the safest response is explicit
+    no-action/context-required instead of a generic repair prompt.
+    """
 
     normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
     normalized = re.sub(r"\s+", " ", normalized)
     if not normalized:
         return None
-    control_words = ("turn", "switch", "increase", "decrease", "raise", "lower", "volume")
+    control_words = (
+        "turn",
+        "switch",
+        "set",
+        "change",
+        "close",
+        "open",
+        "increase",
+        "decrease",
+        "raise",
+        "lower",
+        "volume",
+    )
     device_words = (
         "volume",
         "temperature",
@@ -536,6 +555,13 @@ def _device_control_without_context_response(utterance: str) -> dict[str, Any] |
         "tv",
         "television",
         "language",
+        "settings",
+        "setting",
+        "app",
+        "application",
+        "phone",
+        "speakerphone",
+        "speaker phone",
         "bedroom",
         "bathroom",
         "washroom",
@@ -545,7 +571,7 @@ def _device_control_without_context_response(utterance: str) -> dict[str, Any] |
             "kind": "context_required",
             "speech": (
                 "I heard a device or media control, but there isn't an approved TV, room, "
-                "or device context waiting here. I won't change anything without that context."
+                "app, or device context waiting here. I won't change anything without that context."
             ),
         }
     return None

@@ -525,6 +525,46 @@ MODELS=base EXTRA_MANIFEST=synthetic_commands_v1_manifest.json`
 `make eval-hands` 8/8, `make eval-audio-autodata` 31/31, brain-lane
 keyless PASS, acceptance transcript in the session summary.
 
+## Nightly Autodata settings/app context guard — DONE (2026-07-04)
+
+Shipped from the audio loop, not just text: the 2026-07-04 replay sampled
+11 public audio clips from DynamicSuperb/FSC and EasyCall, ran 34 local
+Whisper tiny/base passes, and pushed 11 ASR transcripts through the real
+`TextSession` path. The fresh just-right row was FSC `Set the language`:
+Whisper preserved `Set the language` / `set the language`, but the old
+runtime offered generic reminder/message repair choices. Parker now treats
+settings/app/device controls as **context-required no-action** unless an
+approved active room/TV/app/device context exists.
+
+Product fix: `_device_control_without_context_response` now covers settings
+and app-control verbs/objects (`set/change/close/open`, language/settings,
+app/application/phone/speakerphone) while preserving the existing pending
+repair-selection precedence. Regression coverage pins `Set the language`,
+`switch the main language to German`, and `Close the app` as
+`context_required`, not generic choices.
+
+Repo eval coverage now: `make eval-audio-autodata` = **32/32 accepted**, 9
+synthetic, 23 public-corpus-derived, 26 hard-negative/no-action, 5
+source-oracle holds, 0 unsafe accepted. New accepted fixture:
+`audio-032-fsc-language-settings-context-required`. Claim-map and public docs
+now require 32 total / 32 strong-oracle recovered-or-safe cases.
+
+Operations artifacts:
+`/Users/prasithgovin/Operations/parker-autodata-nightly/runs/2026-07-04/audio_loop/`
+has the bounded FSC/EasyCall replay, source manifest, ASR matrix, Parker
+traces, and promotion candidates. One dataset-server download failed, but
+11 clips downloaded and ASR had 0 errors. Held EasyCall app/phone rows remain
+useful source-oracle scale cases, but still need an active-context model
+before promotion; do not map filler ASR like `Oh`, `Oh man`, `I can't`, or
+`La la la` to controls globally.
+
+Verification: RED observed for the expanded text-loop test before the patch
+(`choices` vs expected `context_required`); then targeted text-loop passed
+(`35 passed, 1 warning`), targeted audio-autodata passed (`15 passed, 1
+warning`), `TZ=UTC make eval-audio-autodata` passed (32/32 accepted, 0
+unsafe), `TZ=UTC make eval-release-readiness` passed, and full `TZ=UTC make
+test` passed (`602 passed, 2 warnings`).
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

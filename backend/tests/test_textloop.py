@@ -217,7 +217,14 @@ def test_standalone_stop_or_cancel_cancels_active_local_draft(db):
 def test_device_controls_require_context_instead_of_generic_repair(db):
     session = _session(db)
 
-    for utterance in ("Turn the volume down.", "Turn the bedroom lights off.", "Increase the temperature in the washroom."):
+    for utterance in (
+        "Turn the volume down.",
+        "Turn the bedroom lights off.",
+        "Increase the temperature in the washroom.",
+        "Set the language.",
+        "OK now switch the main language to German.",
+        "Close the app.",
+    ):
         response = session.handle(utterance)
         assert response["kind"] == "context_required"
         assert "approved" in response["speech"]
