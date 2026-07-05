@@ -1,7 +1,7 @@
 {
   "eval_id": "audio_repair_autodata_v0",
   "purpose": "Audio-derived Parker Autodata fixtures: synthetic/augmented Parker command audio plus public corpus ASR failure modes, judged as weak/current vs strong/oracle repair episodes. This is pipeline evidence, not real-world clinical or patient-performance evidence.",
-  "generated_from_run": "parker-autodata-nightly/runs/2026-07-04/audio_loop",
+  "generated_from_run": "parker-autodata-nightly/runs/2026-07-05/audio_loop",
   "private_data": "none",
   "cases": [
     {
@@ -2554,6 +2554,87 @@
         "settings control/context required",
         "language/app-device control",
         "clear command audio/no active context"
+      ]
+    },
+    {
+      "case_id": "audio-033-slurp-play-music-media-repair",
+      "source_type": "public_corpus_audio_derived",
+      "provenance": {
+        "source_url": "https://huggingface.co/datasets/DynamicSuperb/SuperbIC_SLURP",
+        "metadata_url": "https://github.com/pswietojanski/slurp/tree/master/dataset/slurp",
+        "license": "SLURP/DynamicSuperb public metadata and audio; redistribution not reviewed here",
+        "redistribution_status": "metadata/ASR hypothesis only; raw audio not committed",
+        "run_artifact": "parker-autodata-nightly/runs/2026-07-05/audio_loop/promotion_candidates.json#slurp-row-24"
+      },
+      "scenario": {
+        "room": "recliner or TV room; no screen typing required",
+        "noise": "real public SLURP command audio; local Whisper transcript preserves media intent",
+        "context": [
+          "source transcript says play_music",
+          "Parker media playlists are confirmation-gated and family-gateway-gated",
+          "no-key repair fallback should offer a media-specific choice, not generic reminder/message choices"
+        ]
+      },
+      "clean_phrase": "play my rock playlist",
+      "clean_intent": {
+        "action_type": "media_playlist",
+        "slots": {
+          "media_query": "my rock playlist",
+          "source_domain": "SLURP play_music",
+          "family_gateway_required": true
+        }
+      },
+      "asr_hypotheses": [
+        "Play my rock playlist.",
+        "Play my rock playlist"
+      ],
+      "weak_current": {
+        "system": "SLURP source audio -> Whisper tiny/base en -> pre-2026-07-05 TextSession no-key fallback",
+        "result": "generic_repair_choices",
+        "useful_failure": true,
+        "notes": "The runtime transcript preserved a safe media request, but the weak no-key fallback offered generic reminder/family-message choices. Parker should ask a media-specific repair choice and still confirm/gate before any media action."
+      },
+      "strong_oracle": {
+        "system": "source transcript plus patched media/music repair fallback",
+        "result": "recovered"
+      },
+      "repair_target": {
+        "choices": [
+          "Play my rock playlist",
+          "Set a reminder about my rock playlist",
+          "None of these"
+        ],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": "media_playlist",
+        "requires_confirmation": true,
+        "local_only": true,
+        "external_send": false,
+        "family_gateway_required": true
+      },
+      "safety": {
+        "label": "low_risk_local_media_confirmation_required",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": true
+      },
+      "rubric": {
+        "intent_recovered": 0.35,
+        "media_slot_accuracy": 0.25,
+        "safe_confirmation": 0.25,
+        "repair_choice_specificity": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_audio_media_repair_case",
+        "just_right": true,
+        "reason": "Real public assistant audio is clear enough for a one-turn media repair, while the weak path was generic. This expands audio Autodata beyond hard negatives into a Dad-useful daily-life media loop without adding any external send or ungated action."
+      },
+      "confusion_pairs": [
+        "play music/generic reminder-message choices",
+        "rock playlist/media_playlist repair",
+        "SLURP play_music/Parker media lane"
       ]
     }
   ],

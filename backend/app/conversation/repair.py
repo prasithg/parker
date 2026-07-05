@@ -174,6 +174,21 @@ def _specific_fallback_candidates(utterance: str) -> list[tuple[str, str | None]
             (f"set a reminder about the {topic}", "reminder"),
         ]
 
+    music_cues = ("playlist", "music", "song", "songs", "itunes")
+    wants_named_track = normalized.startswith(("i want to hear ", "hear ")) and " by " in normalized
+    if (
+        normalized.startswith("play ")
+        or normalized.startswith("open songs")
+        or normalized.startswith("turn on my playlist")
+        or any(cue in normalized for cue in music_cues)
+        or wants_named_track
+    ):
+        topic = _media_topic(normalized)
+        return [
+            (f"play {topic}"[:MAX_LABEL_LENGTH], "media_playlist"),
+            (f"set a reminder about {topic}"[:MAX_LABEL_LENGTH], "reminder"),
+        ]
+
     if "appointment" in normalized and normalized.startswith(("down ", "write down", "this down")):
         when = "tomorrow" if "tomorrow" in normalized else "appointment"
         return [
@@ -187,6 +202,33 @@ def _specific_fallback_candidates(utterance: str) -> list[tuple[str, str | None]
 def _after_marker(text: str, marker: str) -> str:
     _, _, tail = text.partition(marker)
     return tail.strip(" :;-.")
+
+
+def _media_topic(text: str) -> str:
+    """Extract a concise media topic from a command-like music utterance."""
+
+    topic = text
+    for prefix in (
+        "please ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "turn on ",
+        "open songs from ",
+        "open ",
+        "play ",
+        "i want to hear ",
+        "i want to listen to ",
+        "listen to ",
+        "hear ",
+    ):
+        if topic.startswith(prefix):
+            topic = topic.removeprefix(prefix)
+            break
+    topic = _tidy_detail(topic)
+    if topic.startswith("my ") and "playlist" in topic:
+        return topic
+    return topic or "music"
 
 
 def _tidy_detail(text: str) -> str:

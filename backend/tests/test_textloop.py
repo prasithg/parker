@@ -166,6 +166,17 @@ def test_question_shaped_youtube_asr_gets_media_repair_choices(db):
     assert db.query(CapturedIntent).count() == 0
 
 
+def test_music_audio_phrase_gets_media_repair_choices(db):
+    session = _session(db)
+
+    response = session.handle("Play my rock playlist.")
+
+    assert response["kind"] == "choices"
+    assert "rock playlist" in response["speech"]
+    assert response["choices"][0]["action_type"] == "media_playlist"
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_repetitive_no_transcript_asr_hallucination_noops(db):
     session = _session(db)
     utterance = "I'll be happy, " * 12

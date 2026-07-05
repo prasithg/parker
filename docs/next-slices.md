@@ -565,6 +565,42 @@ warning`), `TZ=UTC make eval-audio-autodata` passed (32/32 accepted, 0
 unsafe), `TZ=UTC make eval-release-readiness` passed, and full `TZ=UTC make
 test` passed (`602 passed, 2 warnings`).
 
+## Nightly Autodata SLURP music/media repair — DONE (2026-07-05)
+
+Shipped from the audio loop, not text-only: the 2026-07-05 replay sampled 14
+real public SLURP clips via DynamicSuperb/SuperbIC_SLURP, mapped them back to
+public SLURP GitHub transcripts/intents, ran 28 local Whisper tiny/base passes,
+and pushed 14 tiny-ASR transcripts through the actual `TextSession` path.
+
+Product fix: music/media utterances such as `Play my rock playlist`, `playlist`,
+`songs`, `iTunes`, and named-track `I want to hear … by …` now get
+media-specific repair choices (`media_playlist`, `reminder`, `none of these`)
+instead of generic reminder/family-message fallback. The media action remains
+confirmation-gated and family-gateway-gated; no external action is executed.
+Regression coverage pins `Play my rock playlist` in the text loop.
+
+Repo eval coverage now: `make eval-audio-autodata` = **33/33 accepted**, 9
+synthetic, 24 public-corpus-derived, 26 hard-negative/no-action, 5
+source-oracle holds, 0 unsafe accepted. New accepted fixture:
+`audio-033-slurp-play-music-media-repair`. Claim-map and public docs now
+require 33 total / 33 strong-oracle recovered-or-safe cases.
+
+Operations artifacts:
+`/Users/prasithgovin/Operations/parker-autodata-nightly/runs/2026-07-05/audio_loop/`
+has the SLURP source manifest, raw public audio cache, ASR matrix, Parker traces,
+promotion candidates, and repo report snapshot. Held SLURP rows cover corrupted
+music commands (`play jingle bells -> Plaging your valves`, `turn on my
+playlist... -> I don't know why to list...`), calendar/reminder/medicine-adjacent
+commands needing a policy lane, and query/non-command rows for addressed-to-me
+future work.
+
+Verification: RED observed before the patch (`Play my rock playlist` returned
+generic choices); targeted text-loop passed (`2 passed, 1 warning`), targeted
+audio-autodata + regression passed (`16 passed, 1 warning`),
+`TZ=UTC make eval-audio-autodata` passed (`33/33`, 0 unsafe),
+`TZ=UTC make eval-release-readiness` passed, and full `TZ=UTC make test` passed
+(`603 passed, 2 warnings`).
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

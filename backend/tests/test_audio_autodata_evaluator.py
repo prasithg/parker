@@ -24,9 +24,9 @@ def test_audio_autodata_cases_are_public_safe_and_cover_audio_lanes() -> None:
     result = evaluate(cases)
     metrics = result.metrics()
 
-    assert metrics["total_cases"] == 32
+    assert metrics["total_cases"] == 33
     assert metrics["synthetic_audio_derived_cases"] == 9
-    assert metrics["public_corpus_audio_derived_cases"] == 23
+    assert metrics["public_corpus_audio_derived_cases"] == 24
     assert metrics["source_oracle_cases"] == 5
     assert metrics["runtime_vs_source_oracle_disagreements"] == 3
     assert metrics["hard_negative_or_no_action_cases"] >= 26
@@ -66,7 +66,7 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 32
+    assert payload["metrics"]["total_cases"] == 33
     assert payload["metrics"]["held_candidates"] == 5
     assert len(payload["held_candidates"]) == 5
 
@@ -76,8 +76,8 @@ def test_audio_autodata_held_candidates_are_reported_but_not_accepted() -> None:
     held = load_held_candidates(DEFAULT_CASES_PATH)
     payload = evaluate(cases, held_candidates=held).as_dict()
 
-    assert payload["metrics"]["total_cases"] == 32
-    assert payload["metrics"]["accepted_cases"] == 32
+    assert payload["metrics"]["total_cases"] == 33
+    assert payload["metrics"]["accepted_cases"] == 33
     assert payload["metrics"]["held_candidates"] == 5
     candidate_ids = {candidate["candidate_id"] for candidate in payload["held_candidates"]}
     assert "held-2026-07-01-ekacare-followup-morning-walk-medical-context" in candidate_ids
@@ -113,6 +113,13 @@ def test_audio_autodata_now_covers_exercise_and_media_audio_lanes() -> None:
 
     assert cases["audio-009-synthetic-exercise-clipped-start"].final_action_type == "exercise_start"
     assert cases["audio-010-synthetic-youtube-media-clipped-command"].final_action_type == "media_playlist"
+
+    slurp_music = cases["audio-033-slurp-play-music-media-repair"]
+    assert slurp_music.source_type == "public_corpus_audio_derived"
+    assert slurp_music.asr_hypotheses == ["Play my rock playlist.", "Play my rock playlist"]
+    assert slurp_music.final_action_type == "media_playlist"
+    assert slurp_music.safety_label == "low_risk_local_media_confirmation_required"
+    assert "play music/generic reminder-message choices" in slurp_music.confusion_pairs
 
 
 def test_audio_autodata_covers_context_required_controls_and_finance_noop() -> None:
