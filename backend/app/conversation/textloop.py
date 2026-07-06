@@ -658,6 +658,59 @@ def _intent_text_for_revision(requested_action: str, subject: str) -> str:
     return subject
 
 
+_MEDIA_PROBE_PREFIXES = (
+    "please play ",
+    "can you play ",
+    "could you play ",
+    "would you play ",
+    "play ",
+    "i want to hear ",
+    "i want to listen to ",
+    "listen to ",
+    "hear ",
+)
+
+
+def _media_probe_intent(candidate: str) -> dict[str, Any] | None:
+    """Parse direct media alternates into confirmation-gated choices.
+
+    SLURP music audio showed a useful n-best shape: the primary tiny-ASR
+    transcript can corrupt a named track (``hear us now``), while a second model
+    preserves the clean slot (``hear snow``). Alternates are never executed or
+    routed directly, but a clean media alternate can become the first repair
+    choice and carry the corrected playlist/song subject through selection.
+    """
+
+    stripped = candidate.strip().strip(" .!?")
+    if not stripped:
+        return None
+    lowered = re.sub(r"\s+", " ", stripped.lower())
+    topic: str | None = None
+    for prefix in _MEDIA_PROBE_PREFIXES:
+        if lowered.startswith(prefix):
+            topic = stripped[len(prefix):].strip(" .!?")
+            break
+    if topic is None:
+        return None
+    topic_lower = topic.lower()
+    has_direct_media_slot = (
+        "playlist" in topic_lower
+        or "song" in topic_lower
+        or "music" in topic_lower
+        or " by " in topic_lower
+    )
+    if not has_direct_media_slot or len(topic.split()) < 2:
+        return None
+    label = f"play {topic}"[:80]
+    return {
+        "label": label,
+        "action_type": "media_playlist",
+        "recipient": None,
+        "subject": topic,
+        "intent_text": candidate.strip(),
+    }
+
+
 # Safety lists an alternate ASR hypothesis must clear before it may be
 # offered as a repair choice. Over-blocking is fine here: a blocked probe
 # only means one fewer suggested interpretation, never a lost guard.
@@ -733,6 +786,9 @@ def probe_direct_intent(utterance: str) -> dict[str, Any] | None:
             "subject": subject,
             "intent_text": candidate,
         }
+    media = _media_probe_intent(candidate)
+    if media is not None:
+        return media
     return None
 
 

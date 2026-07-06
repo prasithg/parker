@@ -601,6 +601,44 @@ audio-autodata + regression passed (`16 passed, 1 warning`),
 `TZ=UTC make eval-release-readiness` passed, and full `TZ=UTC make test` passed
 (`603 passed, 2 warnings`).
 
+## Nightly Autodata SLURP n-best named-track media repair — DONE (2026-07-06)
+
+Shipped from the audio loop: the 2026-07-06 replay re-used the public SLURP
+music/media source, downloaded 14 real DynamicSuperb/SuperbIC_SLURP clips, ran
+28 local Whisper tiny/base passes, then routed tiny-primary transcripts through
+`TextSession` with base transcripts supplied as same-clip alternates. This makes
+the nightly path exercise Parker's n-best repair seam instead of only the first
+ASR transcript.
+
+Product fix: `probe_direct_intent` now parses safe media alternates such as
+`Play my rock playlist` and `I want to hear Snow by Red Hot Chili Peppers` into
+confirmation-gated `media_playlist` repair choices. Alternates are still never
+routed or executed directly. The trigger is intentionally narrow — no broad
+`hear about ...` matches — and the selected choice carries the clean media
+subject into the captured intent.
+
+Repo eval coverage now: `make eval-audio-autodata` = **34/34 accepted**, 9
+synthetic, 25 public-corpus-derived, 26 hard-negative/no-action, 5 source-oracle
+holds, 0 unsafe accepted. New accepted fixture:
+`audio-034-slurp-nbest-named-track-media-repair`, covering `snow -> us now`
+slot drift with a cleaner base/source alternate. Claim-map and public docs now
+require 34 total / 34 strong-oracle recovered-or-safe cases.
+
+Operations artifacts:
+`/Users/prasithgovin/Operations/parker-autodata-nightly/runs/2026-07-06/audio_loop/`
+has the SLURP source manifest, raw public audio cache, ASR matrix,
+`audio_to_parker_nbest_results.json`, promotion candidates, repo fixture promoter
+payload, and repo report snapshot. The promoter payload emitted the complete
+metadata-only fixture JSON before repo insertion; raw public audio stayed in
+Operations.
+
+Verification: targeted n-best repair passed (`11 passed, 1 warning`); the run
+sampled 14 clips / 28 ASR passes / 14 n-best Parker traces / 1 accepted + 13
+held promotion candidates; targeted n-best + audio-autodata tests passed (`26
+passed, 1 warning`); `TZ=UTC make eval-audio-autodata` passed (`34/34`, 0
+unsafe); `TZ=UTC make eval-release-readiness` passed; `git diff --check`
+passed; and full `TZ=UTC make test` passed (`605 passed, 2 warnings`).
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

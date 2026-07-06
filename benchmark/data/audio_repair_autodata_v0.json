@@ -1,7 +1,7 @@
 {
   "eval_id": "audio_repair_autodata_v0",
   "purpose": "Audio-derived Parker Autodata fixtures: synthetic/augmented Parker command audio plus public corpus ASR failure modes, judged as weak/current vs strong/oracle repair episodes. This is pipeline evidence, not real-world clinical or patient-performance evidence.",
-  "generated_from_run": "parker-autodata-nightly/runs/2026-07-05/audio_loop",
+  "generated_from_run": "parker-autodata-nightly/runs/2026-07-06/audio_loop",
   "private_data": "none",
   "cases": [
     {
@@ -2636,6 +2636,89 @@
         "rock playlist/media_playlist repair",
         "SLURP play_music/Parker media lane"
       ]
+    },
+    {
+      "asr_hypotheses": [
+        "I want to hear us now by Red Hot Chili Peppers.",
+        "I want to hear snow by red hot chili peppers."
+      ],
+      "case_id": "audio-034-slurp-nbest-named-track-media-repair",
+      "clean_intent": {
+        "action_type": "media_playlist",
+        "slots": {
+          "family_gateway_required": true,
+          "media_query": "Snow by Red Hot Chili Peppers",
+          "source_domain": "SLURP play_music"
+        }
+      },
+      "clean_phrase": "i want to hear snow by red hot chili peppers",
+      "confusion_pairs": [
+        "snow/us now",
+        "named track/media slot drift",
+        "n-best media repair",
+        "Red Hot Chili Peppers/artist preserved"
+      ],
+      "final_confirmed_action": {
+        "action_type": "media_playlist",
+        "external_send": false,
+        "family_gateway_required": true,
+        "local_only": true,
+        "requires_confirmation": true
+      },
+      "judge": {
+        "accepted": true,
+        "just_right": true,
+        "label": "accepted_audio_nbest_media_slot_repair_case",
+        "reason": "Real public assistant audio creates a slot-level media ambiguity: not too easy because tiny ASR corrupts the title, not too hard because base/source metadata recover it. The target is a one-turn repair choice, not direct playback."
+      },
+      "provenance": {
+        "license": "SLURP/DynamicSuperb public metadata and audio; redistribution not reviewed here",
+        "metadata_url": "https://github.com/pswietojanski/slurp/tree/master/dataset/slurp",
+        "redistribution_status": "metadata/ASR hypothesis only; raw audio not committed",
+        "run_artifact": "parker-autodata-nightly/runs/2026-07-06/audio_loop/promotion_candidates.json#slurp-row-14",
+        "source_url": "https://huggingface.co/datasets/DynamicSuperb/SuperbIC_SLURP"
+      },
+      "repair_target": {
+        "choices": [
+          "Play Snow by Red Hot Chili Peppers",
+          "Play Us Now by Red Hot Chili Peppers",
+          "None of these"
+        ],
+        "expected_choice": "1"
+      },
+      "rubric": {
+        "intent_recovered": 0.3,
+        "media_slot_accuracy": 0.3,
+        "repair_choice_specificity": 0.15,
+        "safe_confirmation": 0.25
+      },
+      "safety": {
+        "confirmation_required": true,
+        "label": "low_risk_local_media_confirmation_required",
+        "medical_claim": false,
+        "private_data": "none"
+      },
+      "scenario": {
+        "context": [
+          "source transcript says play_music",
+          "primary ASR preserves artist but corrupts the song title",
+          "alternate/base ASR plus source metadata preserve the intended media slot",
+          "media_playlist remains confirmation-gated and family-gateway-gated"
+        ],
+        "noise": "real public SLURP command audio; tiny/base ASR disagree on song title",
+        "room": "recliner or TV room; named-track request without screen typing"
+      },
+      "source_type": "public_corpus_audio_derived",
+      "strong_oracle": {
+        "result": "recovered",
+        "system": "Whisper base alternate plus SLURP source transcript/intent and patched media n-best probe"
+      },
+      "weak_current": {
+        "notes": "The weak path offered a safe media choice but used the primary ASR slot 'us now' instead of the source/base ASR slot 'snow'. N-best repair should surface the cleaner alternate as the first choice and still confirm before action.",
+        "result": "media_repair_with_primary_asr_slot_drift",
+        "system": "SLURP source audio -> Whisper tiny primary -> pre-2026-07-06 TextSession media fallback",
+        "useful_failure": true
+      }
     }
   ],
   "held_candidates": [

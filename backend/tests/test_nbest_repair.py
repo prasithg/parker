@@ -39,6 +39,20 @@ def test_probe_parses_reminder_and_exercise() -> None:
     assert exercise["subject"] == "speech exercise: the morning cards"
 
 
+def test_probe_parses_music_media_without_broad_hear_about_matches() -> None:
+    playlist = probe_direct_intent("Play my rock playlist")
+    assert playlist is not None
+    assert playlist["action_type"] == "media_playlist"
+    assert playlist["subject"] == "my rock playlist"
+
+    track = probe_direct_intent("I want to hear Snow by Red Hot Chili Peppers")
+    assert track is not None
+    assert track["action_type"] == "media_playlist"
+    assert track["subject"] == "Snow by Red Hot Chili Peppers"
+
+    assert probe_direct_intent("I want to hear about tomorrow's appointment") is None
+
+
 def test_probe_refuses_safety_tripping_hypotheses() -> None:
     # Alternates must not become a side door around the refusal guards.
     assert probe_direct_intent("Remind me to take half my pills") is None
@@ -74,6 +88,28 @@ def test_alternate_hypothesis_becomes_first_choice_and_captures_recipient(db):
     assert captured.requested_action == "family_message"
     assert captured.recipient == "Sarah"
     assert captured.intent_text == "physio went well today"
+
+
+def test_media_alternate_becomes_first_choice_and_captures_clean_subject(db):
+    session = _session(db)
+
+    response = session.handle(
+        "I want to hear us now by Red Hot Chili Peppers.",
+        alternates=["I want to hear Snow by Red Hot Chili Peppers."],
+    )
+
+    assert response["kind"] == "choices"
+    first = response["choices"][0]
+    assert first["action_type"] == "media_playlist"
+    assert first["subject"] == "Snow by Red Hot Chili Peppers"
+    assert "Snow by Red Hot Chili Peppers" in first["label"]
+    assert db.query(CapturedIntent).count() == 0
+
+    selected = session.handle(str(first["position"]))
+    assert selected["kind"] == "captured"
+    captured = db.query(CapturedIntent).one()
+    assert captured.requested_action == "media_playlist"
+    assert captured.subject == "Snow by Red Hot Chili Peppers"
 
 
 def test_alternates_are_never_routed_directly(db):
