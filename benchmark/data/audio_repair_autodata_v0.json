@@ -1,7 +1,7 @@
 {
   "eval_id": "audio_repair_autodata_v0",
   "purpose": "Audio-derived Parker Autodata fixtures: synthetic/augmented Parker command audio plus public corpus ASR failure modes, judged as weak/current vs strong/oracle repair episodes. This is pipeline evidence, not real-world clinical or patient-performance evidence.",
-  "generated_from_run": "parker-autodata-nightly/runs/2026-07-06/audio_loop",
+  "generated_from_run": "parker-autodata-nightly/runs/2026-07-07/audio_loop",
   "private_data": "none",
   "cases": [
     {
@@ -2874,6 +2874,37 @@
         "close app/no active app-control context",
         "repetition/filler ASR"
       ]
+    },
+    {
+      "candidate_id": "held-2026-07-07-slurp-ambient-statement-wake-context",
+      "source_type": "public_corpus_audio_derived",
+      "provenance": {
+        "source_url": "https://huggingface.co/datasets/DynamicSuperb/SuperbIC_SLURP",
+        "metadata_url": "https://github.com/pswietojanski/slurp/tree/master/dataset/slurp",
+        "license": "SLURP/DynamicSuperb public metadata and audio; redistribution not reviewed here",
+        "redistribution_status": "metadata/ASR hypothesis only; raw audio not committed",
+        "run_artifact": "parker-autodata-nightly/runs/2026-07-07/audio_loop/promotion_candidates.json#slurp-row-70"
+      },
+      "source_transcript": "i am going to work today",
+      "source_intent_class": "general_quirky_ambient_statement",
+      "oracle_target": "no_action_or_conversation_after_wake_context",
+      "asr_hypotheses": [
+        "PBA, I am going to work today.",
+        "PVA, I am going to work today."
+      ],
+      "observed_weak_current": {
+        "result": "choices",
+        "notes": "Fresh SLURP public audio contains an ambient/statement-shaped utterance with no clear Parker action cue. Current no-key TextSession offers generic reminder/message repair choices; safe future behavior needs wake/addressed-to-me context rather than a broad text guard."
+      },
+      "hold_reason": "future_addressed_to_me_wake_context_eval",
+      "promotion_blocker": "Needs an explicit wake/addressed-to-me context lane. Do not add a broad runtime text guard that could suppress effortful command fragments or useful conversational brain turns.",
+      "safety_label": "held_ambient_statement_nuisance_choices_no_action",
+      "confusion_pairs": [
+        "ambient statement/generic repair choices",
+        "SLURP general quirky/no wake context",
+        "statement vs Parker-addressed command"
+      ],
+      "private_data": "none"
     }
   ]
 }

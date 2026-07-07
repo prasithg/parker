@@ -639,6 +639,50 @@ passed, 1 warning`); `TZ=UTC make eval-audio-autodata` passed (`34/34`, 0
 unsafe); `TZ=UTC make eval-release-readiness` passed; `git diff --check`
 passed; and full `TZ=UTC make test` passed (`605 passed, 2 warnings`).
 
+## Nightly Autodata promoter + SLURP wake-context held row — DONE (2026-07-07)
+
+Shipped from the audio loop: the 2026-07-07 replay sampled 8 fresh real
+DynamicSuperb/SuperbIC_SLURP clips focused on the addressed-to-me / ambient /
+no-question-mark query lane (`my day is going well add a memo`, `i am going to
+work today`, `lets have a chat`, `describe the new football game rules`, and
+related rows). It ran 16 local Whisper tiny/base passes, grouped same-clip
+alternates, and routed 8 primary transcripts through the real `TextSession` with
+n-best alternates supplied.
+
+Product learning, not a broad runtime patch: every fresh transcript produced
+safe but noisy generic reminder/family-message repair choices and 0 captures.
+The just-right repo-side change is a held candidate, not an accepted fixture or
+text guard: `held-2026-07-07-slurp-ambient-statement-wake-context` records the
+SLURP row `i am going to work today` with ASR `PBA/PVA, I am going to work
+today` and weak behavior `choices`. The blocker is explicit: Parker needs a
+wake/addressed-to-me context lane; a broad text guard could suppress effortful
+command fragments or useful conversational brain turns.
+
+Promoter tooling: `benchmark/audio_autodata_promoter.py` now reads an Operations
+`promotion_candidates.json`, validates embedded `repo_fixture_case` /
+`repo_held_candidate` objects against the audio-Autodata schemas, rejects local
+raw-audio paths, detects already-promoted duplicates, emits count/doc/claim-map
+patch suggestions, and writes a verification checklist without mutating the
+repo. It caught the 2026-07-06 accepted fixture as already promoted and marked
+this run's SLURP ambient held row as repo-ready (`held_candidates` 5 → 6).
+
+Repo eval coverage remains `make eval-audio-autodata` = **34/34 accepted**, 9
+synthetic, 25 public-corpus-derived, 26 hard-negative/no-action, 6 held
+candidates, 5 source-oracle holds, 0 unsafe accepted. No accepted fixture or
+claim-map count changed.
+
+Operations artifacts:
+`/Users/prasithgovin/Operations/parker-autodata-nightly/runs/2026-07-07/audio_loop/`
+has the SLURP wake-context source manifest, raw public audio cache, ASR matrix,
+`audio_to_parker_wake_context_results.json`, promotion candidates, promotion
+plan, and repo report snapshot. Raw public audio stayed in Operations.
+
+Verification: promoter tests passed (`4 passed, 1 warning` in the focused file);
+targeted promoter + audio-autodata tests passed (`19 passed, 1 warning`);
+`TZ=UTC make eval-audio-autodata` passed (`34/34`, 6 held, 0 unsafe),
+`TZ=UTC make eval-release-readiness` passed, `TZ=UTC make test` passed (`609
+passed, 2 warnings`), and `git diff --check` passed.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

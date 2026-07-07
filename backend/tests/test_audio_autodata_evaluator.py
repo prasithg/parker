@@ -67,8 +67,8 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
     assert payload["metrics"]["total_cases"] == 34
-    assert payload["metrics"]["held_candidates"] == 5
-    assert len(payload["held_candidates"]) == 5
+    assert payload["metrics"]["held_candidates"] == 6
+    assert len(payload["held_candidates"]) == 6
 
 
 def test_audio_autodata_held_candidates_are_reported_but_not_accepted() -> None:
@@ -78,10 +78,14 @@ def test_audio_autodata_held_candidates_are_reported_but_not_accepted() -> None:
 
     assert payload["metrics"]["total_cases"] == 34
     assert payload["metrics"]["accepted_cases"] == 34
-    assert payload["metrics"]["held_candidates"] == 5
+    assert payload["metrics"]["held_candidates"] == 6
     candidate_ids = {candidate["candidate_id"] for candidate in payload["held_candidates"]}
     assert "held-2026-07-01-ekacare-followup-morning-walk-medical-context" in candidate_ids
     assert "held-2026-07-01-easycall-chiudi-applicazione-context-required" in candidate_ids
+    assert "held-2026-07-07-slurp-ambient-statement-wake-context" in candidate_ids
+    ambient = next(candidate for candidate in payload["held_candidates"] if candidate["candidate_id"] == "held-2026-07-07-slurp-ambient-statement-wake-context")
+    assert ambient["observed_weak_current_result"] == "choices"
+    assert ambient["oracle_target"] == "no_action_or_conversation_after_wake_context"
     assert not any("/Users/" in candidate["source_transcript"] for candidate in payload["held_candidates"])
 
 
