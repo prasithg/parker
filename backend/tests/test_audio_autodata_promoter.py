@@ -15,9 +15,6 @@ from benchmark.evaluate_audio_repair_autodata_v0 import DEFAULT_CASES_PATH  # ty
 
 REPO = Path(__file__).resolve().parents[2]
 PROMOTER = REPO / "benchmark/audio_autodata_promoter.py"
-PREVIOUS_PROMOTION = Path(
-    "/Users/prasithgovin/Operations/parker-autodata-nightly/runs/2026-07-06/audio_loop/promotion_candidates.json"
-)
 
 
 def _case_fixture(case_id: str) -> dict:
@@ -28,8 +25,26 @@ def _case_fixture(case_id: str) -> dict:
     raise AssertionError(f"missing fixture {case_id}")
 
 
-def test_promoter_blocks_already_promoted_accepted_case_without_raw_audio_leak() -> None:
-    plan = build_promotion_plan(PREVIOUS_PROMOTION)
+def test_promoter_blocks_already_promoted_accepted_case_without_raw_audio_leak(tmp_path: Path) -> None:
+    fixture = _case_fixture("audio-034-slurp-nbest-named-track-media-repair")
+    candidates_path = tmp_path / "promotion_candidates.json"
+    candidates_path.write_text(
+        json.dumps(
+            {
+                "accepted": [{"decision": "duplicate_fixture", "repo_fixture_case": fixture}],
+                "held": [
+                    {
+                        "decision": "held_scale_without_repo_payload",
+                        "dataset": "DynamicSuperb/SuperbIC_SLURP",
+                        "row_idx": 999,
+                        "source_transcript": "scale-only held row",
+                    }
+                ],
+                "rejected": [],
+            }
+        )
+    )
+    plan = build_promotion_plan(candidates_path)
     payload = plan.as_dict()
 
     assert payload["raw_audio_not_committed"] is True
@@ -38,8 +53,8 @@ def test_promoter_blocks_already_promoted_accepted_case_without_raw_audio_leak()
     assert accepted["candidate_id"] == "audio-034-slurp-nbest-named-track-media-repair"
     assert accepted["ready"] is False
     assert "duplicate case_id" in " ".join(accepted["errors"])
-    # Held rows from the older nightly payload remain Operations evidence until a
-    # future script emits explicit repo_held_candidate objects.
+    # Scale-only Operations evidence is visible in the plan but not repo-ready
+    # until a nightly script emits an explicit repo_held_candidate object.
     assert payload["held"][0]["status"] == "held_without_repo_payload"
 
 
@@ -88,9 +103,11 @@ def test_promoter_accepts_repo_held_candidate_and_reports_count_delta(tmp_path: 
     assert payload["after_metrics"]["total_cases"] == payload["before_metrics"]["total_cases"]
 
 
-def test_promoter_cli_runs_from_repo_root_and_outputs_json() -> None:
+def test_promoter_cli_runs_from_repo_root_and_outputs_json(tmp_path: Path) -> None:
+    candidates_path = tmp_path / "promotion_candidates.json"
+    candidates_path.write_text(json.dumps({"accepted": [], "held": [], "rejected": []}))
     completed = subprocess.run(
-        [sys.executable, str(PROMOTER), str(PREVIOUS_PROMOTION), "--json"],
+        [sys.executable, str(PROMOTER), str(candidates_path), "--json"],
         cwd=REPO,
         capture_output=True,
         text=True,
@@ -98,7 +115,7 @@ def test_promoter_cli_runs_from_repo_root_and_outputs_json() -> None:
 
     assert completed.returncode == 0, completed.stderr
     payload = json.loads(completed.stdout)
-    assert payload["source_candidates_path"] == str(PREVIOUS_PROMOTION)
+    assert payload["source_candidates_path"] == str(candidates_path)
     assert payload["counts"]["accepted_ready"] == 0
 
 
