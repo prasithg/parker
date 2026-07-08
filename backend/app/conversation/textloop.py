@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
 from typing import Any, Optional
@@ -44,6 +45,25 @@ from app.parker.screen import (
 # Bounded brain-lane conversation memory: enough for follow-ups
 # ("what about Saturday?"), small enough to stay cheap and forgetful.
 BRAIN_HISTORY_MAX_TURNS = 12
+
+
+@dataclass(frozen=True)
+class UtteranceContext:
+    """Routing context supplied by the audio/wake layer for one utterance.
+
+    The default preserves the historical text-loop contract: a typed line or a
+    talk-loop transcript is assumed to be addressed to Parker. Audio evals and a
+    future wake-word/VAD layer can pass ``addressed_to_parker=False`` for ambient
+    room speech. That produces a silent no-op before repair choices, captures, or
+    confirmation handling, so Parker does not turn background monologue into
+    nuisance actions while still leaving the existing directed-command path
+    unchanged.
+    """
+
+    addressed_to_parker: bool = True
+    source: str = "assumed_addressed"
+    note: str | None = None
+
 
 ANSWER_STUB_SPEECH = (
     "I'd look that up and summarize it for you. "
@@ -395,6 +415,43 @@ def _looks_like_media_request_question(lowered: str) -> bool:
     normalized = re.sub(r"\s+", " ", normalized)
     has_media = "youtube" in normalized or "you tube" in normalized or "new tube" in normalized
     return has_media and normalized.startswith(("why you ", "why youtube", "why you youtube"))
+
+
+def _looks_like_answer_or_conversation_request(lowered: str) -> bool:
+    """No-side-effect answer/conversation cues after Parker is addressed.
+
+    SLURP wake-context audio surfaced utterances such as "let's have a chat" and
+    "tell me more about my events". In a wake-confirmed interaction these are
+    informational/conversational, not reminder/message repair candidates. Keep
+    this intentionally narrow so clipped commands still fall through to repair.
+    """
+
+    normalized = lowered.replace("let's", "lets")
+    normalized = re.sub(r"[,.!?]+", " ", normalized).strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.startswith(
+        (
+            "lets have a chat",
+            "have a chat",
+            "chat with me",
+            "talk with me",
+            "tell me about ",
+            "tell me more",
+            "can you tell me ",
+            "could you tell me ",
+            "would you tell me ",
+            "please give me information on ",
+            "give me information on ",
+            "please give me info on ",
+            "give me info on ",
+            "find me info on ",
+            "i want to know more about ",
+            "i want to know about ",
+            "i would like to know ",
+            "describe ",
+            "explain ",
+        )
+    )
 
 
 def _repetitive_asr_hallucination_response(utterance: str) -> dict[str, Any] | None:
@@ -960,12 +1017,22 @@ class TextSession:
         self._current_alternates: list[str] = []
         self._pending_alternates: list[str] = []
 
-    def handle(self, text: str, *, alternates: Optional[list[str]] = None) -> dict[str, Any]:
+    def handle(
+        self,
+        text: str,
+        *,
+        alternates: Optional[list[str]] = None,
+        context: UtteranceContext | None = None,
+    ) -> dict[str, Any]:
         """Route one utterance and return {kind, speech, ...}.
 
         ``alternates`` are additional ASR hypotheses for the same audio
         (n-best or a second model's transcript). They are never routed
         directly — they only enrich repair choices via safe probing.
+
+        ``context`` lets an audio/wake layer say whether this utterance was
+        actually addressed to Parker. When explicitly not addressed, Parker
+        stays silent and preserves any pending repair/confirmation state.
 
         Every exchange also updates the single-row screen state behind
         ``/parker/screen`` (the live patient screen): what was heard, what
@@ -974,7 +1041,7 @@ class TextSession:
         the conversation itself.
         """
 
-        response = self._route(text, alternates=alternates)
+        response = self._route(text, alternates=alternates, context=context)
         self._publish_screen(heard=text.strip(), response=response)
         return response
 
@@ -1000,11 +1067,25 @@ class TextSession:
                 "screen-state publish skipped", exc_info=True
             )
 
-    def _route(self, text: str, *, alternates: Optional[list[str]] = None) -> dict[str, Any]:
+    def _route(
+        self,
+        text: str,
+        *,
+        alternates: Optional[list[str]] = None,
+        context: UtteranceContext | None = None,
+    ) -> dict[str, Any]:
         utterance = text.strip()
         self._current_alternates = [a for a in (alternates or []) if a.strip() and a.strip() != utterance]
         if not utterance:
             return {"kind": "noop", "speech": "I'm listening."}
+        input_context = context or UtteranceContext()
+        if input_context.addressed_to_parker is False:
+            return {
+                "kind": "ambient_noop",
+                "speech": "",
+                "addressed_to_parker": False,
+                "context_source": input_context.source,
+            }
         if self._pending_confirmation is not None:
             handled = self._handle_confirmation_reply(utterance)
             if handled is not None:
@@ -1171,7 +1252,9 @@ class TextSession:
             )
         if _looks_like_media_request_question(lowered):
             return self._offer_choices(utterance)
-        if "?" in utterance or lowered.startswith(("what", "how", "who", "when", "where")):
+        if _looks_like_answer_or_conversation_request(lowered):
+            return self._answer(utterance)
+        if "?" in utterance or lowered.startswith(("what", "how", "who", "when", "where", "why")):
             return self._answer(utterance)
         if self._brain is not None:
             # End-of-chain fallthrough: nothing deterministic matched, so this

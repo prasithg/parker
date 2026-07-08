@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo digest voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo digest voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -70,6 +70,11 @@ eval-repair-quality-rubric:
 # audio-derived ASR failure cases and their safe repair/confirmation targets.
 eval-audio-autodata:
 	python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report
+
+# Wake/addressed-to-me context fixtures: routes metadata-only public-audio ASR
+# through TextSession with explicit ambient-vs-wake context.
+eval-wake-context: backend-venv
+	$(BACKEND_PYTHON) benchmark/evaluate_wake_context_audio_v0.py --write-report
 
 # Real-audio eval: run manifest audio through local ASR and TextSession
 # routing, scored against each clip's oracle-transcript path. Audio lives in

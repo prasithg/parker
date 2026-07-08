@@ -1,6 +1,6 @@
 """Text-loop routing tests: the transcript-capture seam over the tool layer."""
 
-from app.conversation.textloop import TextSession
+from app.conversation.textloop import TextSession, UtteranceContext
 from app.db.models import CallLog, CapturedIntent, OutboxMessage
 from app.parker.pipeline import (
     confirm_staged_action,
@@ -150,6 +150,58 @@ def test_control_negation_audio_phrase_noops_without_context(db):
         response = session.handle(utterance)
         assert response["kind"] == "noop"
         assert "not to go" in response["speech"].lower()
+        assert "1)" not in response["speech"]
+
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_non_addressed_ambient_audio_is_silent_noop_without_generic_choices(db):
+    session = _session(db)
+    context = UtteranceContext(addressed_to_parker=False, source="ambient_audio_window")
+
+    for utterance in (
+        "PBA, I am going to work today.",
+        "I think it's going well, at the moment.",
+        "I will require full cover jacket if it is too stormy in evening.",
+    ):
+        response = session.handle(utterance, context=context)
+        assert response["kind"] == "ambient_noop"
+        assert response["speech"] == ""
+        assert response["addressed_to_parker"] is False
+        assert "choices" not in response
+
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_non_addressed_audio_does_not_clear_pending_repair_choices(db):
+    session = _session(db)
+    offered = session.handle("The thing... with the... you know...")
+
+    ambient = session.handle(
+        "PBA, I am going to work today.",
+        context=UtteranceContext(addressed_to_parker=False, source="ambient_audio_window"),
+    )
+    selected = session.handle("3")
+
+    assert offered["kind"] == "choices"
+    assert ambient["kind"] == "ambient_noop"
+    assert selected["kind"] == "retry"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_wake_confirmed_conversation_and_answer_cues_do_not_offer_generic_choices(db):
+    session = _session(db)
+    context = UtteranceContext(addressed_to_parker=True, source="wake_confirmed")
+
+    for utterance in (
+        "Let's have a chat.",
+        "Tell me more about my events.",
+        "Describe the new football game rules.",
+        "Please give me information on Martin Jackson.",
+        "Find me info on cars.",
+    ):
+        response = session.handle(utterance, context=context)
+        assert response["kind"] == "answer"
         assert "1)" not in response["speech"]
 
     assert db.query(CapturedIntent).count() == 0

@@ -91,6 +91,18 @@ make eval-audio-autodata
 
 Current v0 coverage is 34 accepted fixtures plus 6 explicitly held candidate notes: 9 synthetic audio-derived Parker command/control cases, 25 public corpus audio-derived ASR failure cases, 26 hard-negative/no-action cases, 5 source-oracle holds where the public source transcript/intent must be scored separately from runtime ASR, and 1 wake/addressed-to-me held row for ambient SLURP audio that currently causes nuisance generic repair choices. Held candidates are useful audio-derived rows that remain out of the accepted-count denominator until their blocker is resolved (for example, near-duplicate medical dictation, app/device controls without an active context model, source-oracle command-family dedupe, or future wake/addressed-to-me context). Coverage includes safety-critical regressions for lost negation, no/go control phrases, no-context one-word controls, no-context cancel-message controls, device/media/settings controls without an approved room/TV/app/device context, EasyCall stop/speakerphone source-oracle control holds that require active context/alternate input, private-finance requests plus ASR erasure, public medical-ASR diagnosis/treatment/medication-instruction hard negatives, command-like/repetitive hallucinations, transcript-backed dysarthric read-sentence no-action, EasyCall emergency/cancel source-oracle no-action, health-adjacent mobility wording, real SLURP play-music clips that pin media-specific repair choices instead of generic reminder/message fallback, and SLURP n-best named-track repair where a cleaner alternate ASR repairs a corrupted song title. This is pipeline/autodata fixture coverage only; it is not clinical evidence, patient evidence, public-data licensing approval, or ASR performance proof.
 
+## Run wake/addressed-to-me audio-context evaluator
+
+`data/wake_context_audio_v0.json` is the first metadata-only eval for the wake/addressed-to-me context seam. It uses public SLURP/DynamicSuperb ASR hypotheses from the nightly audio loop and routes them through the actual `TextSession` with an explicit `UtteranceContext`: ambient room speech should be silent no-op, wake-confirmed conversation should route to the no-side-effect answer lane, and wake-confirmed action requests should still become confirmation-gated repair choices. Raw public audio remains in Operations and is not committed.
+
+```bash
+python3 benchmark/evaluate_wake_context_audio_v0.py --json
+python3 benchmark/evaluate_wake_context_audio_v0.py --write-report
+make eval-wake-context
+```
+
+Current v0 coverage is 7 public-audio-derived metadata fixtures: 3 ambient no-op cases, 3 wake-confirmed answer/conversation/information cases, and 1 wake-confirmed media repair case. This is a routing-seam check only; it is not wake-word detection accuracy, real-world UX proof, clinical evidence, or licensing approval.
+
 ## Run claim→metric map evaluator
 
 `data/parker_claim_metric_map_v0.json` binds Parker's current public claims (README, launch post) to concrete report paths, metric IDs, baselines, safety gates, and caveats. It is a release overclaim guard, not a new performance claim.
