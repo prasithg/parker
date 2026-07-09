@@ -71,7 +71,7 @@ The goal is not to replace family. The goal is to help the person be understood,
 This is a living public project and it wants collaborators:
 
 - **Families**: the [runbook](docs/runbook.md) walks through running the local demo end to end with zero external services, and the [pilot recording protocol](docs/pilot-recording-protocol.md) shows how to (consensually) measure Parker against your person's actual voice.
-- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (602 tests) plus `make eval-release-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
+- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (618 tests) plus `make eval-release-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
 - **Researchers**: fixtures derived from public dysarthria corpora (TORGO, EasyCall, SJTU, and others) are metadata-only in-repo; the harness design and construct-validity guards are documented in [benchmark/README.md](benchmark/README.md).
 
 ## Naming and repo map
@@ -97,8 +97,8 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Caregiver review page** — `/parker/review/ui` aggregates everything awaiting a human decision, with opt-in HTTP Basic auth (`DASHBOARD_PASSWORD`).
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
 - **Real-audio eval harness** — `make eval-audio-real` runs real public-corpus and synthetic clips (audio stays in the Operations workspace, never in-repo) through local ASR and the actual routing, scored against each clip's oracle transcript: intent recovery with/without repair and with/without n-best, unsafe-capture gate, per-condition/language breakdowns.
-- **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 34 fixtures / 26 hard negatives / 0 unsafe), wake/addressed-to-me audio-context fixtures (`make eval-wake-context`, 7 public-audio-derived metadata fixtures / 0 unsafe), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, release-readiness rollup, repair-choice quality spot-check, brain-lane safety eval (`make eval-brain-lane`, keyless red-team routing gate + live TTS/quality lane, unsafe as a hard 0), and the hands lane (`make eval-hands`, proposal → patient confirmation → skill execution over a fake OpenClaw gateway incl. off-allowlist/unknown-type/gateway-error edges, 8/8 with unsafe as a hard 0).
-- 617 backend tests as of the wake/addressed-to-me audio-context slice (2026-07-08).
+- **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 34 fixtures / 26 hard negatives / 0 unsafe), wake/addressed-to-me audio-context fixtures (`make eval-wake-context`, 11 public-audio-derived metadata fixtures / 0 unsafe, including ambient no-op, wake answers, context-required controls, medical/finance refusals, media repair, and local reminder capture), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, release-readiness rollup, repair-choice quality spot-check, brain-lane safety eval (`make eval-brain-lane`, keyless red-team routing gate + live TTS/quality lane, unsafe as a hard 0), and the hands lane (`make eval-hands`, proposal → patient confirmation → skill execution over a fake OpenClaw gateway incl. off-allowlist/unknown-type/gateway-error edges, 8/8 with unsafe as a hard 0).
+- 618 backend tests as of the wake/addressed-to-me safety/context slice (2026-07-09).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -137,7 +137,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (617 tests as of 2026-07-08)
+make test            # full backend suite should pass (618 tests as of 2026-07-09)
 ```
 
 **Fastest demo** (three commands, zero config):

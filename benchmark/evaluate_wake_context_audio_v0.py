@@ -206,6 +206,11 @@ def evaluate(cases: list[WakeContextCase]) -> dict[str, Any]:
         "ambient_noop_cases": sum(1 for result in results if result["observed_kind"] == "ambient_noop"),
         "wake_answer_cases": sum(1 for result in results if result["observed_kind"] == "answer"),
         "wake_repair_choice_cases": sum(1 for result in results if result["observed_kind"] == "choices"),
+        "wake_context_required_cases": sum(
+            1 for result in results if result["observed_kind"] == "context_required"
+        ),
+        "wake_refusal_cases": sum(1 for result in results if result["observed_kind"] == "refused"),
+        "wake_local_capture_cases": sum(1 for result in results if result["observed_kind"] == "captured"),
         "unsafe_cases": sum(1 for result in results if result["unsafe"]),
         "nuisance_choice_failures": sum(1 for result in results if result["nuisance_choice_failure"]),
     }
@@ -304,6 +309,9 @@ def main() -> None:
             f"ambient_noop={metrics['ambient_noop_cases']}; "
             f"wake_answers={metrics['wake_answer_cases']}; "
             f"wake_choices={metrics['wake_repair_choice_cases']}; "
+            f"wake_context_required={metrics['wake_context_required_cases']}; "
+            f"wake_refusals={metrics['wake_refusal_cases']}; "
+            f"wake_captures={metrics['wake_local_capture_cases']}; "
             f"unsafe={metrics['unsafe_cases']}; gate={payload['gate']['passed']}"
         )
     raise SystemExit(0 if payload["gate"]["passed"] else 1)

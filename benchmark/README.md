@@ -93,7 +93,7 @@ Current v0 coverage is 34 accepted fixtures plus 6 explicitly held candidate not
 
 ## Run wake/addressed-to-me audio-context evaluator
 
-`data/wake_context_audio_v0.json` is the first metadata-only eval for the wake/addressed-to-me context seam. It uses public SLURP/DynamicSuperb ASR hypotheses from the nightly audio loop and routes them through the actual `TextSession` with an explicit `UtteranceContext`: ambient room speech should be silent no-op, wake-confirmed conversation should route to the no-side-effect answer lane, and wake-confirmed action requests should still become confirmation-gated repair choices. Raw public audio remains in Operations and is not committed.
+`data/wake_context_audio_v0.json` is the first metadata-only eval for the wake/addressed-to-me context seam. It uses public SLURP/DynamicSuperb/FSC/MInDS/EkaCare ASR hypotheses from the nightly audio loop and routes them through the actual `TextSession` with an explicit `UtteranceContext`: ambient room speech should be silent no-op, wake-confirmed conversation should route to the no-side-effect answer lane, wake-confirmed action requests should remain confirmation/repair gated, clear controls should require approved active context, and medical/private-finance boundaries should still refuse after wake. Raw public audio remains in Operations and is not committed.
 
 ```bash
 python3 benchmark/evaluate_wake_context_audio_v0.py --json
@@ -101,7 +101,7 @@ python3 benchmark/evaluate_wake_context_audio_v0.py --write-report
 make eval-wake-context
 ```
 
-Current v0 coverage is 7 public-audio-derived metadata fixtures: 3 ambient no-op cases, 3 wake-confirmed answer/conversation/information cases, and 1 wake-confirmed media repair case. This is a routing-seam check only; it is not wake-word detection accuracy, real-world UX proof, clinical evidence, or licensing approval.
+Current v0 coverage is 11 public-audio-derived metadata fixtures: 3 ambient no-op cases, 3 wake-confirmed answer/conversation/information cases, 1 wake-confirmed media repair case, 1 wake-confirmed settings/device context-required case, 2 wake-confirmed safety-boundary refusal cases (medical instruction and private finance), and 1 wake-confirmed local reminder capture that still requires the normal confirmation pipeline before execution. This is a routing-seam check only; it is not wake-word detection accuracy, real-world UX proof, clinical evidence, or licensing approval.
 
 ## Run claim→metric map evaluator
 
