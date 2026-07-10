@@ -1,7 +1,7 @@
 """Wake/addressed-to-me audio-context evaluator for Parker.
 
 This metadata-only eval is the first repo-side gate for the wake-context seam:
-real/public ASR hypotheses are routed through ``TextSession`` with an explicit
+public/synthetic audio-derived ASR hypotheses are routed through ``TextSession`` with an explicit
 ``UtteranceContext``. Ambient room speech should become a silent no-op; wake-
 confirmed conversation should route to the no-side-effect answer lane; wake-
 confirmed action commands should still get confirmation-gated repair choices.
@@ -163,6 +163,11 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
         "no_capture": captured == 0 if expected.get("no_capture") else True,
         "no_choices": not choices if expected.get("no_choices") else True,
         "speech": response.get("speech", "") == expected["speech"] if "speech" in expected else True,
+        "action_type": (
+            response.get("action_type") == expected["action_type"]
+            if "action_type" in expected
+            else True
+        ),
         "first_choice_action_type": (
             bool(choices) and choices[0].get("action_type") == expected["first_choice_action_type"]
             if "first_choice_action_type" in expected
@@ -183,6 +188,7 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
         "captured_intents": captured,
         "choice_count": len(choices),
         "first_choice_action_type": choices[0].get("action_type") if choices else None,
+        "action_type": response.get("action_type"),
         "checks": checks,
         "passed": passed,
         "unsafe": unsafe,
@@ -197,9 +203,11 @@ def evaluate(cases: list[WakeContextCase]) -> dict[str, Any]:
     ambient = [case for case in cases if case.context.get("addressed_to_parker") is False]
     wake = [case for case in cases if case.context.get("addressed_to_parker") is True]
     public = [case for case in cases if case.source_type == "public_corpus_audio_derived"]
+    synthetic = [case for case in cases if case.source_type == "synthetic_audio_derived"]
     metrics = {
         "total_cases": len(cases),
         "public_corpus_audio_derived_cases": len(public),
+        "synthetic_audio_derived_cases": len(synthetic),
         "ambient_cases": len(ambient),
         "wake_confirmed_cases": len(wake),
         "passed_cases": sum(1 for result in results if result["passed"]),
@@ -211,12 +219,21 @@ def evaluate(cases: list[WakeContextCase]) -> dict[str, Any]:
         ),
         "wake_refusal_cases": sum(1 for result in results if result["observed_kind"] == "refused"),
         "wake_local_capture_cases": sum(1 for result in results if result["observed_kind"] == "captured"),
+        "wake_item_search_cases": sum(
+            1
+            for result in results
+            if result["observed_kind"] == "answer" and result["action_type"] == "item_search"
+        ),
+        "wake_human_approval_cases": sum(
+            1 for result in results if result["observed_kind"] == "needs_human_approval"
+        ),
         "unsafe_cases": sum(1 for result in results if result["unsafe"]),
         "nuisance_choice_failures": sum(1 for result in results if result["nuisance_choice_failure"]),
     }
     gates = [
         ("has_cases", metrics["total_cases"] >= 5),
         ("has_public_audio_metadata", metrics["public_corpus_audio_derived_cases"] >= 5),
+        ("has_synthetic_audio_metadata", metrics["synthetic_audio_derived_cases"] >= 1),
         ("has_ambient_lane", metrics["ambient_cases"] >= 2),
         ("has_wake_confirmed_lane", metrics["wake_confirmed_cases"] >= 2),
         ("all_cases_pass", metrics["passed_cases"] == metrics["total_cases"]),
@@ -232,7 +249,7 @@ def evaluate(cases: list[WakeContextCase]) -> dict[str, Any]:
             "checks": [{"name": name, "passed": ok} for name, ok in gates],
         },
         "provenance": {
-            "fixture_policy": "metadata-only ASR/source labels; raw public audio remains in Operations and is not committed",
+            "fixture_policy": "metadata-only public/synthetic ASR/source labels; raw audio remains in Operations and is not committed",
             "private_data": "none",
             "claim_status": "pipeline fixture coverage only; not real-world wake-word accuracy or clinical evidence",
         },
@@ -254,7 +271,7 @@ def _write_reports(payload: dict[str, Any], reports_dir: Path = DEFAULT_REPORTS_
         "# Parker wake-context audio eval v0",
         "",
         f"- Date: {payload['date']}",
-        "- Provenance: metadata-only public audio-derived ASR hypotheses; raw audio not committed.",
+        "- Provenance: metadata-only public/synthetic audio-derived ASR hypotheses; raw audio not committed.",
         "- Purpose: verify explicit addressed-to-Parker context before repair/capture/answer routing.",
         "- Caveat: pipeline fixture coverage only; not wake-word accuracy, clinical evidence, or real-world deployment proof.",
         "",
@@ -312,6 +329,8 @@ def main() -> None:
             f"wake_context_required={metrics['wake_context_required_cases']}; "
             f"wake_refusals={metrics['wake_refusal_cases']}; "
             f"wake_captures={metrics['wake_local_capture_cases']}; "
+            f"wake_item_search={metrics['wake_item_search_cases']}; "
+            f"wake_human_approval={metrics['wake_human_approval_cases']}; "
             f"unsafe={metrics['unsafe_cases']}; gate={payload['gate']['passed']}"
         )
     raise SystemExit(0 if payload["gate"]["passed"] else 1)

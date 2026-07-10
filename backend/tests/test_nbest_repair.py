@@ -57,6 +57,7 @@ def test_probe_refuses_safety_tripping_hypotheses() -> None:
     # Alternates must not become a side door around the refusal guards.
     assert probe_direct_intent("Remind me to take half my pills") is None
     assert probe_direct_intent("Tell Sarah to order that walker") is None
+    assert probe_direct_intent("Remind me to book concert tickets") is None
     assert probe_direct_intent("Remind me about my bank account password") is None
 
 

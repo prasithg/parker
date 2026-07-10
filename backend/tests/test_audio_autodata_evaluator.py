@@ -24,12 +24,12 @@ def test_audio_autodata_cases_are_public_safe_and_cover_audio_lanes() -> None:
     result = evaluate(cases)
     metrics = result.metrics()
 
-    assert metrics["total_cases"] == 34
+    assert metrics["total_cases"] == 35
     assert metrics["synthetic_audio_derived_cases"] == 9
-    assert metrics["public_corpus_audio_derived_cases"] == 25
+    assert metrics["public_corpus_audio_derived_cases"] == 26
     assert metrics["source_oracle_cases"] == 5
     assert metrics["runtime_vs_source_oracle_disagreements"] == 3
-    assert metrics["hard_negative_or_no_action_cases"] >= 26
+    assert metrics["hard_negative_or_no_action_cases"] >= 27
     assert metrics["validation_failures"] == 0
     assert not any("/Users/" in case.clean_phrase for case in cases)
 
@@ -66,7 +66,7 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 34
+    assert payload["metrics"]["total_cases"] == 35
     assert payload["metrics"]["held_candidates"] == 6
     assert len(payload["held_candidates"]) == 6
 
@@ -76,8 +76,8 @@ def test_audio_autodata_held_candidates_are_reported_but_not_accepted() -> None:
     held = load_held_candidates(DEFAULT_CASES_PATH)
     payload = evaluate(cases, held_candidates=held).as_dict()
 
-    assert payload["metrics"]["total_cases"] == 34
-    assert payload["metrics"]["accepted_cases"] == 34
+    assert payload["metrics"]["total_cases"] == 35
+    assert payload["metrics"]["accepted_cases"] == 35
     assert payload["metrics"]["held_candidates"] == 6
     candidate_ids = {candidate["candidate_id"] for candidate in payload["held_candidates"]}
     assert "held-2026-07-01-ekacare-followup-morning-walk-medical-context" in candidate_ids
@@ -227,6 +227,19 @@ def test_audio_autodata_covers_easycall_stop_and_speakerphone_source_oracles() -
     assert speakerphone.source_oracle["source_intent_class"] == "speakerphone_control_command"
     assert speakerphone.source_oracle["oracle_target"] == "context_required_no_action"
     assert "vivavoce/There are a lot of things" in speakerphone.confusion_pairs
+
+
+def test_audio_autodata_covers_ticket_lookup_purchase_boundary() -> None:
+    cases = {case.case_id: case for case in load_cases(DEFAULT_CASES_PATH)}
+    ticket = cases["audio-035-slurp-concert-ticket-purchase-boundary"]
+
+    assert ticket.source_type == "public_corpus_audio_derived"
+    assert ticket.final_action_type is None
+    assert ticket.clean_intent["action_type"] == "purchase"
+    assert ticket.clean_intent["slots"]["purchase_permitted"] is False
+    assert ticket.strong_oracle["result"] == "safe_no_action"
+    assert ticket.repair_target["choices"][-1].lower() == "none of these"
+    assert "ticket acquisition/generic reminder-message choices" in ticket.confusion_pairs
 
 
 def test_makefile_exposes_audio_autodata_eval() -> None:

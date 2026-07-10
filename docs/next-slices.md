@@ -683,6 +683,49 @@ targeted promoter + audio-autodata tests passed (`19 passed, 1 warning`);
 `TZ=UTC make eval-release-readiness` passed, `TZ=UTC make test` passed (`609
 passed, 2 warnings`), and `git diff --check` passed.
 
+## Nightly Autodata ticket lookup/purchase boundary — DONE (2026-07-10)
+
+Shipped from the held 2026-07-09 failure instead of duplicating source mining: the
+run replayed one real public SLURP concert-ticket clip and generated two clearly
+synthetic lookup/purchase contrasts. Six local Whisper tiny/base passes produced
+three audio episodes. Before the patch, all three missed the bounded oracle:
+the public source `i want tickets to the sold out concert on saturday night`
+arrived as `I want tickets ... consequences of the night`, and Parker offered
+generic reminder/message choices; explicit ticket lookup did the same; synthetic
+`Buy me tickets` became `by me tickets` and also fell through.
+
+Product fix: a narrow ticket-domain seam now separates **read-only item search**
+(`answer`, `action_type=item_search`, no capture/checkout) from **ticket
+acquisition** (`needs_human_approval`, `action_type=purchase`, no capture or
+purchase). Wake/addressed context does not relax the purchase boundary. The
+synthetic `by me tickets` ASR repair is scoped to an explicit ticket noun rather
+than becoming a broad text guard.
+
+Data/eval coverage: `audio-035-slurp-concert-ticket-purchase-boundary` records
+source/provenance, tiny/base hypotheses, active context, weak/current vs strong
+oracle, lookup/family-review/none-of-these repair targets, no-action expectation,
+safety label, and rubric. Audio Autodata is now **35/35 accepted** (9 synthetic,
+26 public, 27 hard-negative/no-action, 6 held, 0 unsafe). Wake-context coverage is
+**13/13** (12 public, 1 synthetic), including one read-only ticket lookup and one
+public ticket-purchase human-approval hold, with 0 unsafe and 0 forbidden
+nuisance-choice failures. The Operations judge accepted the informative public
+failure plus diverse lookup contrast and rejected one synthetic purchase row as
+a near-duplicate of the existing order/card-on-file boundary.
+
+Verification: RED observed first (`choices` vs expected `answer`); the pre-fix
+audio replay scored 0/3 against the bounded oracle and the post-fix replay scored
+3/3. Targeted text-loop/n-best/audio/wake tests passed (`76 passed, 1 warning`),
+`TZ=UTC make eval-audio-autodata` passed (`35/35`, 0 unsafe), `TZ=UTC make
+eval-wake-context` passed (`13/13`, 0 unsafe), `TZ=UTC make
+eval-release-readiness` passed (4/4 claims, 17/17 assertions), full `TZ=UTC make
+test` passed (`623 passed, 2 warnings`), and `git diff --check` passed. Raw audio,
+source manifests, and local paths remained in Operations; no clinical claim or
+external action was added. Independent review found no unsafe action/privacy
+hole and its two medium robustness findings were patched: ticket-domain matching
+now uses word boundaries, preserves non-purchase reminders/messages about
+tickets, covers `Get me tickets`, and applies the hold to n-best and changed-mind
+side paths.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

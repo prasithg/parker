@@ -86,6 +86,52 @@ def test_purchase_requests_route_to_human_approval(db):
     assert db.query(CapturedIntent).count() == 0
 
 
+def test_ticket_requests_separate_lookup_from_purchase_without_capture(db):
+    session = _session(db)
+
+    lookup = session.handle("Find me ticket options for the concert Saturday night")
+    purchase = session.handle(
+        "I want tickets to be talked to the consequences of the night.",
+        alternates=["I want the tickets to be sought to the concert outside of the night."],
+    )
+    get_tickets = session.handle("Get me tickets for the concert")
+
+    assert lookup["kind"] == "answer"
+    assert lookup["action_type"] == "item_search"
+    assert lookup["purchase_permitted"] is False
+    assert "buy" not in lookup["speech"].lower()
+    for held in (purchase, get_tickets):
+        assert held["kind"] == "needs_human_approval"
+        assert held["action_type"] == "purchase"
+        assert held["purchase_permitted"] is False
+        assert "family" in held["speech"].lower()
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_ticket_boundary_preserves_nonpurchase_reminders_and_messages(db):
+    session = _session(db)
+
+    reminder = session.handle("Remind me to check the ticket prices tomorrow")
+    message = session.handle("Tell Sarah the tickets are available now")
+
+    assert reminder["kind"] == "captured"
+    assert message["kind"] == "captured"
+    saved = db.query(CapturedIntent).order_by(CapturedIntent.id).all()
+    assert [row.requested_action for row in saved] == ["remind", "message"]
+
+
+def test_ticket_phrase_matching_uses_word_boundaries(db):
+    session = _session(db)
+
+    facebook = session.handle("Show the tickets page on Facebook")
+    costume = session.handle("Discuss costume party tickets")
+
+    assert facebook["kind"] == "answer"
+    assert facebook["action_type"] == "item_search"
+    assert costume["kind"] == "choices"
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_reminder_utterance_captures_pending_intent(db):
     session = _session(db)
 
@@ -418,6 +464,22 @@ def test_stop_revision_to_medication_change_refuses_after_cancelling_draft(db):
     assert staged[0].status == "cancelled"
     assert response["kind"] == "refused"
     assert response["flag_for_family"] is True
+    assert db.query(CapturedIntent).count() == 1
+
+
+def test_changed_mind_to_ticket_purchase_holds_after_cancelling_draft(db):
+    session = _session(db)
+    session.handle("Remind me to start stretches now.")
+    resolve_captured_intents(db)
+    staged = stage_resolved_actions(db)
+
+    response = session.handle("Wait, no, book concert tickets instead.")
+
+    db.refresh(staged[0])
+    assert staged[0].status == "cancelled"
+    assert response["kind"] == "needs_human_approval"
+    assert response["action_type"] == "purchase"
+    assert response["purchase_permitted"] is False
     assert db.query(CapturedIntent).count() == 1
 
 

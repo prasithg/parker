@@ -153,6 +153,31 @@ PRIVATE_DISCLOSURE_WORDS = (
     "token",
 )
 PURCHASE_PHRASES = ("order", "buy", "purchase", "card on file")
+TICKET_LOOKUP_PATTERNS = (
+    r"\bfind\b",
+    r"\blook\s+up\b",
+    r"\blookup\b",
+    r"\bsearch\b",
+    r"\bshow\b",
+    r"\boptions?\b",
+    r"\bavailable\b",
+    r"\bavailability\b",
+    r"\bprices?\b",
+    r"\bcosts?\b",
+    r"\bhow\s+much\b",
+    r"\bgoogle\b",
+)
+TICKET_ACQUISITION_PATTERNS = (
+    r"\bwant\s+(?:the\s+)?tickets?\b",
+    r"\bneed\s+(?:a\s+|the\s+)?tickets?\b",
+    r"\bget\s+(?:me\s+)?(?:a\s+|the\s+)?tickets?\b",
+    r"\b(?:book|buy|purchase|order)\s+(?:me\s+)?(?:a\s+|the\s+)?(?:\w+\s+){0,3}tickets?\b",
+    # Synthetic audio in the 2026-07-10 ticket-boundary lane produced
+    # ``Buy me tickets`` -> ``by me tickets`` in both tiny/base ASR. This is
+    # deliberately scoped to an explicit ticket noun, not a broad ``by me``
+    # runtime guard.
+    r"\bby\s+me\s+tickets?\b",
+)
 FINANCIAL_ACCOUNT_PHRASES = (
     "account balance",
     "bank balance",
@@ -382,6 +407,59 @@ def _looks_like_financial_account_request(lowered: str) -> bool:
     return any(phrase in lowered for phrase in FINANCIAL_ACCOUNT_PHRASES) or any(
         phrase in lowered for phrase in FINANCIAL_ACCOUNT_ASR_ERASURE_PHRASES
     )
+
+
+def _looks_like_ticket_acquisition(normalized: str) -> bool:
+    return any(re.search(pattern, normalized) for pattern in TICKET_ACQUISITION_PATTERNS)
+
+
+def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
+    """Separate read-only ticket lookup from ticket acquisition/purchase.
+
+    The public SLURP clip ``I want tickets to the sold out concert`` survived
+    ASR as ``I want tickets ... consequences of the night`` and used to fall
+    into generic reminder/message choices. Ticket lookup is informational and
+    read-only; acquisition is held at the explicit human-approval boundary.
+    Neither route captures an intent or enters checkout.
+    """
+
+    normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    if not re.search(r"\btickets?\b", normalized):
+        return None
+
+    # Preserve ordinary local reminders/messages *about* ticket information.
+    # Acquisition wording ("remind me to buy tickets") remains held below.
+    direct_local_intent = (
+        MESSAGE_PATTERN.match(utterance)
+        or SEND_PATTERN.match(utterance)
+        or REMIND_PATTERN.match(utterance)
+        or EXERCISE_PATTERN.match(utterance)
+    )
+    acquisition = _looks_like_ticket_acquisition(normalized)
+    if direct_local_intent and not acquisition:
+        return None
+    if acquisition:
+        return {
+            "kind": "needs_human_approval",
+            "action_type": "purchase",
+            "purchase_permitted": False,
+            "speech": (
+                "I can look up ticket options, but I won't book or purchase tickets. "
+                "A family member must review and approve any purchase outside Parker."
+            ),
+        }
+    if any(re.search(pattern, normalized) for pattern in TICKET_LOOKUP_PATTERNS):
+        return {
+            "kind": "answer",
+            "action_type": "item_search",
+            "purchase_permitted": False,
+            "speech": (
+                "I can help prepare a read-only ticket search. The local loop does not fetch live results, "
+                "and I won't book or purchase anything."
+            ),
+        }
+    return None
 
 
 def _control_negation_response(utterance: str) -> dict[str, Any] | None:
@@ -800,6 +878,8 @@ def probe_direct_intent(utterance: str) -> dict[str, Any] | None:
     if not candidate:
         return None
     lowered = candidate.lower()
+    if _looks_like_ticket_acquisition(lowered):
+        return None
     if any(phrase in lowered for group in _PROBE_BLOCKED_PHRASES for phrase in group):
         return None
     match = MESSAGE_PATTERN.match(candidate) or SEND_PATTERN.match(candidate)
@@ -886,6 +966,8 @@ def fragment_candidates(utterance: str) -> list[dict[str, Any]]:
 
     candidate = utterance.strip().rstrip(".")
     lowered = candidate.lower()
+    if _looks_like_ticket_acquisition(lowered):
+        return []
     if any(phrase in lowered for group in _PROBE_BLOCKED_PHRASES for phrase in group):
         return []
     results: list[dict[str, Any]] = []
@@ -1167,9 +1249,14 @@ class TextSession:
                 ),
                 "flag_for_family": True,
             }
+        ticket_response = _ticket_request_response(utterance)
+        if ticket_response is not None:
+            return ticket_response
         if any(p in lowered for p in PURCHASE_PHRASES):
             return {
                 "kind": "needs_human_approval",
+                "action_type": "purchase",
+                "purchase_permitted": False,
                 "speech": (
                     "I don't buy things myself. I can look options up and ask the "
                     "family to approve a purchase."
@@ -1371,6 +1458,10 @@ class TextSession:
                 ),
                 "flag_for_family": True,
             }
+        ticket_response = _ticket_request_response(safety_text)
+        if ticket_response is not None:
+            ticket_response["speech"] = f"Cancelled the earlier draft. {ticket_response['speech']}"
+            return ticket_response
         if any(p in safety_text for p in PURCHASE_PHRASES):
             return {
                 "kind": "needs_human_approval",
