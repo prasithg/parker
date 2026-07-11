@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -203,12 +204,89 @@ class HeldAudioAutodataCandidate:
 
 
 @dataclass(frozen=True)
+class RejectedAudioAutodataCandidate:
+    """A reviewed audio episode excluded from accepted/held coverage."""
+
+    candidate_id: str
+    source_type: str
+    provenance: dict[str, Any]
+    source_transcript: str
+    source_intent_class: str
+    scenario: str
+    asr_hypotheses: list[str]
+    weak_current: dict[str, Any]
+    strong_oracle: dict[str, Any]
+    repair_target: dict[str, Any]
+    expected_confirmation_or_action: str
+    safety_label: str
+    rubric: dict[str, float]
+    rejection_reason: str
+    rejection_failure_mode: str
+    duplicate_of: str | None
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> "RejectedAudioAutodataCandidate":
+        required = {
+            "candidate_id", "source_type", "provenance", "source_transcript",
+            "source_intent_class", "scenario", "asr_hypotheses", "weak_current",
+            "strong_oracle", "repair_target", "expected_confirmation_or_action",
+            "safety_label", "rubric", "rejection_reason", "rejection_failure_mode",
+        }
+        candidate_id = str(row.get("candidate_id", "<unknown>"))
+        missing = required - set(row)
+        if missing:
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} missing fields: {sorted(missing)}")
+        source_type = str(row["source_type"])
+        if source_type not in SOURCE_TYPES:
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} invalid source_type: {source_type}")
+        if not isinstance(row["provenance"], dict):
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} provenance must be an object")
+        if source_type == "public_corpus_audio_derived" and not row["provenance"].get("source_url"):
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} needs a source_url")
+        if not isinstance(row["asr_hypotheses"], list) or not row["asr_hypotheses"]:
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} needs ASR hypotheses")
+        for object_field in ("weak_current", "strong_oracle", "repair_target", "rubric"):
+            if not isinstance(row[object_field], dict):
+                raise ValueError(f"rejected audio-autodata candidate {candidate_id} {object_field} must be an object")
+        choices = row["repair_target"].get("choices")
+        if not isinstance(choices, list) or not any(str(choice).lower() == "none of these" for choice in choices):
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} repair target needs none of these")
+        rubric = {str(key): float(value) for key, value in row["rubric"].items()}
+        if abs(sum(rubric.values()) - 1.0) > 0.001:
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} rubric weights must sum to 1.0")
+        if row.get("private_data", "none") != "none":
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} must contain no private data")
+        failure_mode = str(row["rejection_failure_mode"]).strip()
+        if not failure_mode:
+            raise ValueError(f"rejected audio-autodata candidate {candidate_id} needs a rejection_failure_mode")
+        return cls(
+            candidate_id=candidate_id,
+            source_type=source_type,
+            provenance=row["provenance"],
+            source_transcript=str(row["source_transcript"]),
+            source_intent_class=str(row["source_intent_class"]),
+            scenario=str(row["scenario"]),
+            asr_hypotheses=[str(item) for item in row["asr_hypotheses"]],
+            weak_current=row["weak_current"],
+            strong_oracle=row["strong_oracle"],
+            repair_target=row["repair_target"],
+            expected_confirmation_or_action=str(row["expected_confirmation_or_action"]),
+            safety_label=str(row["safety_label"]),
+            rubric=rubric,
+            rejection_reason=str(row["rejection_reason"]),
+            rejection_failure_mode=failure_mode,
+            duplicate_of=str(row["duplicate_of"]) if row.get("duplicate_of") else None,
+        )
+
+
+@dataclass(frozen=True)
 class AudioAutodataEvalResult:
     """Aggregate audio-autodata fixture gate."""
 
     cases: list[AudioAutodataCase]
     validation_failures: list[dict[str, str]]
     held_candidates: list[HeldAudioAutodataCandidate] = field(default_factory=list)
+    rejected_candidates: list[RejectedAudioAutodataCandidate] = field(default_factory=list)
 
     def metrics(self) -> dict[str, Any]:
         total = len(self.cases)
@@ -249,10 +327,15 @@ class AudioAutodataEvalResult:
             if case.final_action_type in SIDE_EFFECT_ACTIONS
             and case.final_confirmed_action.get("requires_confirmation") is True
         ]
+        rejection_failure_modes = dict(sorted(Counter(
+            candidate.rejection_failure_mode for candidate in self.rejected_candidates
+        ).items()))
         return {
             "total_cases": total,
             "accepted_cases": len(accepted),
             "held_candidates": len(self.held_candidates),
+            "rejected_candidates": len(self.rejected_candidates),
+            "rejection_failure_modes": rejection_failure_modes,
             "synthetic_audio_derived_cases": len(synthetic),
             "public_corpus_audio_derived_cases": len(public),
             "hard_negative_or_no_action_cases": len(hard_negative),
@@ -312,6 +395,26 @@ class AudioAutodataEvalResult:
                 }
                 for candidate in self.held_candidates
             ],
+            "rejected_candidates": [
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "source_type": candidate.source_type,
+                    "source_transcript": candidate.source_transcript,
+                    "source_intent_class": candidate.source_intent_class,
+                    "scenario": candidate.scenario,
+                    "asr_hypotheses": candidate.asr_hypotheses,
+                    "weak_current_result": candidate.weak_current.get("result"),
+                    "strong_oracle_result": candidate.strong_oracle.get("result"),
+                    "repair_choices": candidate.repair_target.get("choices", []),
+                    "expected_confirmation_or_action": candidate.expected_confirmation_or_action,
+                    "safety_label": candidate.safety_label,
+                    "rubric": candidate.rubric,
+                    "rejection_reason": candidate.rejection_reason,
+                    "rejection_failure_mode": candidate.rejection_failure_mode,
+                    "duplicate_of": candidate.duplicate_of,
+                }
+                for candidate in self.rejected_candidates
+            ],
             "cases": [
                 {
                     "case_id": case.case_id,
@@ -370,14 +473,34 @@ def load_held_candidates(path: Path = DEFAULT_CASES_PATH) -> list[HeldAudioAutod
     return candidates
 
 
+def load_rejected_candidates(path: Path = DEFAULT_CASES_PATH) -> list[RejectedAudioAutodataCandidate]:
+    parsed = _read_payload(path)
+    raw = parsed.get("rejected_candidates", [])
+    if not isinstance(raw, list):
+        raise ValueError(f"{path}: rejected_candidates must be a list when present")
+    candidates = [RejectedAudioAutodataCandidate.from_dict(row) for row in raw]
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate.candidate_id in seen:
+            raise ValueError(f"duplicate rejected audio-autodata candidate_id: {candidate.candidate_id}")
+        seen.add(candidate.candidate_id)
+    return candidates
+
+
 def evaluate(
     cases: list[AudioAutodataCase],
     held_candidates: list[HeldAudioAutodataCandidate] | None = None,
+    rejected_candidates: list[RejectedAudioAutodataCandidate] | None = None,
 ) -> AudioAutodataEvalResult:
     failures: list[dict[str, str]] = []
     for case in cases:
         failures.extend(_case_failures(case))
-    return AudioAutodataEvalResult(cases=cases, validation_failures=failures, held_candidates=held_candidates or [])
+    return AudioAutodataEvalResult(
+        cases=cases,
+        validation_failures=failures,
+        held_candidates=held_candidates or [],
+        rejected_candidates=rejected_candidates or [],
+    )
 
 
 def _case_failures(case: AudioAutodataCase) -> list[dict[str, str]]:
@@ -438,6 +561,7 @@ def format_summary(result: AudioAutodataEvalResult) -> str:
         f"Cases: {metrics['total_cases']} metadata-only audio-derived fixtures",
         f"Accepted fixtures: {metrics['accepted_cases']}/{metrics['total_cases']}",
         f"Held candidates (not counted as accepted): {metrics['held_candidates']}",
+        f"Rejected candidates (not counted as accepted): {metrics['rejected_candidates']}",
         f"Synthetic audio-derived: {metrics['synthetic_audio_derived_cases']}",
         f"Public corpus audio-derived: {metrics['public_corpus_audio_derived_cases']}",
         f"Hard negative/no-action: {metrics['hard_negative_or_no_action_cases']}",
@@ -499,6 +623,21 @@ def format_markdown_report(result: AudioAutodataEvalResult, run_date: str) -> st
                 f"weak={candidate['observed_weak_current_result']}; safety={candidate['safety_label']}; "
                 f"hold={candidate['hold_reason']}; blocker={candidate['promotion_blocker']}"
             )
+    if payload["rejected_candidates"]:
+        lines.extend(["", "## Rejected candidate ledger", ""])
+        lines.append(
+            "These reviewed audio episodes are excluded from accepted and held coverage; failure modes remain visible to prevent denominator inflation and repeated work."
+        )
+        lines.append("")
+        for candidate in payload["rejected_candidates"]:
+            hypotheses = "; ".join(candidate["asr_hypotheses"])
+            lines.append(
+                f"- `{candidate['candidate_id']}` ({candidate['source_type']}): "
+                f"source={candidate['source_transcript']!r}; ASR={hypotheses!r}; "
+                f"weak={candidate['weak_current_result']}; oracle={candidate['strong_oracle_result']}; "
+                f"failure_mode={candidate['rejection_failure_mode']}; reason={candidate['rejection_reason']}; "
+                f"duplicate_of={candidate['duplicate_of']}"
+            )
     lines.append("")
     return "\n".join(lines)
 
@@ -534,7 +673,11 @@ def main() -> None:
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
     args = parser.parse_args()
 
-    result = evaluate(load_cases(args.cases), held_candidates=load_held_candidates(args.cases))
+    result = evaluate(
+        load_cases(args.cases),
+        held_candidates=load_held_candidates(args.cases),
+        rejected_candidates=load_rejected_candidates(args.cases),
+    )
     if args.json:
         print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     else:

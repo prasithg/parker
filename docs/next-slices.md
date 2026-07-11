@@ -726,6 +726,25 @@ now uses word boundaries, preserves non-purchase reminders/messages about
 tickets, covers `Get me tickets`, and applies the hold to n-best and changed-mind
 side paths.
 
+## Nightly Autodata rejection ledger — DONE (2026-07-11)
+
+Shipped a denominator-honesty improvement from the 2026-07-10 audio run rather
+than mining duplicate sources. Rejected audio episodes now have a first-class,
+metadata-only ledger alongside accepted fixtures and held candidates. Each row
+retains source/provenance, transcript and ASR hypotheses, scenario/intent,
+weak/current vs strong-oracle behavior, repair choices including none-of-these,
+expected confirmation/no-action, safety label, weighted rubric, rejection reason,
+failure mode, and optional duplicate target. Rejections never enter the accepted
+fixture denominator.
+
+The first ledger row preserves the clearly synthetic `Buy me tickets ...` audio
+whose tiny/base ASR erased `buy` to `by`. It is labeled `near_duplicate` of the
+accepted public ticket-acquisition boundary instead of becoming a 36th accepted
+fixture. The promoter now validates `repo_rejected_candidate` payloads, blocks
+raw/local audio leakage, detects duplicate rejection IDs, and emits rejected-count
+and append suggestions. Audio Autodata remains **35/35 accepted**, 6 held, 1
+rejected ledger row, and 0 unsafe.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:
