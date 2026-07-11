@@ -28,10 +28,12 @@ if str(REPO_ROOT) not in sys.path:
 from benchmark.evaluate_audio_repair_autodata_v0 import (
     AudioAutodataCase,
     HeldAudioAutodataCandidate,
+    RejectedAudioAutodataCandidate,
     DEFAULT_CASES_PATH,
     evaluate,
     load_cases,
     load_held_candidates,
+    load_rejected_candidates,
 )
 
 # Repo fixtures must never carry Operations-local raw audio paths or private
@@ -87,6 +89,7 @@ class PromotionPlan:
     raw_audio_not_committed: bool
     accepted: list[CandidateValidation]
     held: list[CandidateValidation]
+    rejected: list[CandidateValidation]
     skipped: list[CandidateValidation]
     before_metrics: dict[str, Any]
     after_metrics: dict[str, Any]
@@ -102,11 +105,13 @@ class PromotionPlan:
             "counts": {
                 "accepted_ready": sum(1 for item in self.accepted if item.ready),
                 "held_ready": sum(1 for item in self.held if item.ready),
-                "blocked_or_duplicate": sum(1 for item in [*self.accepted, *self.held, *self.skipped] if not item.ready),
+                "rejected_ready": sum(1 for item in self.rejected if item.ready),
+                "blocked_or_duplicate": sum(1 for item in [*self.accepted, *self.held, *self.rejected, *self.skipped] if not item.ready),
                 "skipped": len(self.skipped),
             },
             "accepted": [item.as_dict() for item in self.accepted],
             "held": [item.as_dict() for item in self.held],
+            "rejected": [item.as_dict() for item in self.rejected],
             "skipped": [item.as_dict() for item in self.skipped],
             "before_metrics": self.before_metrics,
             "after_metrics": self.after_metrics,
@@ -204,6 +209,9 @@ def _candidate_id(raw: dict[str, Any], fallback: str) -> str:
     held = raw.get("repo_held_candidate")
     if isinstance(held, dict) and held.get("candidate_id"):
         return str(held["candidate_id"])
+    rejected = raw.get("repo_rejected_candidate")
+    if isinstance(rejected, dict) and rejected.get("candidate_id"):
+        return str(rejected["candidate_id"])
     return str(raw.get("candidate_id") or raw.get("decision") or fallback)
 
 
@@ -305,19 +313,61 @@ def _validate_held_candidate(
     ), candidate if ready else None
 
 
+def _validate_rejected_candidate(
+    raw: dict[str, Any],
+    *,
+    existing_rejected_ids: set[str],
+    ordinal: int,
+) -> tuple[CandidateValidation, RejectedAudioAutodataCandidate | None]:
+    candidate_id = _candidate_id(raw, f"rejected[{ordinal}]")
+    rejected = raw.get("repo_rejected_candidate")
+    if not isinstance(rejected, dict):
+        return CandidateValidation(
+            kind="rejected_candidate",
+            candidate_id=candidate_id,
+            ready=False,
+            status="rejected_without_repo_payload",
+            warnings=["rejected Operations episode has no repo_rejected_candidate ledger object"],
+            dedupe_keys={"source_row": _source_row_key_from_candidate(raw)},
+        ), None
+
+    errors = _raw_or_local_leaks(rejected)
+    candidate: RejectedAudioAutodataCandidate | None = None
+    try:
+        candidate = RejectedAudioAutodataCandidate.from_dict(rejected)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"schema: {type(exc).__name__}: {exc}")
+    rejected_id = str(rejected.get("candidate_id") or candidate_id)
+    if candidate is not None and candidate.candidate_id in existing_rejected_ids:
+        errors.append("duplicate rejected candidate_id already present in repo fixture data")
+    ready = not errors
+    return CandidateValidation(
+        kind="rejected_candidate",
+        candidate_id=rejected_id,
+        ready=ready,
+        status="ready" if ready else "blocked",
+        errors=errors,
+        dedupe_keys={"source_row": _source_row_key_from_candidate(raw)},
+    ), candidate if ready else None
+
+
 def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CASES_PATH) -> PromotionPlan:
     payload = _read_json(candidates_path)
     existing_cases = load_cases(cases_path)
     existing_held = load_held_candidates(cases_path)
+    existing_rejected = load_rejected_candidates(cases_path)
     existing_case_ids = {case.case_id for case in existing_cases}
     existing_held_ids = {candidate.candidate_id for candidate in existing_held}
+    existing_rejected_ids = {candidate.candidate_id for candidate in existing_rejected}
     existing_case_source_keys = {_source_row_key_from_case(case) for case in existing_cases}
 
     accepted_validations: list[CandidateValidation] = []
     held_validations: list[CandidateValidation] = []
+    rejected_validations: list[CandidateValidation] = []
     skipped: list[CandidateValidation] = []
     ready_cases: list[AudioAutodataCase] = []
     ready_held: list[HeldAudioAutodataCandidate] = []
+    ready_rejected: list[RejectedAudioAutodataCandidate] = []
 
     for ordinal, raw in enumerate(payload.get("accepted", [])):
         if not isinstance(raw, dict):
@@ -342,35 +392,44 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
         if candidate is not None:
             ready_held.append(candidate)
 
-    for section in ("rejected",):
-        for ordinal, raw in enumerate(payload.get(section, [])):
-            if isinstance(raw, dict):
-                skipped.append(
-                    CandidateValidation(
-                        kind=section,
-                        candidate_id=_candidate_id(raw, f"{section}[{ordinal}]"),
-                        ready=False,
-                        status="not_for_repo_promotion",
-                        warnings=[str(raw.get("reason") or raw.get("decision") or "rejected by nightly loop")],
-                        dedupe_keys={"source_row": _source_row_key_from_candidate(raw)},
-                    )
-                )
+    for ordinal, raw in enumerate(payload.get("rejected", [])):
+        if not isinstance(raw, dict):
+            skipped.append(CandidateValidation("rejected_candidate", f"rejected[{ordinal}]", False, "malformed", ["entry is not an object"]))
+            continue
+        validation, candidate = _validate_rejected_candidate(
+            raw,
+            existing_rejected_ids=existing_rejected_ids,
+            ordinal=ordinal,
+        )
+        rejected_validations.append(validation)
+        if candidate is not None:
+            ready_rejected.append(candidate)
 
-    before = evaluate(existing_cases, held_candidates=existing_held).metrics()
-    after = evaluate([*existing_cases, *ready_cases], held_candidates=[*existing_held, *ready_held]).metrics()
+    before = evaluate(
+        existing_cases,
+        held_candidates=existing_held,
+        rejected_candidates=existing_rejected,
+    ).metrics()
+    after = evaluate(
+        [*existing_cases, *ready_cases],
+        held_candidates=[*existing_held, *ready_held],
+        rejected_candidates=[*existing_rejected, *ready_rejected],
+    ).metrics()
     raw_audio_not_committed = not any(
         item.errors
-        for item in [*accepted_validations, *held_validations]
+        for item in [*accepted_validations, *held_validations, *rejected_validations]
         if any("raw/local" in error or "audio" in error or "path" in error for error in item.errors)
     )
     run_hint = _infer_run_hint(payload, candidates_path)
     ready_case_ids = [case.case_id for case in ready_cases]
     ready_held_ids = [candidate.candidate_id for candidate in ready_held]
+    ready_rejected_ids = [candidate.candidate_id for candidate in ready_rejected]
     patch_suggestions = {
         "target_data_file": str(cases_path),
         "update_generated_from_run_to": run_hint,
         "append_cases": ready_case_ids,
         "append_held_candidates": ready_held_ids,
+        "append_rejected_candidates": ready_rejected_ids,
         "count_delta": {
             key: after.get(key, 0) - before.get(key, 0)
             for key in sorted(set(before) | set(after))
@@ -399,6 +458,7 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
         raw_audio_not_committed=raw_audio_not_committed,
         accepted=accepted_validations,
         held=held_validations,
+        rejected=rejected_validations,
         skipped=skipped,
         before_metrics=before,
         after_metrics=after,
