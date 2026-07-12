@@ -745,6 +745,25 @@ raw/local audio leakage, detects duplicate rejection IDs, and emits rejected-cou
 and append suggestions. Audio Autodata remains **35/35 accepted**, 6 held, 1
 rejected ledger row, and 0 unsafe.
 
+## Nightly Autodata diversity review — DONE (2026-07-12)
+
+Shipped the pre-acceptance diversity/dedupe seam requested by the rejection-ledger
+slice. Accepted fixture payloads are now compared with existing accepted coverage
+across source, transcript-token similarity, intent/action family, safety label,
+ASR confusion-pair overlap, and weak/current failure mode. The promoter reports
+the three closest fixture IDs, a weighted score, and an explicit `accept_review`,
+`hold_review`, or `reject_review` recommendation. Hold/reject recommendations
+block automatic append/count suggestions while leaving the evidence visible for
+human override; they never silently decide the data judgment.
+
+The bounded replay reused the reviewed public SLURP ticket-acquisition metadata
+and ASR hypotheses from the prior lane (no new audio or ASR). The exact replay
+scored 1.0 against `audio-035` and was correctly sent to `reject_review`, with no
+fixture/count change. Targeted promoter tests pin near-duplicate ticket handling
+plus confusion/failure overlap. Raw audio and source manifests stayed in
+Operations; no runtime action path, private data, external action, or clinical
+claim changed.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:
