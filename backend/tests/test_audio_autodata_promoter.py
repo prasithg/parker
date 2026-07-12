@@ -181,3 +181,43 @@ def test_promoter_validates_repo_rejected_candidate_and_reports_delta(tmp_path: 
     assert payload["rejected"][0]["candidate_id"] == "rejected-test-synthetic-ticket-purchase"
     assert payload["patch_suggestions"]["count_delta"]["rejected_candidates"] == 1
     assert payload["patch_suggestions"]["append_rejected_candidates"] == ["rejected-test-synthetic-ticket-purchase"]
+
+
+def test_promoter_emits_advisory_cross_family_diversity_recommendation(tmp_path: Path) -> None:
+    fixture = _case_fixture("audio-035-slurp-concert-ticket-purchase-boundary")
+    fixture["case_id"] = "audio-test-ticket-acquisition-near-duplicate"
+    fixture["clean_phrase"] = "I want concert tickets for Saturday evening"
+    fixture["provenance"]["run_artifact"] = "parker-autodata-nightly/runs/2099-01-02/audio_loop/candidate.json#ticket"
+    candidates_path = tmp_path / "promotion_candidates.json"
+    candidates_path.write_text(json.dumps({"accepted": [{"repo_fixture_case": fixture}], "held": [], "rejected": []}))
+
+    payload = build_promotion_plan(candidates_path).as_dict()
+    accepted = payload["accepted"][0]
+
+    # The scorer blocks automatic append suggestions but remains advisory:
+    # a reviewer may still explicitly override it after inspecting matches.
+    assert accepted["ready"] is False
+    assert accepted["status"] == "diversity_review_required"
+    assert accepted["diversity_review"]["recommendation"] == "reject_review"
+    assert accepted["diversity_review"]["closest_matches"][0]["candidate_id"] == "audio-035-slurp-concert-ticket-purchase-boundary"
+    assert accepted["diversity_review"]["closest_matches"][0]["overlap"]["intent_family"] is True
+    assert accepted["diversity_review"]["closest_matches"][0]["overlap"]["safety_label"] is True
+    assert any("human judgment" in warning for warning in accepted["warnings"])
+
+
+def test_promoter_diversity_recommendation_uses_failure_and_confusion_overlap(tmp_path: Path) -> None:
+    fixture = _case_fixture("audio-002-synthetic-reminder-clipped-start")
+    fixture["case_id"] = "audio-test-reminder-different-source-row"
+    fixture["clean_phrase"] = "Remind me to water the herbs this evening"
+    fixture["provenance"]["synthetic_audio_recipe"] = "clearly synthetic test recipe with different wording"
+    fixture["provenance"]["run_artifact"] = "parker-autodata-nightly/runs/2099-01-02/audio_loop/candidate.json#herbs"
+    fixture["confusion_pairs"] = ["remind/mind", "clipped start"]
+    candidates_path = tmp_path / "promotion_candidates.json"
+    candidates_path.write_text(json.dumps({"accepted": [{"repo_fixture_case": fixture}], "held": [], "rejected": []}))
+
+    accepted = build_promotion_plan(candidates_path).as_dict()["accepted"][0]
+    closest = accepted["diversity_review"]["closest_matches"][0]
+
+    assert closest["overlap"]["weak_failure_mode"] is True
+    assert closest["overlap"]["confusion_pair_jaccard"] > 0
+    assert accepted["diversity_review"]["score"] == closest["score"]

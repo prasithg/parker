@@ -66,6 +66,7 @@ class CandidateValidation:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     dedupe_keys: dict[str, str] = field(default_factory=dict)
+    diversity_review: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +77,7 @@ class CandidateValidation:
             "errors": self.errors,
             "warnings": self.warnings,
             "dedupe_keys": self.dedupe_keys,
+            "diversity_review": self.diversity_review,
         }
 
 
@@ -202,6 +204,79 @@ def _command_family_for_held(candidate: HeldAudioAutodataCandidate) -> str:
     return candidate.source_intent_class
 
 
+def _normalized_words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _fixture_diversity_profile(case: AudioAutodataCase) -> dict[str, Any]:
+    return {
+        "candidate_id": case.case_id,
+        "source": str(case.provenance.get("source_url") or case.source_type),
+        "transcript_words": _normalized_words(case.clean_phrase),
+        "intent_family": _command_family_for_fixture(case),
+        "safety_label": case.safety_label,
+        "confusion_pairs": {pair.lower().strip() for pair in case.confusion_pairs},
+        "weak_failure_mode": str(case.weak_current.get("result") or ""),
+    }
+
+
+def _score_diversity(candidate: AudioAutodataCase, existing: list[AudioAutodataCase]) -> dict[str, Any]:
+    """Score overlap for human review without making the promotion decision."""
+
+    profile = _fixture_diversity_profile(candidate)
+    matches: list[dict[str, Any]] = []
+    for prior in existing:
+        reference = _fixture_diversity_profile(prior)
+        transcript_jaccard = _jaccard(profile["transcript_words"], reference["transcript_words"])
+        confusion_jaccard = _jaccard(profile["confusion_pairs"], reference["confusion_pairs"])
+        overlap = {
+            "source": profile["source"] == reference["source"],
+            "transcript_jaccard": round(transcript_jaccard, 3),
+            "intent_family": profile["intent_family"] == reference["intent_family"],
+            "safety_label": profile["safety_label"] == reference["safety_label"],
+            "confusion_pair_jaccard": round(confusion_jaccard, 3),
+            "weak_failure_mode": bool(profile["weak_failure_mode"]) and profile["weak_failure_mode"] == reference["weak_failure_mode"],
+        }
+        score = (
+            0.10 * float(overlap["source"])
+            + 0.20 * transcript_jaccard
+            + 0.20 * float(overlap["intent_family"])
+            + 0.15 * float(overlap["safety_label"])
+            + 0.20 * confusion_jaccard
+            + 0.15 * float(overlap["weak_failure_mode"])
+        )
+        matches.append({"candidate_id": prior.case_id, "score": round(score, 3), "overlap": overlap})
+    matches.sort(key=lambda item: (-item["score"], item["candidate_id"]))
+    closest = matches[:3]
+    score = closest[0]["score"] if closest else 0.0
+    if score >= 0.75:
+        recommendation = "reject_review"
+    elif score >= 0.50:
+        recommendation = "hold_review"
+    else:
+        recommendation = "accept_review"
+    return {
+        "recommendation": recommendation,
+        "score": score,
+        "advisory_only": True,
+        "weights": {
+            "source": 0.10,
+            "transcript_jaccard": 0.20,
+            "intent_family": 0.20,
+            "safety_label": 0.15,
+            "confusion_pair_jaccard": 0.20,
+            "weak_failure_mode": 0.15,
+        },
+        "closest_matches": closest,
+    }
+
+
 def _candidate_id(raw: dict[str, Any], fallback: str) -> str:
     fixture = raw.get("repo_fixture_case")
     if isinstance(fixture, dict) and fixture.get("case_id"):
@@ -220,6 +295,7 @@ def _validate_fixture_candidate(
     *,
     existing_case_ids: set[str],
     existing_case_source_keys: set[str],
+    existing_cases: list[AudioAutodataCase],
     ordinal: int,
 ) -> tuple[CandidateValidation, AudioAutodataCase | None]:
     candidate_id = _candidate_id(raw, f"accepted[{ordinal}]")
@@ -246,6 +322,7 @@ def _validate_fixture_candidate(
     case_id = str(fixture.get("case_id") or candidate_id)
     source_key = ""
     family = ""
+    diversity_review: dict[str, Any] = {}
     if case is not None:
         source_key = _source_row_key_from_case(case)
         family = _command_family_for_fixture(case)
@@ -257,15 +334,29 @@ def _validate_fixture_candidate(
             errors.append("repo_fixture_case judge.accepted must be true for accepted promotion")
         if case.safety.get("private_data") != "none":
             errors.append("safety.private_data must be 'none'")
-    ready = not errors
+        diversity_review = _score_diversity(case, existing_cases)
+        if diversity_review["recommendation"] != "accept_review":
+            warnings.append(
+                f"diversity scorer recommends {diversity_review['recommendation']}; human judgment is required before promotion"
+            )
+    schema_ready = not errors
+    review_required = diversity_review.get("recommendation") in {"hold_review", "reject_review"}
+    ready = schema_ready and not review_required
+    if not schema_ready:
+        status = "blocked"
+    elif review_required:
+        status = "diversity_review_required"
+    else:
+        status = "ready"
     return CandidateValidation(
         kind="accepted_fixture",
         candidate_id=case_id,
         ready=ready,
-        status="ready" if ready else "blocked",
+        status=status,
         errors=errors,
         warnings=warnings,
         dedupe_keys={"source_row": source_key or _source_row_key_from_candidate(raw), "command_family": family},
+        diversity_review=diversity_review,
     ), case if ready else None
 
 
@@ -377,6 +468,7 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
             raw,
             existing_case_ids=existing_case_ids,
             existing_case_source_keys=existing_case_source_keys,
+            existing_cases=[*existing_cases, *ready_cases],
             ordinal=ordinal,
         )
         accepted_validations.append(validation)
