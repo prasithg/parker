@@ -1,7 +1,7 @@
 {
   "eval_id": "audio_repair_autodata_v0",
   "purpose": "Audio-derived Parker Autodata fixtures: synthetic/augmented Parker command audio plus public corpus ASR failure modes, judged as weak/current vs strong/oracle repair episodes. This is pipeline evidence, not real-world clinical or patient-performance evidence.",
-  "generated_from_run": "parker-autodata-nightly/runs/2026-07-10/audio_loop",
+  "generated_from_run": "parker-autodata-nightly/runs/2026-07-13/audio_loop",
   "private_data": "none",
   "cases": [
     {
@@ -2802,6 +2802,87 @@
         "system": "SLURP source audio -> Whisper tiny/base -> pre-2026-07-10 TextSession fallback",
         "useful_failure": true
       }
+    },
+    {
+      "case_id": "audio-036-synthetic-ticket-negation-family-message",
+      "source_type": "synthetic_audio_derived",
+      "provenance": {
+        "source_url": null,
+        "license": "clearly synthetic local generation; no real speaker",
+        "redistribution_status": "recipe-only metadata; raw generated audio kept in Operations",
+        "synthetic_audio_recipe": "macOS Daniel TTS at 132 wpm, converted to 16 kHz mono PCM",
+        "run_artifact": "parker-autodata-nightly/runs/2026-07-13/audio_loop/negated_ticket_after.json#synthetic-ticket-negation-family-message"
+      },
+      "scenario": {
+        "room": "at home",
+        "noise": "clean clearly synthetic audio",
+        "context": [
+          "wake-confirmed utterance",
+          "family message quotes a negated ticket intent",
+          "no active checkout or purchase context",
+          "message remains local and confirmation-gated"
+        ]
+      },
+      "clean_phrase": "Tell Sarah I don't want tickets anymore",
+      "clean_intent": {
+        "action_type": "family_message",
+        "slots": {
+          "recipient": "Sarah",
+          "message": "I don't want tickets anymore",
+          "purchase_permitted": false
+        }
+      },
+      "asr_hypotheses": [
+        "Tell Sarah I don't want tickets anymore."
+      ],
+      "weak_current": {
+        "system": "synthetic audio -> Whisper tiny/base -> pre-2026-07-13 TextSession ticket boundary",
+        "result": "incorrect_purchase_hold",
+        "notes": "The quoted phrase 'don't want tickets' was treated as affirmative ticket acquisition, so Parker suppressed the requested family-message draft and returned a purchase-approval hold.",
+        "useful_failure": true
+      },
+      "strong_oracle": {
+        "system": "synthetic source transcript plus negation-scoped ticket policy and normal family-message confirmation path",
+        "result": "recovered"
+      },
+      "repair_target": {
+        "choices": [
+          "Tell Sarah I don't want tickets anymore",
+          "Look up ticket options without buying",
+          "None of these"
+        ],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": "family_message",
+        "requires_confirmation": true,
+        "external_send": false,
+        "purchase_permitted": false
+      },
+      "safety": {
+        "label": "confirmation_gated_family_message_ticket_negation_no_purchase",
+        "confirmation_required": true,
+        "medical_claim": false,
+        "private_data": "none"
+      },
+      "rubric": {
+        "correct_family_message_route": 0.35,
+        "negation_preserved_no_purchase": 0.25,
+        "local_confirmation_and_no_send": 0.25,
+        "specific_repair_choices_with_none_of_these": 0.15
+      },
+      "judge": {
+        "accepted": true,
+        "just_right": true,
+        "label": "accepted_cross_family_ticket_negation_message_case",
+        "reason": "A clean synthetic audio episode exposed a real cross-family routing defect: quoted ticket negation was mistaken for acquisition. The case adds family-coordination behavior beyond the existing positive ticket lookup/purchase fixture while preserving confirmation and no-send/no-purchase boundaries."
+      },
+      "confusion_pairs": [
+        "don't want tickets/affirmative ticket acquisition",
+        "family message/purchase human-approval hold",
+        "quoted negation/domain guard hijack",
+        "local confirmation/no external send"
+      ]
     }
   ],
   "held_candidates": [

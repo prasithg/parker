@@ -178,6 +178,11 @@ TICKET_ACQUISITION_PATTERNS = (
     # runtime guard.
     r"\bby\s+me\s+tickets?\b",
 )
+TICKET_NEGATED_ACQUISITION_PATTERNS = (
+    r"\b(?:do\s+not|don't|dont)\s+(?:want|need)\s+(?:a\s+|the\s+)?tickets?\b",
+    r"\b(?:do\s+not|don't|dont)\s+(?:book|buy|purchase|order|get)\s+"
+    r"(?:me\s+)?(?:a\s+|the\s+)?(?:\w+\s+){0,3}tickets?\b",
+)
 FINANCIAL_ACCOUNT_PHRASES = (
     "account balance",
     "bank balance",
@@ -413,6 +418,28 @@ def _looks_like_ticket_acquisition(normalized: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in TICKET_ACQUISITION_PATTERNS)
 
 
+def _without_negated_ticket_acquisition(normalized: str) -> tuple[str, bool]:
+    """Remove explicit ticket negations before looking for positive acquisition.
+
+    Clearly synthetic audio preserved ``don't buy tickets`` and ``don't want
+    tickets`` verbatim. Those clauses must not be reinterpreted as affirmative
+    purchase intent. Removing only the narrow verb+ticket span keeps a later
+    positive clause (``don't buy these tickets; buy the Sunday tickets``)
+    visible to the conservative human-approval gate.
+    """
+
+    remaining = normalized
+    for pattern in TICKET_NEGATED_ACQUISITION_PATTERNS:
+        remaining = re.sub(pattern, " ", remaining)
+    remaining = re.sub(r"\s+", " ", remaining).strip()
+    return remaining, remaining != normalized
+
+
+def _looks_like_purchase_after_ticket_negation(normalized: str) -> bool:
+    remaining, _ = _without_negated_ticket_acquisition(normalized)
+    return any(phrase in remaining for phrase in PURCHASE_PHRASES)
+
+
 def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
     """Separate read-only ticket lookup from ticket acquisition/purchase.
 
@@ -436,7 +463,8 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
         or REMIND_PATTERN.match(utterance)
         or EXERCISE_PATTERN.match(utterance)
     )
-    acquisition = _looks_like_ticket_acquisition(normalized)
+    positive_text, has_negated_acquisition = _without_negated_ticket_acquisition(normalized)
+    acquisition = _looks_like_ticket_acquisition(positive_text)
     if direct_local_intent and not acquisition:
         return None
     if acquisition:
@@ -449,7 +477,7 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
                 "A family member must review and approve any purchase outside Parker."
             ),
         }
-    if any(re.search(pattern, normalized) for pattern in TICKET_LOOKUP_PATTERNS):
+    if any(re.search(pattern, positive_text) for pattern in TICKET_LOOKUP_PATTERNS):
         return {
             "kind": "answer",
             "action_type": "item_search",
@@ -458,6 +486,13 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
                 "I can help prepare a read-only ticket search. The local loop does not fetch live results, "
                 "and I won't book or purchase anything."
             ),
+        }
+    if has_negated_acquisition:
+        return {
+            "kind": "noop",
+            "action_type": None,
+            "purchase_permitted": False,
+            "speech": "I heard that you don't want tickets. I won't create or purchase anything.",
         }
     return None
 
@@ -1252,7 +1287,7 @@ class TextSession:
         ticket_response = _ticket_request_response(utterance)
         if ticket_response is not None:
             return ticket_response
-        if any(p in lowered for p in PURCHASE_PHRASES):
+        if _looks_like_purchase_after_ticket_negation(lowered):
             return {
                 "kind": "needs_human_approval",
                 "action_type": "purchase",
@@ -1462,7 +1497,7 @@ class TextSession:
         if ticket_response is not None:
             ticket_response["speech"] = f"Cancelled the earlier draft. {ticket_response['speech']}"
             return ticket_response
-        if any(p in safety_text for p in PURCHASE_PHRASES):
+        if _looks_like_purchase_after_ticket_negation(safety_text):
             return {
                 "kind": "needs_human_approval",
                 "speech": (

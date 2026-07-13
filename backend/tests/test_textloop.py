@@ -120,6 +120,48 @@ def test_ticket_boundary_preserves_nonpurchase_reminders_and_messages(db):
     assert [row.requested_action for row in saved] == ["remind", "message"]
 
 
+def test_negated_ticket_intents_do_not_become_purchase_holds(db):
+    session = _session(db)
+
+    lookup = session.handle("Don't buy tickets, just look up concert times for Saturday night.")
+    abandoned = session.handle("I don't want tickets anymore. Cancel that.")
+
+    assert lookup["kind"] == "answer"
+    assert lookup["action_type"] == "item_search"
+    assert lookup["purchase_permitted"] is False
+    assert abandoned["kind"] == "noop"
+    assert "won't" in abandoned["speech"].lower()
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_negated_ticket_clause_does_not_hide_a_later_positive_purchase_request(db):
+    session = _session(db)
+
+    response = session.handle("Don't buy these tickets; buy the Sunday tickets instead.")
+
+    assert response["kind"] == "needs_human_approval"
+    assert response["action_type"] == "purchase"
+    assert response["purchase_permitted"] is False
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_compound_family_message_can_quote_negated_ticket_intent(db):
+    session = _session(db)
+
+    want_message = session.handle("Tell Sarah I don't want tickets anymore.")
+    buy_message = session.handle("Tell Sarah don't buy tickets for me.")
+
+    assert want_message["kind"] == "captured"
+    assert buy_message["kind"] == "captured"
+    saved = db.query(CapturedIntent).order_by(CapturedIntent.id).all()
+    assert [row.requested_action for row in saved] == ["message", "message"]
+    assert [row.recipient for row in saved] == ["Sarah", "Sarah"]
+    assert [row.intent_text for row in saved] == [
+        "I don't want tickets anymore.",
+        "don't buy tickets for me.",
+    ]
+
+
 def test_ticket_phrase_matching_uses_word_boundaries(db):
     session = _session(db)
 

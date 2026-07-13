@@ -764,6 +764,27 @@ plus confusion/failure overlap. Raw audio and source manifests stayed in
 Operations; no runtime action path, private data, external action, or clinical
 claim changed.
 
+## Nightly ticket-negation audio boundary — DONE (2026-07-13)
+
+Shipped one family-usefulness repair from three clearly synthetic audio contrasts.
+Whisper tiny/base preserved the source wording exactly, exposing a routing rather
+than recognition failure: `don't buy tickets`, `I don't want tickets anymore`,
+and `Tell Sarah I don't want tickets anymore` all became affirmative ticket
+purchase holds before the fix. Parker now removes only explicit negated
+verb+ticket spans before looking for a positive acquisition clause. A remaining
+positive clause still holds for human approval; read-only lookup remains no
+purchase; standalone abandonment no-ops; and a family message quoting ticket
+negation returns to the normal local confirmation path with no external send.
+
+The pre-fix audio replay scored 0/3 and the post-fix replay scored 3/3, with 0
+purchases/checkouts. Diversity review accepted only the cross-family message case
+(score 0.333, `accept_review`) as `audio-036`; the lookup contrast was rejected as
+overlap with existing ticket-search coverage and the abandonment contrast as
+overlap with existing no-context cancel coverage. Audio Autodata is now **36/36
+accepted** (10 synthetic, 26 public, 27 hard-negative/no-action), 6 held, 1
+rejected ledger row, and 0 unsafe. Raw generated audio and local paths remain in
+Operations; repo evidence is metadata/ASR hypotheses only.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

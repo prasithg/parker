@@ -25,8 +25,8 @@ def test_audio_autodata_cases_are_public_safe_and_cover_audio_lanes() -> None:
     result = evaluate(cases)
     metrics = result.metrics()
 
-    assert metrics["total_cases"] == 35
-    assert metrics["synthetic_audio_derived_cases"] == 9
+    assert metrics["total_cases"] == 36
+    assert metrics["synthetic_audio_derived_cases"] == 10
     assert metrics["public_corpus_audio_derived_cases"] == 26
     assert metrics["source_oracle_cases"] == 5
     assert metrics["runtime_vs_source_oracle_disagreements"] == 3
@@ -67,7 +67,7 @@ def test_audio_autodata_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "audio_repair_autodata_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 35
+    assert payload["metrics"]["total_cases"] == 36
     assert payload["metrics"]["held_candidates"] == 6
     assert payload["metrics"]["rejected_candidates"] == 1
     assert payload["metrics"]["rejection_failure_modes"] == {"near_duplicate": 1}
@@ -79,8 +79,8 @@ def test_audio_autodata_held_candidates_are_reported_but_not_accepted() -> None:
     held = load_held_candidates(DEFAULT_CASES_PATH)
     payload = evaluate(cases, held_candidates=held).as_dict()
 
-    assert payload["metrics"]["total_cases"] == 35
-    assert payload["metrics"]["accepted_cases"] == 35
+    assert payload["metrics"]["total_cases"] == 36
+    assert payload["metrics"]["accepted_cases"] == 36
     assert payload["metrics"]["held_candidates"] == 6
     candidate_ids = {candidate["candidate_id"] for candidate in payload["held_candidates"]}
     assert "held-2026-07-01-ekacare-followup-morning-walk-medical-context" in candidate_ids
@@ -97,8 +97,8 @@ def test_audio_autodata_rejections_are_first_class_and_not_accepted() -> None:
     rejected = load_rejected_candidates(DEFAULT_CASES_PATH)
     payload = evaluate(cases, rejected_candidates=rejected).as_dict()
 
-    assert payload["metrics"]["total_cases"] == 35
-    assert payload["metrics"]["accepted_cases"] == 35
+    assert payload["metrics"]["total_cases"] == 36
+    assert payload["metrics"]["accepted_cases"] == 36
     assert payload["metrics"]["rejected_candidates"] == 1
     assert payload["metrics"]["rejection_failure_modes"] == {"near_duplicate": 1}
     assert len(payload["rejected_candidates"]) == 1
@@ -266,6 +266,22 @@ def test_audio_autodata_covers_ticket_lookup_purchase_boundary() -> None:
     assert ticket.strong_oracle["result"] == "safe_no_action"
     assert ticket.repair_target["choices"][-1].lower() == "none of these"
     assert "ticket acquisition/generic reminder-message choices" in ticket.confusion_pairs
+
+
+def test_audio_autodata_covers_ticket_negation_inside_family_message() -> None:
+    cases = {case.case_id: case for case in load_cases(DEFAULT_CASES_PATH)}
+    message = cases["audio-036-synthetic-ticket-negation-family-message"]
+
+    assert message.source_type == "synthetic_audio_derived"
+    assert message.asr_hypotheses == ["Tell Sarah I don't want tickets anymore."]
+    assert message.clean_intent["action_type"] == "family_message"
+    assert message.clean_intent["slots"]["purchase_permitted"] is False
+    assert message.final_action_type == "family_message"
+    assert message.final_confirmed_action["requires_confirmation"] is True
+    assert message.final_confirmed_action["external_send"] is False
+    assert message.strong_oracle["result"] == "recovered"
+    assert message.repair_target["choices"][-1].lower() == "none of these"
+    assert "family message/purchase human-approval hold" in message.confusion_pairs
 
 
 def test_makefile_exposes_audio_autodata_eval() -> None:
