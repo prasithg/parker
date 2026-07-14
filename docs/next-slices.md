@@ -764,6 +764,33 @@ plus confusion/failure overlap. Raw audio and source manifests stayed in
 Operations; no runtime action path, private data, external action, or clinical
 claim changed.
 
+## Nightly Autodata Operations-only rejection tracking — DONE (2026-07-14)
+
+Shipped a follow-up to the rejection-ledger and diversity-review slices without
+adding another accepted fixture. The latest 2026-07-13 synthetic audio run had
+two informative regression contrasts rejected for overlap, but their scalar-only
+notes appeared to the promoter as blocked rows with the unusable dedupe key
+`|None|`; their normalized failure modes were counted only by hand in the run
+report.
+
+The promoter now accepts a full metadata-only `operations_rejected_candidate`
+contract using the same provenance, transcript/ASR, scenario/intent,
+weak/current-vs-oracle, none-of-these repair, expected action/no-action, safety,
+rubric, reason, and failure-mode schema as a repo ledger row. Valid rows are
+reported as `tracked_operations_only`: they contribute to a separate failure-mode
+summary but remain `ready=false`, produce no append suggestion, and leave
+accepted/held/repo-rejected metrics unchanged. Scalar-only rejection notes stay
+blocked rather than being mistaken for reviewed evidence.
+
+The bounded replay reused the two clearly synthetic 2026-07-13 clips and their
+six already-reviewed tiny/base ASR passes; it copied no raw audio and ran no new
+ASR. The promoter tracked 2/2 Operations-only rejections with
+`overlap_existing_action_family: 1` and `overlap_existing_control_family: 1`,
+0 blocked rows, and no fixture or claim-map count delta. Tests pin full-contract
+tracking, no repo append, stable denominators, useful source dedupe keys, and
+blocking of incomplete scalar notes. This is data-flywheel bookkeeping, not ASR,
+clinical, patient, or product-performance evidence.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:
