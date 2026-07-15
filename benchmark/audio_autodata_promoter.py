@@ -435,6 +435,7 @@ def _validate_rejected_candidate(
     raw: dict[str, Any],
     *,
     existing_rejected_ids: set[str],
+    existing_rejected_source_keys: set[str],
     ordinal: int,
 ) -> tuple[CandidateValidation, RejectedAudioAutodataCandidate | None]:
     candidate_id = _candidate_id(raw, f"rejected[{ordinal}]")
@@ -463,21 +464,31 @@ def _validate_rejected_candidate(
     except Exception as exc:  # noqa: BLE001
         errors.append(f"schema: {type(exc).__name__}: {exc}")
     rejected_id = str(rejected.get("candidate_id") or candidate_id)
-    if candidate is not None and candidate.candidate_id in existing_rejected_ids:
-        errors.append("duplicate rejected candidate_id already present in repo fixture data")
-    schema_ready = not errors
-    ready = schema_ready and not operations_only
-    if not schema_ready:
-        status = "blocked"
-    elif operations_only:
-        status = "tracked_operations_only"
-    else:
-        status = "ready"
     source_key = (
         _source_row_key_from_rejected(candidate)
         if candidate is not None
         else _source_row_key_from_candidate(raw)
     )
+    duplicate_errors: list[str] = []
+    if candidate is not None and candidate.candidate_id in existing_rejected_ids:
+        duplicate_errors.append(
+            "duplicate rejected candidate_id already present in repo fixture data or this promotion plan"
+        )
+    if candidate is not None and source_key in existing_rejected_source_keys:
+        duplicate_errors.append(
+            "duplicate rejected source transcript already present in repo fixture data or this promotion plan"
+        )
+    errors.extend(duplicate_errors)
+    schema_ready = not errors
+    ready = schema_ready and not operations_only
+    if duplicate_errors and len(errors) == len(duplicate_errors):
+        status = "duplicate"
+    elif not schema_ready:
+        status = "blocked"
+    elif operations_only:
+        status = "tracked_operations_only"
+    else:
+        status = "ready"
     return CandidateValidation(
         kind="rejected_candidate",
         candidate_id=rejected_id,
@@ -498,6 +509,9 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
     existing_held_ids = {candidate.candidate_id for candidate in existing_held}
     existing_rejected_ids = {candidate.candidate_id for candidate in existing_rejected}
     existing_case_source_keys = {_source_row_key_from_case(case) for case in existing_cases}
+    existing_rejected_source_keys = {
+        _source_row_key_from_rejected(candidate) for candidate in existing_rejected
+    }
 
     accepted_validations: list[CandidateValidation] = []
     held_validations: list[CandidateValidation] = []
@@ -538,9 +552,13 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
         validation, candidate = _validate_rejected_candidate(
             raw,
             existing_rejected_ids=existing_rejected_ids,
+            existing_rejected_source_keys=existing_rejected_source_keys,
             ordinal=ordinal,
         )
         rejected_validations.append(validation)
+        if validation.status in {"ready", "tracked_operations_only"}:
+            existing_rejected_ids.add(validation.candidate_id)
+            existing_rejected_source_keys.add(validation.dedupe_keys["source_row"])
         if candidate is not None:
             ready_rejected.append(candidate)
 
@@ -584,7 +602,7 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
     }
     verification = [
         "python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report",
-        "backend/.venv/bin/python -m pytest backend/tests/test_audio_autodata_evaluator.py -q",
+        "backend/.venv/bin/python -m pytest backend/tests/test_audio_autodata_promoter.py backend/tests/test_audio_autodata_evaluator.py -q",
         "git diff --check",
     ]
     if ready_cases:

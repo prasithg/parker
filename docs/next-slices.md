@@ -791,6 +791,24 @@ tracking, no repo append, stable denominators, useful source dedupe keys, and
 blocking of incomplete scalar notes. This is data-flywheel bookkeeping, not ASR,
 clinical, patient, or product-performance evidence.
 
+## Nightly Autodata rejection batch dedupe — DONE (2026-07-15)
+
+Extended the Operations-only rejection lane after an independent replay of the
+2026-07-14 output. The replay confirmed its two reviewed synthetic contrasts were
+tracked once each with stable public denominators, but a repeated row in one
+promotion batch would also have been counted once per occurrence. The promoter
+now remembers validated rejection IDs and source/transcript keys while walking a
+batch. A repeated ID or the same reviewed source under a new ID is marked
+`duplicate`, contributes to `blocked_or_duplicate`, and is excluded from the
+Operations-only failure-mode summary and all append/count suggestions.
+
+A red-capable three-row test observed the pre-fix inflation (3 tracked instead of
+1), then pinned 1 tracked + 2 duplicate with one normalized failure-mode count.
+The original 2026-07-14 plan still replays as 2 tracked, 0 blocked/duplicate, and
+an empty repo metric delta. This changes metadata hygiene only: no fixture,
+runtime route, action surface, raw audio, source URL, private data, or clinical
+claim changed.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:
