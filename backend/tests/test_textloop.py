@@ -1,5 +1,9 @@
 """Text-loop routing tests: the transcript-capture seam over the tool layer."""
 
+import json
+
+import pytest
+
 from app.conversation.textloop import TextSession, UtteranceContext
 from app.db.models import CallLog, CapturedIntent, OutboxMessage
 from app.parker.pipeline import (
@@ -378,6 +382,74 @@ def test_text_message_cannot_bypass_confirmation_gate(db):
     assert saved.recipient == "Sarah"
     assert "coming home" in saved.intent_text
     assert db.query(CapturedIntent).count() == 1
+
+
+@pytest.mark.parametrize("mutated_field", ["recipient", "action_type", "subject"])
+def test_confirmation_restatement_mismatch_repairs_without_execution(db, mutated_field):
+    """A spoken yes is bound to the recipient/action/subject Parker read back."""
+
+    session = _session(db)
+    session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+    offer = session.offer_pending_confirmation()
+    assert offer is not None
+    assert "Sarah" in offer["speech"]
+
+    payload = json.loads(action.action_payload)
+    if mutated_field == "recipient":
+        payload["recipient"] = "Michael"
+        action.action_payload = json.dumps(payload)
+    elif mutated_field == "action_type":
+        action.action_type = "reminder"
+    else:
+        payload["subject"] = "message Michael"
+        action.action_payload = json.dumps(payload)
+    db.commit()
+
+    response = session.handle("Yes.")
+
+    db.refresh(action)
+    assert response["kind"] == "confirmation_mismatch"
+    assert response["repair_required"] is True
+    assert response["staged_action_id"] == action.id
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "confirmation_contract_mismatch"
+    assert action.confirmed_at is None
+    assert db.query(OutboxMessage).count() == 0
+
+
+def test_confirmation_contract_rechecked_after_confirmation_commit(db, monkeypatch):
+    """A mutation exposed by confirmation refresh cannot cross into execution."""
+
+    from app.parker import pipeline
+
+    session = _session(db)
+    session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+    assert session.offer_pending_confirmation() is not None
+    real_confirm = pipeline.confirm_staged_action
+
+    def confirm_then_mutate(*args, **kwargs):
+        confirmed = real_confirm(*args, **kwargs)
+        payload = json.loads(confirmed.action_payload)
+        payload["recipient"] = "Michael"
+        confirmed.action_payload = json.dumps(payload)
+        db.commit()
+        db.refresh(confirmed)
+        return confirmed
+
+    monkeypatch.setattr(pipeline, "confirm_staged_action", confirm_then_mutate)
+
+    response = session.handle("Yes.")
+
+    db.refresh(action)
+    assert response["kind"] == "confirmation_mismatch"
+    assert response["repair_required"] is True
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "confirmation_contract_mismatch"
+    assert db.query(OutboxMessage).count() == 0
 
 
 def test_changed_mind_interruption_cancels_staged_draft_and_captures_revised_reminder(db):

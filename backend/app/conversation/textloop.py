@@ -1089,6 +1089,7 @@ class TextSession:
         # already offered once this session (a deferred offer is not nagged
         # again — the action stays staged for the review page instead).
         self._pending_confirmation: Optional[int] = None
+        self._pending_confirmation_contract: Optional[dict[str, str]] = None
         self._offered_confirmation_ids: set[int] = set()
         # Labels from the most recently offered (and user-rejected) repair choices.
         # Passed to suggest_repair_candidates on the next offer so the model can
@@ -1529,11 +1530,13 @@ class TextSession:
             return None
         self._offered_confirmation_ids.add(action.id)
         self._pending_confirmation = action.id
+        self._pending_confirmation_contract = self._confirmation_contract(action)
         description = self._describe_staged_action(action)
         offer = {
             "kind": "confirm_offer",
             "speech": f"Ready when you are: {description}. Shall I go ahead — yes or no?",
             "staged_action_id": action.id,
+            "confirmation_contract": dict(self._pending_confirmation_contract),
         }
         # Parker spoke first: the screen shows the offer with nothing heard.
         self._publish_screen(heard="", response=offer)
@@ -1553,11 +1556,30 @@ class TextSession:
         reply_kind = _confirmation_reply_kind(normalized)
         if reply_kind == "yes":
             self._pending_confirmation = None
-            confirm_staged_action(self.db, action_id, confirmed_by="patient")
+            offered_contract = self._pending_confirmation_contract
+            self._pending_confirmation_contract = None
+            from app.db.models import StagedAction
+
+            action = self.db.get(StagedAction, action_id)
+            current_contract = self._confirmation_contract(action) if action is not None else None
+            if (
+                action is None
+                or action.status != "staged"
+                or offered_contract is None
+                or current_contract != offered_contract
+            ):
+                return self._confirmation_mismatch_response(action_id, action)
+            confirmed = confirm_staged_action(self.db, action_id, confirmed_by="patient")
+            if (
+                confirmed.status != "confirmed"
+                or self._confirmation_contract(confirmed) != offered_contract
+            ):
+                return self._confirmation_mismatch_response(action_id, confirmed)
             executed = execute_staged_action(self.db, action_id)
             return self._speech_for_execution(executed)
         if reply_kind == "no":
             self._pending_confirmation = None
+            self._pending_confirmation_contract = None
             cancel_staged_action(self.db, action_id, cancelled_by="patient")
             return {
                 "kind": "cancelled",
@@ -1565,7 +1587,48 @@ class TextSession:
                 "cancelled_staged_action_id": action_id,
             }
         self._pending_confirmation = None  # deferred; route the utterance normally
+        self._pending_confirmation_contract = None
         return None
+
+    def _confirmation_mismatch_response(self, action_id: int, action) -> dict[str, Any]:
+        """Cancel a stale confirmation target and request a fresh user restatement."""
+
+        from app.parker.pipeline import cancel_staged_action
+
+        if action is not None and action.status in {"staged", "confirmed"}:
+            cancel_staged_action(
+                self.db,
+                action_id,
+                cancelled_by="confirmation_contract_mismatch",
+            )
+        return {
+            "kind": "confirmation_mismatch",
+            "speech": (
+                "What is waiting no longer matches what I just read back. "
+                "I won't run it. Please tell me the action again so I can confirm the right details."
+            ),
+            "staged_action_id": action_id,
+            "repair_required": True,
+        }
+
+    @staticmethod
+    def _confirmation_contract(action) -> dict[str, str]:
+        """Fields Parker read back and must still match before spoken execution."""
+
+        import json as _json
+
+        try:
+            payload = _json.loads(action.action_payload or "{}")
+        except ValueError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        return {
+            "action_type": str(action.action_type or "").strip(),
+            "recipient": str(payload.get("recipient") or "").strip(),
+            "subject": str(payload.get("subject") or "").strip(),
+            "intent_text": str(payload.get("intent_text") or "").strip(),
+        }
 
     def _describe_staged_action(self, action) -> str:
         import json as _json

@@ -309,5 +309,55 @@
     "rationale": "TextSession cancel response kind=cancelled_outbox; queued local outbox row moved to status=cancelled and is visible in caregiver review.",
     "scenario_id": "int-007-cancel-queued-local-outbox",
     "total_turns": 6
+  },
+  {
+    "caregiver_ui": {},
+    "events": [
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "confirmation_contract": {
+          "action_type": "family_message",
+          "intent_text": "dinner Sunday sounds lovely.",
+          "recipient": "Sarah",
+          "subject": "message Sarah"
+        },
+        "latency_ms": 1,
+        "type": "confirmation_requested"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "system",
+        "changed_fields": [
+          "recipient"
+        ],
+        "type": "confirmation_contract_changed"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "confirmation_mismatch_detected"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "repair_requested"
+      }
+    ],
+    "final_state": {
+      "cancelled_action_ids": [
+        "msg-sarah"
+      ],
+      "confirmed_action_ids": [],
+      "executed_action_ids": [],
+      "external_actions_sent": 0,
+      "local_outbox_messages": 0,
+      "repair_required": true
+    },
+    "rationale": "TextSession bound its spoken readback to action type, recipient, subject, and intent text; after a synthetic recipient mutation the yes response kind=confirmation_mismatch and the draft ended status=cancelled without an outbox row.",
+    "scenario_id": "int-008-confirmation-restatement-mismatch",
+    "total_turns": 5
   }
 ]

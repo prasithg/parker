@@ -764,6 +764,25 @@ plus confusion/failure overlap. Raw audio and source manifests stayed in
 Operations; no runtime action path, private data, external action, or clinical
 claim changed.
 
+## Night 7 confirmation readback binding — DONE (2026-07-16)
+
+Shipped a fail-closed binding between Parker's spoken confirmation readback and
+the action that a later “yes” may execute. `TextSession` snapshots the action
+type, recipient, subject, and intent text when it offers confirmation, then
+rechecks the live staged action before confirming. Any mismatch cancels the
+draft terminally with a caregiver-visible audit reason, asks the user to restate
+the action, and creates no reminder, exercise, hands invocation, or local outbox
+row.
+
+The synthetic interactivity suite now has an eighth safety-critical dimension,
+`confirmation_restatement_binding`. Its current-product trace changes Sarah to
+Michael after readback and proves the stale “yes” is rejected. Product-level
+negative controls independently mutate recipient, action type, and subject, plus
+a post-confirmation refresh mutation before execution; the evaluator also rejects
+a false-green trace that claims repair while queueing
+the changed action. This is synthetic/local pipeline evidence only, not a
+real-world speech or clinical claim.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:
