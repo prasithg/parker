@@ -57,8 +57,9 @@ TRACE_SOURCE = "Parker-generated deterministic local demo trace"
 CURRENT_PRODUCT_TRACE_NOTE = (
     "TextSession handles changed-mind draft revisions and cancel-only steering: it cancels "
     "prior local staged drafts without duplicating them, requires fresh confirmation before "
-    "executing only the revision, and can cancel queued local outbox messages before any "
-    "external send path exists."
+    "executing only the revision, derives one cancelled and one executed audit row from the "
+    "caregiver review feed, and can cancel queued local outbox messages before any external "
+    "send path exists."
 )
 _PLACEHOLDER_LATENCY_MS = 1
 
@@ -202,6 +203,7 @@ def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
         resolve_captured_intents,
         stage_resolved_actions,
     )
+    from app.parker.router import caregiver_review
 
     with _demo_db() as db:
         call = _create_call(db, "INT-002-DEMO")
@@ -225,6 +227,27 @@ def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
         execute_staged_action(db, first_action.id, now=now)
         db.refresh(first_action)
         db.refresh(revised)
+
+        review = caregiver_review(db=db)
+        action_aliases = {
+            first_action.id: "draft-stretch-now",
+            revised.id: "draft-stretch-after-lunch",
+        }
+        pending_action_ids = [
+            action_aliases[item["id"]]
+            for item in review["pending_actions"]
+            if item["id"] in action_aliases
+        ]
+        recent_cancelled = [
+            _compact_changed_mind_audit(item, action_aliases)
+            for item in review["recent_cancelled"]
+            if item["id"] in action_aliases
+        ]
+        recent_history = [
+            _compact_changed_mind_audit(item, action_aliases)
+            for item in review["recent_history"]
+            if item["id"] in action_aliases
+        ]
 
         active_subject = revised.resolution_result.captured_intent.subject
         cancelled_ids = ["draft-stretch-now"] if first_action.status == "cancelled" else []
@@ -280,7 +303,11 @@ def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
                 },
                 "captured_intents": db.query(CapturedIntent).count(),
             },
-            caregiver_ui={},
+            caregiver_ui={
+                "pending_action_ids": pending_action_ids,
+                "recent_cancelled": recent_cancelled,
+                "recent_history": recent_history,
+            },
             rationale=(
                 f"TextSession first kind={first['kind']}; changed-mind response kind={second['kind']}; "
                 f"spoken confirmation response kind={confirmation_response['kind']}; prior draft stayed "
@@ -452,6 +479,34 @@ def _compact_action(item: dict) -> dict:
         "requires": "patient confirmation" if item.get("status") == "staged" else "local execution only",
     }
     return {key: value for key, value in compact.items() if value not in {None, ""}}
+
+
+def _compact_changed_mind_audit(item: dict, action_aliases: dict[int, str]) -> dict:
+    """Keep stable, public-safe lifecycle evidence from the real review feed."""
+
+    compact = {
+        "action_id": action_aliases[item["id"]],
+        "status": item.get("status"),
+        "action_type": item.get("action_type"),
+        "subject": item.get("subject"),
+    }
+    if item.get("status") == "cancelled":
+        compact.update(
+            {
+                "cancelled_by": item.get("cancelled_by"),
+                "cancelled_at_recorded": bool(item.get("cancelled_at")),
+                "terminal": True,
+            }
+        )
+    elif item.get("status") == "executed":
+        compact.update(
+            {
+                "confirmed_by": item.get("confirmed_by"),
+                "executed_at_recorded": bool(item.get("executed_at")),
+                "execution_result": item.get("execution_result"),
+            }
+        )
+    return compact
 
 
 def _compact_outbox(item: dict) -> dict:

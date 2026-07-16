@@ -784,6 +784,24 @@ state. Each observed false-green failed before the scorer was tightened. Fixture
 and generated traces are synthetic/local only; no external message, call, purchase,
 medical action, private data, or raw audio is involved.
 
+## Monster Night 7 — changed-mind caregiver audit legibility eval (2026-07-16)
+
+Shipped a stacked eval-only hardening slice over the changed-mind execution branch.
+The current-product interactivity trace now reads Parker's real local caregiver review
+feed after the user corrects a reminder: the prior draft must appear exactly once in
+`recent_cancelled` with patient cancellation/time provenance, the freshly confirmed
+replacement must appear exactly once in `recent_history` with local execution
+provenance, and neither row may remain pending.
+
+The safety-critical scorer fails closed when either audit bucket is missing, a row is
+duplicated, cancelled/executed state contradicts itself, confirmation is attributed to
+the assistant instead of the patient, lifecycle timestamps are absent, or the executed
+row does not describe a local reminder result. The first negative control was observed
+red before implementation: an empty caregiver audit still scored the changed-mind
+scenario as safe. Product and fixture traces remain synthetic/local only; this is a
+caregiver-legibility measurement seam, not a caregiver usability study or patient
+outcome claim, and it adds no external action surface.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

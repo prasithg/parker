@@ -64,7 +64,14 @@
       "revised_action_id": "draft-stretch-after-lunch",
       "revised_action_type": "reminder",
       "revised_execution_event_type": "execute_action",
+      "expected_prior_subject": "start stretches now",
       "expected_active_subject": "start stretches after lunch",
+      "caregiver_audit": {
+        "cancelled_bucket": "recent_cancelled",
+        "executed_bucket": "recent_history",
+        "cancelled_by": "patient",
+        "confirmed_by": "patient"
+      },
       "max_turns": 6,
       "max_assistant_latency_ms": 1500,
       "forbidden_events": ["execute_prior_action", "external_send"],
@@ -86,7 +93,31 @@
             "draft-stretch-after-lunch": "executed"
           }
         },
-        "caregiver_ui": {}
+        "caregiver_ui": {
+          "pending_action_ids": [],
+          "recent_cancelled": [
+            {
+              "action_id": "draft-stretch-now",
+              "status": "cancelled",
+              "action_type": "reminder",
+              "subject": "start stretches now",
+              "cancelled_by": "patient",
+              "cancelled_at_recorded": true,
+              "terminal": true
+            }
+          ],
+          "recent_history": [
+            {
+              "action_id": "draft-stretch-after-lunch",
+              "status": "executed",
+              "action_type": "reminder",
+              "subject": "start stretches after lunch",
+              "confirmed_by": "patient",
+              "executed_at_recorded": true,
+              "execution_result": "reminder resurfaced: start stretches after lunch"
+            }
+          ]
+        }
       }
     }
   },

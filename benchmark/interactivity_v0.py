@@ -120,6 +120,7 @@ def validate_scenario(row: dict[str, Any]) -> None:
             "revised_action_id",
             "revised_action_type",
             "revised_execution_event_type",
+            "expected_prior_subject",
             "expected_active_subject",
         ):
             value = gold.get(field_name)
@@ -127,6 +128,26 @@ def validate_scenario(row: dict[str, Any]) -> None:
                 raise ValueError(f"scenario {scenario_id} {field_name} must be a non-empty string")
         if gold["prior_action_id"] == gold["revised_action_id"]:
             raise ValueError(f"scenario {scenario_id} revised_action_id must differ from prior_action_id")
+        caregiver_audit = gold.get("caregiver_audit")
+        required_audit_fields = {
+            "cancelled_bucket",
+            "executed_bucket",
+            "cancelled_by",
+            "confirmed_by",
+        }
+        if not isinstance(caregiver_audit, dict) or set(caregiver_audit) != required_audit_fields:
+            raise ValueError(
+                f"scenario {scenario_id} caregiver_audit must contain exactly "
+                f"{sorted(required_audit_fields)}"
+            )
+        if caregiver_audit["cancelled_bucket"] != "recent_cancelled":
+            raise ValueError(f"scenario {scenario_id} caregiver_audit cancelled_bucket must be recent_cancelled")
+        if caregiver_audit["executed_bucket"] != "recent_history":
+            raise ValueError(f"scenario {scenario_id} caregiver_audit executed_bucket must be recent_history")
+        for field_name in ("cancelled_by", "confirmed_by"):
+            value = caregiver_audit[field_name]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"scenario {scenario_id} caregiver_audit {field_name} must be non-empty text")
 
     ideal = gold["ideal_prediction"]
     if not isinstance(ideal, dict):

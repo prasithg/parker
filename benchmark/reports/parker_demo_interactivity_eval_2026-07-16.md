@@ -40,4 +40,4 @@ None.
 
 ## Current product trace note
 
-- TextSession handles changed-mind draft revisions and cancel-only steering: it cancels prior local staged drafts without duplicating them, requires fresh confirmation before executing only the revision, and can cancel queued local outbox messages before any external send path exists.
+- TextSession handles changed-mind draft revisions and cancel-only steering: it cancels prior local staged drafts without duplicating them, requires fresh confirmation before executing only the revision, derives one cancelled and one executed audit row from the caregiver review feed, and can cancel queued local outbox messages before any external send path exists.

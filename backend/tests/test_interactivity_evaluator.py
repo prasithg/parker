@@ -148,6 +148,98 @@ def test_changed_mind_negative_control_rejects_final_state_that_executes_both_ac
     assert "only the revised action" in result.unsafe_misses[0]["message"]
 
 
+def test_changed_mind_negative_control_rejects_missing_caregiver_audit():
+    scenarios = _scenarios()
+    predictions = build_gold_predictions(scenarios)
+    changed_mind = next(
+        prediction
+        for prediction in predictions
+        if prediction.scenario_id == "int-002-changed-mind-cancel"
+    )
+    missing_audit = InteractionPrediction(
+        scenario_id=changed_mind.scenario_id,
+        events=changed_mind.events,
+        total_turns=changed_mind.total_turns,
+        final_state=changed_mind.final_state,
+        caregiver_ui={},
+    )
+
+    result = evaluate(scenarios, _replace_prediction(predictions, missing_audit))
+
+    assert result.unsafe_miss_count == 1
+    assert result.unsafe_misses[0]["scenario_id"] == "int-002-changed-mind-cancel"
+    assert result.unsafe_misses[0]["check"] == "interruption_changed_mind_handling"
+    assert "caregiver audit" in result.unsafe_misses[0]["message"]
+
+
+@pytest.mark.parametrize(
+    ("mutate_ui", "expected_message"),
+    [
+        (
+            lambda ui: {
+                **ui,
+                "recent_history": [*ui["recent_history"], dict(ui["recent_history"][0])],
+            },
+            "exactly one executed replacement",
+        ),
+        (
+            lambda ui: {**ui, "pending_action_ids": ["draft-stretch-after-lunch"]},
+            "still pending",
+        ),
+        (
+            lambda ui: {
+                **ui,
+                "recent_cancelled": [
+                    {**ui["recent_cancelled"][0], "status": "executed", "terminal": False}
+                ],
+            },
+            "terminally cancelled",
+        ),
+        (
+            lambda ui: {
+                **ui,
+                "recent_cancelled": [
+                    {**ui["recent_cancelled"][0], "subject": "start stretches after lunch"}
+                ],
+            },
+            "lost the prior subject",
+        ),
+        (
+            lambda ui: {
+                **ui,
+                "recent_history": [
+                    {**ui["recent_history"][0], "confirmed_by": "assistant"}
+                ],
+            },
+            "wrong confirmation principal",
+        ),
+    ],
+)
+def test_changed_mind_negative_controls_reject_duplicate_or_contradictory_caregiver_audit(
+    mutate_ui,
+    expected_message,
+):
+    scenarios = _scenarios()
+    predictions = build_gold_predictions(scenarios)
+    changed_mind = next(
+        prediction
+        for prediction in predictions
+        if prediction.scenario_id == "int-002-changed-mind-cancel"
+    )
+    invalid = InteractionPrediction(
+        scenario_id=changed_mind.scenario_id,
+        events=changed_mind.events,
+        total_turns=changed_mind.total_turns,
+        final_state=changed_mind.final_state,
+        caregiver_ui=mutate_ui(changed_mind.caregiver_ui),
+    )
+
+    result = evaluate(scenarios, _replace_prediction(predictions, invalid))
+
+    assert result.unsafe_miss_count == 1
+    assert expected_message in result.unsafe_misses[0]["message"]
+
+
 @pytest.mark.parametrize(
     ("final_state_delta", "expected_message"),
     [
@@ -343,6 +435,19 @@ def test_validator_requires_action_ids_for_changed_mind_execution_eval():
     bad_gold.pop("revised_action_id")
 
     with pytest.raises(ValueError, match="revised_action_id"):
+        validate_scenario({**changed_mind, "gold": bad_gold})
+
+
+def test_validator_requires_changed_mind_caregiver_audit_contract():
+    changed_mind = next(
+        scenario
+        for scenario in _scenarios()
+        if scenario["scenario_id"] == "int-002-changed-mind-cancel"
+    )
+    bad_gold = dict(changed_mind["gold"])
+    bad_gold.pop("caregiver_audit")
+
+    with pytest.raises(ValueError, match="caregiver_audit"):
         validate_scenario({**changed_mind, "gold": bad_gold})
 
 

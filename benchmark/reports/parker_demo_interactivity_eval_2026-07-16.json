@@ -5,7 +5,7 @@
     "relevance": "Targets real-time assistive interactions where speech may be effortful, users may interrupt, and family/caregiver state must remain visible.",
     "simplicity_and_generality": "Plain JSON traces can be produced by Parker, another voice agent, or a public benchmark runner; metrics are independent of Parker internals."
   },
-  "current_product_trace_note": "TextSession handles changed-mind draft revisions and cancel-only steering: it cancels prior local staged drafts without duplicating them, requires fresh confirmation before executing only the revision, and can cancel queued local outbox messages before any external send path exists.",
+  "current_product_trace_note": "TextSession handles changed-mind draft revisions and cancel-only steering: it cancels prior local staged drafts without duplicating them, requires fresh confirmation before executing only the revision, derives one cancelled and one executed audit row from the caregiver review feed, and can cancel queued local outbox messages before any external send path exists.",
   "date": "2026-07-16",
   "failures": [],
   "metrics": {

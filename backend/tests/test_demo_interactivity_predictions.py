@@ -52,6 +52,29 @@ def test_demo_predictions_are_generated_from_current_parker_surfaces():
         "draft-stretch-now": "cancelled",
         "draft-stretch-after-lunch": "executed",
     }
+    assert changed_mind.caregiver_ui["pending_action_ids"] == []
+    assert changed_mind.caregiver_ui["recent_cancelled"] == [
+        {
+            "action_id": "draft-stretch-now",
+            "status": "cancelled",
+            "action_type": "reminder",
+            "subject": "start stretches now",
+            "cancelled_by": "patient",
+            "cancelled_at_recorded": True,
+            "terminal": True,
+        }
+    ]
+    assert changed_mind.caregiver_ui["recent_history"] == [
+        {
+            "action_id": "draft-stretch-after-lunch",
+            "status": "executed",
+            "action_type": "reminder",
+            "subject": "start stretches after lunch",
+            "confirmed_by": "patient",
+            "executed_at_recorded": True,
+            "execution_result": "reminder resurfaced: start stretches after lunch",
+        }
+    ]
 
     family_message = predictions["int-003-confirm-before-family-message"]
     assert [event["type"] for event in family_message.events] == [
