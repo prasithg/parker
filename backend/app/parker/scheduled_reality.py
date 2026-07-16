@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import subprocess
 import time
@@ -85,6 +86,7 @@ def verify_scheduled_reality(
     pre_state_path: str | Path,
     post_state_path: str | Path,
     scheduler_envelope_path: str | Path,
+    consumed_nonce_root: str | Path,
     expected_job_id: str,
     approved_code_sha: str,
     verification_key: bytes,
@@ -109,6 +111,7 @@ def verify_scheduled_reality(
     pre_state_file = Path(pre_state_path).resolve()
     post_state_file = Path(post_state_path).resolve()
     envelope_file = Path(scheduler_envelope_path).resolve()
+    nonce_root = Path(consumed_nonce_root).resolve()
 
     assertions: dict[str, bool] = {
         "checkout_clean": False,
@@ -118,6 +121,8 @@ def verify_scheduled_reality(
         "scheduler_signature_valid": False,
         "scheduler_job_matches": False,
         "scheduled_fire_in_window": False,
+        "nonce_ledger_trusted_scope": False,
+        "scheduler_nonce_single_use": False,
         "input_is_real_inbound": False,
         "input_recent": False,
         "wall_monotonic_coherent": False,
@@ -166,6 +171,25 @@ def verify_scheduled_reality(
         and max_fire_skew_seconds >= 0
         and abs(wall_start - scheduled_fire) <= max_fire_skew_seconds
     )
+    nonce = scheduler_payload.get("nonce")
+    assertions["nonce_ledger_trusted_scope"] = bool(
+        nonce_root.is_dir()
+        and not _is_relative_to(nonce_root, repo)
+        and not _is_relative_to(nonce_root, inbox)
+    )
+    if (
+        assertions["scheduler_signature_valid"]
+        and assertions["scheduler_job_matches"]
+        and assertions["scheduled_fire_in_window"]
+        and assertions["nonce_ledger_trusted_scope"]
+        and isinstance(scheduler_job_id, str)
+        and isinstance(nonce, str)
+    ):
+        assertions["scheduler_nonce_single_use"] = _claim_scheduler_nonce_once(
+            nonce_root,
+            job_id=scheduler_job_id,
+            nonce=nonce,
+        )
 
     input_sha = _sha256_file(candidate)
     candidate_mtime = _mtime(candidate)
@@ -229,8 +253,14 @@ def verify_scheduled_reality(
             "scheduler": {
                 "job_id": scheduler_job_id if isinstance(scheduler_job_id, str) else None,
                 "scheduled_fire_epoch": scheduled_fire,
-                "nonce": scheduler_payload.get("nonce"),
+                "nonce": nonce,
                 "token_verified": assertions["scheduler_signature_valid"],
+                "nonce_ledger_scope": (
+                    "trusted_external"
+                    if assertions["nonce_ledger_trusted_scope"]
+                    else "unverified"
+                ),
+                "nonce_claimed": assertions["scheduler_nonce_single_use"],
             },
             "input": {
                 "name": candidate.name,
@@ -261,6 +291,43 @@ def verify_scheduled_reality(
             "patient, or external-action evidence."
         ),
     }
+
+
+def _claim_scheduler_nonce_once(root: Path, *, job_id: str, nonce: str) -> bool:
+    """Atomically consume one scheduler nonce in the trusted wrapper ledger.
+
+    The report/agent process must not be able to write ``root``. The verifier
+    only accepts an existing directory outside both the repository and inbound
+    evidence tree; deployment ACL/ownership remains a wrapper prerequisite.
+    ``O_EXCL`` makes concurrent or sequential reuse fail closed. A write/fsync
+    failure leaves the tombstone in place and returns false rather than making
+    the signed envelope reusable.
+    """
+
+    claim_id = hashlib.sha256(f"{job_id}\0{nonce}".encode("utf-8")).hexdigest()
+    claim_path = root / f"{claim_id}.used"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(claim_path, flags, 0o600)
+    except OSError:
+        return False
+    try:
+        payload = _canonical_bytes(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "claim_id": claim_id,
+                "status": "consumed",
+            }
+        )
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        return False
+    return True
 
 
 def _verified_envelope_payload(envelope: dict[str, Any], key: bytes) -> dict[str, Any] | None:

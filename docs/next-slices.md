@@ -823,13 +823,17 @@ mismatched field and excludes secrets, tokens, and absolute paths from the
 receipt.
 
 The red-capable control first failed because the verifier did not exist. The
-implemented seven-case suite now passes one honest isolated run and proves that
-old SHA, manual/no-envelope replay, repo fixture input, frozen wall clock,
-missing state delta, and dirty checkout cannot qualify. This is operational
-provenance machinery only, not a genuine scheduled receipt or product/ASR/
-clinical evidence. Production wrapper configuration and one actual scheduled
-run remain blocked until the stacked PR state is reviewed; no Parker PR was
-merged and no active 01:15 branch/job was changed in this slice.
+implemented nine-case suite now passes one honest isolated run and proves that
+old SHA, manual/no-envelope runs, signed-envelope replay, a nonce ledger scoped
+inside the repository, repo fixture input, frozen wall clock, missing state
+delta, and dirty checkout cannot qualify. Nonce consumption is an atomic
+create-once tombstone keyed by `(job_id, nonce)`; concurrent or sequential reuse
+fails closed, and the verifier requires the ledger outside both the checkout and
+inbound evidence tree. This is operational provenance machinery only, not a
+genuine scheduled receipt or product/ASR/clinical evidence. Production wrapper
+configuration, protected scheduler-key/ledger ownership, and one actual
+scheduled run remain blocked until the stacked PR state is reviewed; no Parker
+PR was merged and no active 01:15 branch/job was changed in this slice.
 
 ## Next open slice — product usefulness first
 

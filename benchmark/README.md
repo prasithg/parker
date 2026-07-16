@@ -165,7 +165,8 @@ then calls `verify_scheduled_reality` and supplies the key only to the verifier.
 
 The verifier independently checks a clean checkout against both the
 scheduler-authorized SHA and an independently pinned approved SHA, a valid
-scheduler envelope in its fire window, a recent input resolved
+scheduler envelope in its fire window, an atomic single-use nonce claim in a
+trusted ledger outside the repository and inbound tree, a recent input resolved
 under an allowlisted inbox outside the repository, coherent wall/monotonic
 clock movement, and a successful one-step state delta tied to the input hash.
 Missing or malformed evidence emits `verdict: unverified` and
@@ -176,9 +177,10 @@ absolute paths, the HMAC token, and the key.
 backend/.venv/bin/pytest backend/tests/test_scheduled_reality.py -q
 ```
 
-The test is the mandatory negative control: old SHA, absent scheduler envelope,
+The tests are the mandatory negative controls: old SHA, absent scheduler
+envelope, replay of the same signed envelope, a nonce ledger inside the repo,
 repo fixture input, frozen wall clock, missing state delta, and dirty checkout
 must all remain unverified, while one isolated synthetic Operations-shaped run
-qualifies. This proves the verifier contract only. Until a trusted wrapper is
-configured and an actual scheduled event passes it, Parker still has no genuine
-scheduled-production provenance receipt.
+qualifies once. This proves the verifier contract only. Until a trusted wrapper
+owns a protected nonce ledger and scheduler key and an actual scheduled event
+passes it, Parker still has no genuine scheduled-production provenance receipt.

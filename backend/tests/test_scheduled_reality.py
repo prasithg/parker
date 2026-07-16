@@ -46,6 +46,8 @@ def _honest_run_inputs(tmp_path: Path) -> dict[str, Any]:
     input_sha = hashlib.sha256(candidate.read_bytes()).hexdigest()
     state_dir = tmp_path / "operations-state"
     state_dir.mkdir()
+    consumed_nonce_root = tmp_path / "trusted-consumed-nonces"
+    consumed_nonce_root.mkdir()
     pre_state = state_dir / "pre.json"
     post_state = state_dir / "post.json"
     pre_state.write_text(
@@ -89,6 +91,7 @@ def _honest_run_inputs(tmp_path: Path) -> dict[str, Any]:
         "pre_state_path": pre_state,
         "post_state_path": post_state,
         "scheduler_envelope_path": envelope,
+        "consumed_nonce_root": consumed_nonce_root,
         "expected_job_id": JOB_ID,
         "approved_code_sha": code_sha,
         "verification_key": KEY,
@@ -142,6 +145,31 @@ def test_manual_trigger_without_scheduler_envelope_cannot_qualify(tmp_path):
 
     assert receipt["provenance_complete"] is False
     assert "scheduler_signature_valid" in receipt["failed_assertions"]
+
+
+def test_scheduler_envelope_cannot_be_replayed(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+
+    first_receipt = _verify(values)
+    replayed_receipt = _verify(values)
+
+    assert first_receipt["provenance_complete"] is True
+    assert replayed_receipt["provenance_complete"] is False
+    assert replayed_receipt["verdict"] == "unverified"
+    assert "scheduler_nonce_single_use" in replayed_receipt["failed_assertions"]
+
+
+def test_nonce_ledger_inside_repository_cannot_qualify(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    repo = values["repo_root"]
+    assert isinstance(repo, Path)
+    values["consumed_nonce_root"] = repo / ".git"
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "nonce_ledger_trusted_scope" in receipt["failed_assertions"]
+    assert "scheduler_nonce_single_use" in receipt["failed_assertions"]
 
 
 def test_repo_fixture_input_cannot_qualify(tmp_path):
