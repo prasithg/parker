@@ -154,3 +154,31 @@ make eval-release-readiness
 `make eval-release-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so public-claim metrics do not silently survive from an older run. (Reports are written under `benchmark/reports/release_readiness_eval_*`; historical dated `grant_readiness_eval_*` reports from the retired grant lane remain in place as records but are no longer read.)
 
 Passing means only that the current synthetic/local reports are safe to cite with caveats. It does **not** establish real-world, clinical, patient, audio, emergency-readiness, or private-data proof.
+
+## Verify scheduled-reality provenance
+
+`backend/app/parker/scheduled_reality.py` is a fail-closed verifier for a
+nightly Operations receipt. A narrow, no-agent scheduler wrapper mints an HMAC
+envelope containing its job ID, fire time, nonce, and expected checkout SHA;
+the report/agent process must never receive that key. A trusted post-run wrapper
+then calls `verify_scheduled_reality` and supplies the key only to the verifier.
+
+The verifier independently checks a clean checkout against both the
+scheduler-authorized SHA and an independently pinned approved SHA, a valid
+scheduler envelope in its fire window, a recent input resolved
+under an allowlisted inbox outside the repository, coherent wall/monotonic
+clock movement, and a successful one-step state delta tied to the input hash.
+Missing or malformed evidence emits `verdict: unverified` and
+`provenance_complete: false`; it never qualifies by default. The receipt omits
+absolute paths, the HMAC token, and the key.
+
+```bash
+backend/.venv/bin/pytest backend/tests/test_scheduled_reality.py -q
+```
+
+The test is the mandatory negative control: old SHA, absent scheduler envelope,
+repo fixture input, frozen wall clock, missing state delta, and dirty checkout
+must all remain unverified, while one isolated synthetic Operations-shaped run
+qualifies. This proves the verifier contract only. Until a trusted wrapper is
+configured and an actual scheduled event passes it, Parker still has no genuine
+scheduled-production provenance receipt.

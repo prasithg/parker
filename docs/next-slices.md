@@ -809,6 +809,28 @@ an empty repo metric delta. This changes metadata hygiene only: no fixture,
 runtime route, action surface, raw audio, source URL, private data, or clinical
 claim changed.
 
+## Scheduled-reality provenance gate — DONE (2026-07-16, verifier only)
+
+Added the fail-closed operational verifier needed before a nightly Autodata run
+can be treated as genuine scheduled evidence. The scheduler-owned HMAC envelope
+binds job ID, fire time, nonce, and expected code SHA; an independent wrapper
+pin must match that SHA and the live checkout, so a scheduler that fires an old
+checkout still cannot qualify. The report/agent process does not receive the
+key. The post-run gate observes the checkout, real inbound
+path/hash/mtime, wall plus monotonic clocks, and pre/post state itself. It emits
+`provenance_complete: false` with named failed assertions on every missing or
+mismatched field and excludes secrets, tokens, and absolute paths from the
+receipt.
+
+The red-capable control first failed because the verifier did not exist. The
+implemented seven-case suite now passes one honest isolated run and proves that
+old SHA, manual/no-envelope replay, repo fixture input, frozen wall clock,
+missing state delta, and dirty checkout cannot qualify. This is operational
+provenance machinery only, not a genuine scheduled receipt or product/ASR/
+clinical evidence. Production wrapper configuration and one actual scheduled
+run remain blocked until the stacked PR state is reviewed; no Parker PR was
+merged and no active 01:15 branch/job was changed in this slice.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

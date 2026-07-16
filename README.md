@@ -98,7 +98,7 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
 - **Real-audio eval harness** — `make eval-audio-real` runs real public-corpus and synthetic clips (audio stays in the Operations workspace, never in-repo) through local ASR and the actual routing, scored against each clip's oracle transcript: intent recovery with/without repair and with/without n-best, unsafe-capture gate, per-condition/language breakdowns.
 - **Synthetic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 35 accepted fixtures / 6 held / 1 rejection-ledger row / 27 hard negatives / 0 unsafe), wake/addressed-to-me audio-context fixtures (`make eval-wake-context`, 13 public/synthetic audio-derived metadata fixtures / 0 unsafe, including ambient no-op, wake answers, context-required controls, medical/finance refusals, media repair, local reminder capture, read-only ticket lookup, and ticket-acquisition human-approval hold), caregiver-state legibility proxy, claim→metric overclaim guard, construct-validity matrix guard, release-readiness rollup, repair-choice quality spot-check, brain-lane safety eval (`make eval-brain-lane`, keyless red-team routing gate + live TTS/quality lane, unsafe as a hard 0), and the hands lane (`make eval-hands`, proposal → patient confirmation → skill execution over a fake OpenClaw gateway incl. off-allowlist/unknown-type/gateway-error edges, 8/8 with unsafe as a hard 0).
-- 630 backend tests as of the audio Autodata rejection-batch dedupe slice (2026-07-15).
+- 637 backend tests as of the scheduled-reality provenance verifier slice (2026-07-16).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -137,7 +137,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (630 tests as of 2026-07-15)
+make test            # full backend suite should pass (637 tests as of 2026-07-16)
 ```
 
 **Fastest demo** (three commands, zero config):
