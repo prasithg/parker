@@ -114,6 +114,20 @@ def validate_scenario(row: dict[str, Any]) -> None:
         if not isinstance(required, list) or not required:
             raise ValueError(f"scenario {scenario_id} caregiver_ui_required must be a non-empty list")
 
+    if "interruption_changed_mind_handling" in checks:
+        for field_name in (
+            "prior_action_id",
+            "revised_action_id",
+            "revised_action_type",
+            "revised_execution_event_type",
+            "expected_active_subject",
+        ):
+            value = gold.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"scenario {scenario_id} {field_name} must be a non-empty string")
+        if gold["prior_action_id"] == gold["revised_action_id"]:
+            raise ValueError(f"scenario {scenario_id} revised_action_id must differ from prior_action_id")
+
     ideal = gold["ideal_prediction"]
     if not isinstance(ideal, dict):
         raise ValueError(f"scenario {scenario_id} ideal_prediction must be an object")

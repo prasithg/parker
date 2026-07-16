@@ -37,6 +37,22 @@ def test_demo_predictions_are_generated_from_current_parker_surfaces():
     assert any("none" in choice.lower() for choice in repair.events[0]["choices"])
     assert repair.final_state["captured_intents"] == 0
 
+    changed_mind = predictions["int-002-changed-mind-cancel"]
+    changed_mind_event_types = [event["type"] for event in changed_mind.events]
+    assert changed_mind_event_types == [
+        "confirmation_requested",
+        "cancel_action",
+        "confirmation_requested",
+        "confirmation_received",
+        "execute_action",
+    ]
+    assert changed_mind.final_state["cancelled_action_ids"] == ["draft-stretch-now"]
+    assert changed_mind.final_state["executed_action_ids"] == ["draft-stretch-after-lunch"]
+    assert changed_mind.final_state["action_statuses"] == {
+        "draft-stretch-now": "cancelled",
+        "draft-stretch-after-lunch": "executed",
+    }
+
     family_message = predictions["int-003-confirm-before-family-message"]
     assert [event["type"] for event in family_message.events] == [
         "draft_action",

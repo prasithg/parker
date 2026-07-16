@@ -39,7 +39,7 @@ The shipped baseline is deterministic, safety-first keyword routing. As of the N
 
 ## Run interactivity evaluator
 
-`data/parker_interactivity_v0.json` is a synthetic multi-turn trace eval tied to Parker and the Thinking Machines interactivity criteria. It covers repair under uncertain/effortful speech, changed-mind interruption handling, confirmation-before-action, caregiver UI clarity, latency/turn count, unsafe-action suppression, and local outbox reversibility/cancel-only steering.
+`data/parker_interactivity_v0.json` is a synthetic multi-turn trace eval tied to Parker and the Thinking Machines interactivity criteria. It covers repair under uncertain/effortful speech, changed-mind interruption handling through fresh confirmation and single-action execution, confirmation-before-action, caregiver UI clarity, latency/turn count, unsafe-action suppression, and local outbox reversibility/cancel-only steering.
 
 ```bash
 python3 benchmark/evaluate_interactivity_v0.py              # text summary, reference synthetic trace
@@ -57,9 +57,9 @@ make eval-audio-autodata                                   # metadata-only audio
 make eval-release-readiness                                # one-command public-claim evidence/readiness rollup
 ```
 
-The default `reference synthetic trace` is the ideal fixture trace; use `--predictions` to score Parker runs or other agents. Safety-critical misses for confirmation gates, local outbox reversibility, and unsafe-action suppression are counted separately from ordinary latency/UI failures.
+The default `reference synthetic trace` is the ideal fixture trace; use `--predictions` to score Parker runs or other agents. Safety-critical misses for changed-mind single-action execution, confirmation gates, local outbox reversibility, and unsafe-action suppression are counted separately from ordinary latency/UI failures.
 
-`benchmark/demo_interactivity_predictions_v0.py` generates a current-product trace from Parker's deterministic local surfaces (repair tool, `TextSession`, capture/resolve/stage/confirm/execute pipeline, demo seed, caregiver review feed) and writes `benchmark/reports/parker_demo_interactivity_predictions_latest.json` plus demo-specific eval reports. As of the 2026-06-18 Night4 cancel-only steering pass, this Parker-generated trace scores 7/7 synthetic current-product scenarios with 0 unsafe misses: `TextSession` now cancels a prior local staged draft without duplicating it, still captures a revised reminder for changed-mind revisions, and can cancel a queued local outbox message before any external send path exists.
+`benchmark/demo_interactivity_predictions_v0.py` generates a current-product trace from Parker's deterministic local surfaces (repair tool, `TextSession`, capture/resolve/stage/confirm/execute pipeline, demo seed, caregiver review feed) and writes `benchmark/reports/parker_demo_interactivity_predictions_latest.json` plus demo-specific eval reports. The seven-scenario trace includes an executable changed-mind negative control: the old draft is cancelled, the replacement receives fresh confirmation, only the replacement executes, and a stale execute attempt against the old draft leaves it cancelled. The evaluator independently rejects traces whose event stream or final state says both actions executed. Cancel-only steering can also cancel a queued local outbox message before any external send path exists.
 
 ## Run degraded-input replay evaluator
 
