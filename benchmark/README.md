@@ -168,7 +168,11 @@ scheduler-authorized SHA and an independently pinned approved SHA, a valid
 scheduler envelope in its fire window, an atomic single-use nonce claim in a
 trusted ledger outside the repository and inbound tree, a recent input under an
 allowlisted inbox outside the repository, coherent wall/monotonic clock
-movement, and a successful one-step state delta tied to the input hash.
+movement, and a successful one-step state delta tied to the input hash. Checkout
+identity and cleanliness observations share a 2-second deadline and a 64 KiB
+combined stdout/stderr budget; output is captured incrementally, and timeout,
+overflow, malformed output, or process failure emits a named unverified git
+observation instead of blocking or buffering without limit.
 Envelope, input, pre/post state, and nonce-ledger paths are traversed
 component-by-component with descriptor-relative `O_NOFOLLOW`; regular evidence
 is read once from a stable descriptor, capped at 1 MiB, and hashed/timestamped

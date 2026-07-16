@@ -841,6 +841,16 @@ tombstone is created relative to the already-open no-follow ledger descriptor.
 Additional controls pin a hard-linked input, symlinked inbox parent, and signed
 envelope path.
 
+A second fail-closed hardening bounds the verifier's live git observations. The
+pre-patch hanging-git control blocked for more than a second despite a 50 ms
+test deadline, while a valid SHA plus a 16 KiB stderr flood from `git status`
+qualified as complete. Checkout SHA/status capture now shares one 2-second
+deadline and one 64 KiB stdout-plus-stderr budget, reads incrementally, and
+kills/reaps the isolated process group on timeout or overflow. The sanitized
+receipt reports only the bound, observed byte count, and a narrow failure reason;
+raw git output is not emitted. Timeout, overflow, invalid output, or process
+failure leaves `git_observation_bounded` false and the full receipt unverified.
+
 This is operational provenance machinery only, not a genuine scheduled receipt
 or product/ASR/clinical evidence. Production wrapper configuration, protected
 scheduler-key/ledger ownership, and one actual verifier-passing scheduled run

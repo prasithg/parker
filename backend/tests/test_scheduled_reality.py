@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -118,6 +119,15 @@ def _bind_post_state_to_input(values: dict[str, Any]) -> None:
     payload = json.loads(post_state.read_text())
     payload["last_input_sha256"] = hashlib.sha256(candidate.read_bytes()).hexdigest()
     post_state.write_text(json.dumps(payload))
+
+
+def _install_fake_git(tmp_path: Path, monkeypatch, body: str) -> None:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text(f"#!/bin/sh\nset -eu\n{body}\n")
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
 
 def test_honest_scheduled_run_qualifies(tmp_path):
@@ -339,3 +349,69 @@ def test_dirty_checkout_cannot_qualify(tmp_path):
 
     assert receipt["provenance_complete"] is False
     assert "checkout_clean" in receipt["failed_assertions"]
+
+
+def test_hanging_git_observation_cannot_block_or_qualify(tmp_path, monkeypatch):
+    values = _honest_run_inputs(tmp_path)
+    monkeypatch.setattr(
+        "app.parker.scheduled_reality.GIT_OBSERVATION_TIMEOUT_SECONDS",
+        0.05,
+        raising=False,
+    )
+    _install_fake_git(tmp_path, monkeypatch, "sleep 0.4")
+
+    started = time.monotonic()
+    receipt = _verify(values)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.3
+    assert receipt["provenance_complete"] is False
+    assert "git_observation_bounded" in receipt["failed_assertions"]
+    assert receipt["observations"]["git"]["failure_reason"] == "timeout"
+
+
+def test_git_stderr_flood_cannot_exhaust_or_qualify(tmp_path, monkeypatch):
+    values = _honest_run_inputs(tmp_path)
+    code_sha = values["approved_code_sha"]
+    assert isinstance(code_sha, str)
+    monkeypatch.setattr(
+        "app.parker.scheduled_reality.MAX_GIT_OBSERVATION_BYTES",
+        1024,
+        raising=False,
+    )
+    _install_fake_git(
+        tmp_path,
+        monkeypatch,
+        f'''if [ "$1" = "rev-parse" ]; then
+  printf '%s\\n' '{code_sha}'
+else
+  i=0
+  while [ "$i" -lt 256 ]; do
+    printf '%s' 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' >&2
+    i=$((i + 1))
+  done
+fi''',
+    )
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "git_observation_bounded" in receipt["failed_assertions"]
+    assert receipt["observations"]["git"]["failure_reason"] == "output_limit"
+
+
+def test_malformed_git_sha_is_named_invalid_output(tmp_path, monkeypatch):
+    values = _honest_run_inputs(tmp_path)
+    _install_fake_git(
+        tmp_path,
+        monkeypatch,
+        '''if [ "$1" = "rev-parse" ]; then
+  printf '%s\\n' 'not-a-valid-git-sha'
+fi''',
+    )
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "git_observation_bounded" in receipt["failed_assertions"]
+    assert receipt["observations"]["git"]["failure_reason"] == "invalid_output"

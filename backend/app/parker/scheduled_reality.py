@@ -17,6 +17,8 @@ import hmac
 import json
 import os
 import re
+import selectors
+import signal
 import stat
 import subprocess
 import time
@@ -25,6 +27,8 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 MAX_EVIDENCE_BYTES = 1024 * 1024
+MAX_GIT_OBSERVATION_BYTES = 64 * 1024
+GIT_OBSERVATION_TIMEOUT_SECONDS = 2.0
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -116,6 +120,7 @@ def verify_scheduled_reality(
     nonce_root = _absolute_path(consumed_nonce_root)
 
     assertions: dict[str, bool] = {
+        "git_observation_bounded": False,
         "checkout_clean": False,
         "code_sha_matches_scheduler": False,
         "code_sha_matches_approved": False,
@@ -135,7 +140,10 @@ def verify_scheduled_reality(
         "post_status_ok": False,
     }
 
-    current_code_sha, checkout_clean = _git_observations(repo)
+    current_code_sha, checkout_clean, git_failure_reason, git_observed_bytes = (
+        _git_observations(repo)
+    )
+    assertions["git_observation_bounded"] = git_failure_reason is None
     assertions["checkout_clean"] = checkout_clean
 
     envelope_evidence = _read_regular_file_nofollow(envelope_file)
@@ -274,6 +282,13 @@ def verify_scheduled_reality(
         "observations": {
             "code_sha": current_code_sha,
             "approved_code_sha": approved_code_sha if approved_sha_is_valid else None,
+            "git": {
+                "bounded": assertions["git_observation_bounded"],
+                "timeout_seconds": GIT_OBSERVATION_TIMEOUT_SECONDS,
+                "max_output_bytes": MAX_GIT_OBSERVATION_BYTES,
+                "observed_bytes": git_observed_bytes,
+                "failure_reason": git_failure_reason,
+            },
             "scheduler": {
                 "job_id": scheduler_job_id if isinstance(scheduler_job_id, str) else None,
                 "scheduled_fire_epoch": scheduled_fire,
@@ -394,25 +409,145 @@ def _verified_envelope_payload(envelope: dict[str, Any], key: bytes) -> dict[str
     return payload if hmac.compare_digest(token, expected_token) else None
 
 
-def _git_observations(repo: Path) -> tuple[str | None, bool]:
+def _git_observations(repo: Path) -> tuple[str | None, bool, str | None, int]:
+    """Capture checkout identity/status under one deadline and output budget."""
+
+    if GIT_OBSERVATION_TIMEOUT_SECONDS <= 0 or MAX_GIT_OBSERVATION_BYTES <= 0:
+        return None, False, "invalid_limits", 0
+    deadline = time.monotonic() + GIT_OBSERVATION_TIMEOUT_SECONDS
+    sha_result = _run_bounded_git(
+        repo,
+        ["rev-parse", "HEAD"],
+        deadline=deadline,
+        max_bytes=MAX_GIT_OBSERVATION_BYTES,
+    )
+    sha_payload, observed_bytes, failure_reason = sha_result
+    if failure_reason is not None:
+        return None, False, failure_reason, observed_bytes
+
+    status_result = _run_bounded_git(
+        repo,
+        ["status", "--porcelain"],
+        deadline=deadline,
+        max_bytes=MAX_GIT_OBSERVATION_BYTES - observed_bytes,
+    )
+    status_payload, status_bytes, failure_reason = status_result
+    observed_bytes += status_bytes
+    if failure_reason is not None:
+        return None, False, failure_reason, observed_bytes
+
     try:
-        sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+        sha = sha_payload.decode("ascii").strip()
+        status = status_payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, False, "invalid_output", observed_bytes
+    if not _SHA_RE.fullmatch(sha):
+        return None, False, "invalid_output", observed_bytes
+    return sha, not status.strip(), None, observed_bytes
+
+
+def _run_bounded_git(
+    repo: Path,
+    arguments: list[str],
+    *,
+    deadline: float,
+    max_bytes: int,
+) -> tuple[bytes, int, str | None]:
+    """Run one git observation with incremental capture and fail-closed bounds.
+
+    Both stdout and stderr count toward the cap. The command starts in its own
+    process group so a timeout/output overflow can kill descendants that still
+    hold a capture pipe open. Raw stderr is never returned or emitted.
+    """
+
+    if max_bytes < 0 or deadline <= time.monotonic():
+        return b"", 0, "timeout" if deadline <= time.monotonic() else "output_limit"
+    process: subprocess.Popen[bytes] | None = None
+    selector: selectors.BaseSelector | None = None
+    observed_bytes = 0
+    stdout_chunks: list[bytes] = []
+    try:
+        process = subprocess.Popen(
+            ["git", *arguments],
             cwd=repo,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError):
-        return None, False
-    return (sha if _SHA_RE.fullmatch(sha) else None), not status.strip()
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        if process.stdout is None or process.stderr is None:
+            _stop_process_group(process)
+            return b"", 0, "process_error"
+        selector = selectors.DefaultSelector()
+        for stream, stream_name in ((process.stdout, "stdout"), (process.stderr, "stderr")):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream.fileno(), selectors.EVENT_READ, stream_name)
+
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _stop_process_group(process)
+                return b"", observed_bytes, "timeout"
+            events = selector.select(remaining)
+            if not events:
+                _stop_process_group(process)
+                return b"", observed_bytes, "timeout"
+            for key, _ in events:
+                read_size = min(64 * 1024, max_bytes - observed_bytes + 1)
+                if read_size <= 0:
+                    _stop_process_group(process)
+                    return b"", observed_bytes, "output_limit"
+                chunk = os.read(key.fd, read_size)
+                if not chunk:
+                    selector.unregister(key.fd)
+                    continue
+                observed_bytes += len(chunk)
+                if observed_bytes > max_bytes:
+                    _stop_process_group(process)
+                    return b"", observed_bytes, "output_limit"
+                if key.data == "stdout":
+                    stdout_chunks.append(chunk)
+
+        remaining = deadline - time.monotonic()
+        if process.poll() is None:
+            if remaining <= 0:
+                _stop_process_group(process)
+                return b"", observed_bytes, "timeout"
+            try:
+                process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                _stop_process_group(process)
+                return b"", observed_bytes, "timeout"
+        if process.returncode != 0:
+            return b"", observed_bytes, "process_error"
+        return b"".join(stdout_chunks), observed_bytes, None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        if process is not None:
+            _stop_process_group(process)
+        return b"", observed_bytes, "process_error"
+    finally:
+        if selector is not None:
+            selector.close()
+        if process is not None:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
+
+
+def _stop_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Kill and reap the bounded command plus descendants without raising."""
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=0.2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def _absolute_path(path: str | Path) -> Path:
