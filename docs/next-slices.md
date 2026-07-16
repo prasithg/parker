@@ -823,17 +823,29 @@ mismatched field and excludes secrets, tokens, and absolute paths from the
 receipt.
 
 The red-capable control first failed because the verifier did not exist. The
-implemented nine-case suite now passes one honest isolated run and proves that
-old SHA, manual/no-envelope runs, signed-envelope replay, a nonce ledger scoped
-inside the repository, repo fixture input, frozen wall clock, missing state
-delta, and dirty checkout cannot qualify. Nonce consumption is an atomic
-create-once tombstone keyed by `(job_id, nonce)`; concurrent or sequential reuse
-fails closed, and the verifier requires the ledger outside both the checkout and
-inbound evidence tree. This is operational provenance machinery only, not a
-genuine scheduled receipt or product/ASR/clinical evidence. Production wrapper
-configuration, protected scheduler-key/ledger ownership, and one actual
-scheduled run remain blocked until the stacked PR state is reviewed; no Parker
-PR was merged and no active 01:15 branch/job was changed in this slice.
+initial nine-case suite passed one honest isolated run and proved that old SHA,
+manual/no-envelope runs, signed-envelope replay, a nonce ledger scoped inside
+the repository, repo fixture input, frozen wall clock, missing state delta, and
+dirty checkout cannot qualify. Nonce consumption is an atomic create-once
+tombstone keyed by `(job_id, nonce)`; concurrent or sequential reuse fails
+closed, and the verifier requires the ledger outside both the checkout and
+inbound evidence tree.
+
+A same-day fail-closed hardening then observed four false-green controls on the
+pre-patch verifier: symlinked inbound input, symlinked post-state evidence, a
+symlinked nonce ledger, and a 1 MiB-plus input all qualified. Evidence reads now
+walk every path component with descriptor-relative `O_NOFOLLOW`, require a
+single-link regular file, cap each artifact at 1 MiB, and derive JSON, hash, size,
+and mtime from one descriptor with matching pre/post `fstat` identity. The nonce
+tombstone is created relative to the already-open no-follow ledger descriptor.
+Additional controls pin a hard-linked input, symlinked inbox parent, and signed
+envelope path.
+
+This is operational provenance machinery only, not a genuine scheduled receipt
+or product/ASR/clinical evidence. Production wrapper configuration, protected
+scheduler-key/ledger ownership, and one actual verifier-passing scheduled run
+remain blocked until the stacked PR state is reviewed; no Parker PR was merged
+and no active 01:15 branch/job was changed in this slice.
 
 ## Next open slice — product usefulness first
 

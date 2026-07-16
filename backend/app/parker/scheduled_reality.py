@@ -17,12 +17,14 @@ import hmac
 import json
 import os
 import re
+import stat
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
+MAX_EVIDENCE_BYTES = 1024 * 1024
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -106,25 +108,28 @@ def verify_scheduled_reality(
     monotonic_start = time.monotonic()
 
     repo = Path(repo_root).resolve()
-    inbox = Path(inbox_root).resolve()
-    candidate = Path(input_path).resolve()
-    pre_state_file = Path(pre_state_path).resolve()
-    post_state_file = Path(post_state_path).resolve()
-    envelope_file = Path(scheduler_envelope_path).resolve()
-    nonce_root = Path(consumed_nonce_root).resolve()
+    inbox = _absolute_path(inbox_root)
+    candidate = _absolute_path(input_path)
+    pre_state_file = _absolute_path(pre_state_path)
+    post_state_file = _absolute_path(post_state_path)
+    envelope_file = _absolute_path(scheduler_envelope_path)
+    nonce_root = _absolute_path(consumed_nonce_root)
 
     assertions: dict[str, bool] = {
         "checkout_clean": False,
         "code_sha_matches_scheduler": False,
         "code_sha_matches_approved": False,
         "scheduler_sha_matches_approved": False,
+        "scheduler_envelope_regular_nofollow": False,
         "scheduler_signature_valid": False,
         "scheduler_job_matches": False,
         "scheduled_fire_in_window": False,
         "nonce_ledger_trusted_scope": False,
         "scheduler_nonce_single_use": False,
+        "input_regular_nofollow": False,
         "input_is_real_inbound": False,
         "input_recent": False,
+        "state_evidence_regular_nofollow": False,
         "wall_monotonic_coherent": False,
         "state_delta_matches_input": False,
         "post_status_ok": False,
@@ -133,7 +138,9 @@ def verify_scheduled_reality(
     current_code_sha, checkout_clean = _git_observations(repo)
     assertions["checkout_clean"] = checkout_clean
 
-    envelope = _load_object(envelope_file)
+    envelope_evidence = _read_regular_file_nofollow(envelope_file)
+    assertions["scheduler_envelope_regular_nofollow"] = envelope_evidence is not None
+    envelope = _decode_object(envelope_evidence[0] if envelope_evidence else None)
     scheduler_payload = _verified_envelope_payload(envelope, verification_key)
     assertions["scheduler_signature_valid"] = scheduler_payload is not None
     if scheduler_payload is None:
@@ -172,32 +179,40 @@ def verify_scheduled_reality(
         and abs(wall_start - scheduled_fire) <= max_fire_skew_seconds
     )
     nonce = scheduler_payload.get("nonce")
+    nonce_root_descriptor = _open_directory_nofollow(nonce_root)
     assertions["nonce_ledger_trusted_scope"] = bool(
-        nonce_root.is_dir()
+        nonce_root_descriptor is not None
         and not _is_relative_to(nonce_root, repo)
         and not _is_relative_to(nonce_root, inbox)
     )
-    if (
-        assertions["scheduler_signature_valid"]
-        and assertions["scheduler_job_matches"]
-        and assertions["scheduled_fire_in_window"]
-        and assertions["nonce_ledger_trusted_scope"]
-        and isinstance(scheduler_job_id, str)
-        and isinstance(nonce, str)
-    ):
-        assertions["scheduler_nonce_single_use"] = _claim_scheduler_nonce_once(
-            nonce_root,
-            job_id=scheduler_job_id,
-            nonce=nonce,
-        )
+    try:
+        if (
+            assertions["scheduler_signature_valid"]
+            and assertions["scheduler_job_matches"]
+            and assertions["scheduled_fire_in_window"]
+            and assertions["nonce_ledger_trusted_scope"]
+            and nonce_root_descriptor is not None
+            and isinstance(scheduler_job_id, str)
+            and isinstance(nonce, str)
+        ):
+            assertions["scheduler_nonce_single_use"] = _claim_scheduler_nonce_once(
+                nonce_root_descriptor,
+                job_id=scheduler_job_id,
+                nonce=nonce,
+            )
+    finally:
+        if nonce_root_descriptor is not None:
+            os.close(nonce_root_descriptor)
 
-    input_sha = _sha256_file(candidate)
-    candidate_mtime = _mtime(candidate)
+    input_evidence = _read_regular_file_nofollow(candidate)
+    assertions["input_regular_nofollow"] = input_evidence is not None
+    input_sha = hashlib.sha256(input_evidence[0]).hexdigest() if input_evidence else None
+    candidate_mtime = input_evidence[1].st_mtime if input_evidence else None
     assertions["input_is_real_inbound"] = bool(
-        input_sha
+        input_evidence
+        and input_sha
         and _is_relative_to(candidate, inbox)
         and not _is_relative_to(candidate, repo)
-        and candidate.is_file()
     )
     assertions["input_recent"] = bool(
         candidate_mtime is not None
@@ -205,10 +220,19 @@ def verify_scheduled_reality(
         and 0 <= wall_start - candidate_mtime <= max_input_age_seconds
     )
 
-    pre_state = _load_object(pre_state_file)
-    post_state = _load_object(post_state_file)
-    pre_state_sha = _sha256_file(pre_state_file)
-    post_state_sha = _sha256_file(post_state_file)
+    pre_state_evidence = _read_regular_file_nofollow(pre_state_file)
+    post_state_evidence = _read_regular_file_nofollow(post_state_file)
+    assertions["state_evidence_regular_nofollow"] = bool(
+        pre_state_evidence is not None and post_state_evidence is not None
+    )
+    pre_state = _decode_object(pre_state_evidence[0] if pre_state_evidence else None)
+    post_state = _decode_object(post_state_evidence[0] if post_state_evidence else None)
+    pre_state_sha = (
+        hashlib.sha256(pre_state_evidence[0]).hexdigest() if pre_state_evidence else None
+    )
+    post_state_sha = (
+        hashlib.sha256(post_state_evidence[0]).hexdigest() if post_state_evidence else None
+    )
     post_status_ok = bool(post_state.get("last_status") == "ok" and not post_state.get("error"))
     assertions["post_status_ok"] = post_status_ok
     assertions["state_delta_matches_input"] = bool(
@@ -293,24 +317,26 @@ def verify_scheduled_reality(
     }
 
 
-def _claim_scheduler_nonce_once(root: Path, *, job_id: str, nonce: str) -> bool:
-    """Atomically consume one scheduler nonce in the trusted wrapper ledger.
+def _claim_scheduler_nonce_once(root_descriptor: int, *, job_id: str, nonce: str) -> bool:
+    """Atomically consume one scheduler nonce in an already-open ledger.
 
-    The report/agent process must not be able to write ``root``. The verifier
-    only accepts an existing directory outside both the repository and inbound
-    evidence tree; deployment ACL/ownership remains a wrapper prerequisite.
-    ``O_EXCL`` makes concurrent or sequential reuse fail closed. A write/fsync
-    failure leaves the tombstone in place and returns false rather than making
-    the signed envelope reusable.
+    The report/agent process must not be able to write the ledger. The caller
+    opens the directory with descriptor-relative no-follow traversal, then this
+    function creates the tombstone relative to that same descriptor. ``O_EXCL``
+    makes concurrent or sequential reuse fail closed. A write/fsync failure
+    leaves the tombstone in place and returns false rather than making the
+    signed envelope reusable.
     """
 
     claim_id = hashlib.sha256(f"{job_id}\0{nonce}".encode("utf-8")).hexdigest()
-    claim_path = root / f"{claim_id}.used"
+    claim_name = f"{claim_id}.used"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        descriptor = os.open(claim_path, flags, 0o600)
+        descriptor = os.open(claim_name, flags, 0o600, dir_fd=root_descriptor)
     except OSError:
         return False
     try:
@@ -389,32 +415,102 @@ def _git_observations(repo: Path) -> tuple[str | None, bool]:
     return (sha if _SHA_RE.fullmatch(sha) else None), not status.strip()
 
 
-def _load_object(path: Path) -> dict[str, Any]:
+def _absolute_path(path: str | Path) -> Path:
+    """Normalize an absolute path without resolving or hiding symlinks."""
+
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def _open_directory_nofollow(path: Path) -> int | None:
+    """Open an absolute directory through a no-symlink descriptor chain."""
+
+    if not path.is_absolute() or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+        return None
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    descriptor: int | None = None
     try:
-        value = json.loads(path.read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        descriptor = os.open(path.anchor, flags)
+        for component in path.parts[1:]:
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except OSError:
+        if descriptor is not None:
+            os.close(descriptor)
+        return None
+
+
+def _read_regular_file_nofollow(
+    path: Path,
+    *,
+    max_bytes: int = MAX_EVIDENCE_BYTES,
+) -> tuple[bytes, os.stat_result] | None:
+    """Read bounded evidence from one stable regular-file descriptor.
+
+    Every parent component and the final file are opened with ``O_NOFOLLOW``.
+    Metadata is captured with ``fstat`` on that same descriptor before and
+    after the bounded read, so path replacement cannot redirect a later hash or
+    timestamp check to different evidence.
+    """
+
+    if max_bytes < 0 or not path.name or not hasattr(os, "O_NOFOLLOW"):
+        return None
+    parent_descriptor = _open_directory_nofollow(path.parent)
+    if parent_descriptor is None:
+        return None
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+    except OSError:
+        os.close(parent_descriptor)
+        return None
+    os.close(parent_descriptor)
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_size < 0
+            or before.st_size > max_bytes
+        ):
+            return None
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            block = os.read(descriptor, min(64 * 1024, max_bytes - total + 1))
+            if not block:
+                break
+            chunks.append(block)
+            total += len(block)
+            if total > max_bytes:
+                return None
+        after = os.fstat(descriptor)
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in stable_fields):
+            return None
+        payload = b"".join(chunks)
+        if len(payload) != before.st_size:
+            return None
+        return payload, after
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _decode_object(payload: bytes | None) -> dict[str, Any]:
+    if payload is None:
+        return {}
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
-
-
-def _sha256_file(path: Path) -> str | None:
-    try:
-        if not path.is_file():
-            return None
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for block in iter(lambda: handle.read(64 * 1024), b""):
-                digest.update(block)
-        return digest.hexdigest()
-    except OSError:
-        return None
-
-
-def _mtime(path: Path) -> float | None:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return None
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

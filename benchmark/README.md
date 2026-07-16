@@ -166,12 +166,15 @@ then calls `verify_scheduled_reality` and supplies the key only to the verifier.
 The verifier independently checks a clean checkout against both the
 scheduler-authorized SHA and an independently pinned approved SHA, a valid
 scheduler envelope in its fire window, an atomic single-use nonce claim in a
-trusted ledger outside the repository and inbound tree, a recent input resolved
-under an allowlisted inbox outside the repository, coherent wall/monotonic
-clock movement, and a successful one-step state delta tied to the input hash.
-Missing or malformed evidence emits `verdict: unverified` and
-`provenance_complete: false`; it never qualifies by default. The receipt omits
-absolute paths, the HMAC token, and the key.
+trusted ledger outside the repository and inbound tree, a recent input under an
+allowlisted inbox outside the repository, coherent wall/monotonic clock
+movement, and a successful one-step state delta tied to the input hash.
+Envelope, input, pre/post state, and nonce-ledger paths are traversed
+component-by-component with descriptor-relative `O_NOFOLLOW`; regular evidence
+is read once from a stable descriptor, capped at 1 MiB, and hashed/timestamped
+from that same read. Missing, malformed, symlinked, unstable, hard-linked, or
+oversized evidence emits `verdict: unverified` and `provenance_complete: false`.
+The receipt omits absolute paths, the HMAC token, and the key.
 
 ```bash
 backend/.venv/bin/pytest backend/tests/test_scheduled_reality.py -q
@@ -179,8 +182,11 @@ backend/.venv/bin/pytest backend/tests/test_scheduled_reality.py -q
 
 The tests are the mandatory negative controls: old SHA, absent scheduler
 envelope, replay of the same signed envelope, a nonce ledger inside the repo,
-repo fixture input, frozen wall clock, missing state delta, and dirty checkout
-must all remain unverified, while one isolated synthetic Operations-shaped run
-qualifies once. This proves the verifier contract only. Until a trusted wrapper
-owns a protected nonce ledger and scheduler key and an actual scheduled event
-passes it, Parker still has no genuine scheduled-production provenance receipt.
+repo fixture input, symlinked or hard-linked final input, a symlinked parent
+input path, symlinked envelope, state, or nonce-ledger paths, oversized input,
+frozen wall clock, missing state delta, and dirty checkout must all remain
+unverified, while one isolated
+synthetic Operations-shaped run qualifies once. This proves the verifier
+contract only. Until a trusted wrapper owns a protected nonce ledger and
+scheduler key and an actual scheduled event passes it, Parker still has no
+genuine scheduled-production provenance receipt.

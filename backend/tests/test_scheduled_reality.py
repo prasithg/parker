@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
-from app.parker.scheduled_reality import mint_scheduler_envelope, verify_scheduled_reality
+from app.parker.scheduled_reality import (
+    MAX_EVIDENCE_BYTES,
+    mint_scheduler_envelope,
+    verify_scheduled_reality,
+)
 
 
 JOB_ID = "nightly-parker-autodata"
@@ -105,6 +110,16 @@ def _verify(values: dict[str, Any]) -> dict[str, Any]:
     return verify_scheduled_reality(**values)
 
 
+def _bind_post_state_to_input(values: dict[str, Any]) -> None:
+    candidate = values["input_path"]
+    post_state = values["post_state_path"]
+    assert isinstance(candidate, Path)
+    assert isinstance(post_state, Path)
+    payload = json.loads(post_state.read_text())
+    payload["last_input_sha256"] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    post_state.write_text(json.dumps(payload))
+
+
 def test_honest_scheduled_run_qualifies(tmp_path):
     values = _honest_run_inputs(tmp_path)
     envelope_path = values["scheduler_envelope_path"]
@@ -185,6 +200,106 @@ def test_repo_fixture_input_cannot_qualify(tmp_path):
 
     assert receipt["provenance_complete"] is False
     assert "input_is_real_inbound" in receipt["failed_assertions"]
+
+
+def test_symlinked_inbound_input_cannot_qualify(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    candidate = values["input_path"]
+    assert isinstance(candidate, Path)
+    target = candidate.with_name("actual-candidate.json")
+    candidate.rename(target)
+    candidate.symlink_to(target.name)
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "input_regular_nofollow" in receipt["failed_assertions"]
+
+
+def test_hardlinked_inbound_input_cannot_qualify(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    candidate = values["input_path"]
+    assert isinstance(candidate, Path)
+    target = candidate.with_name("hardlink-target.json")
+    candidate.rename(target)
+    candidate.hardlink_to(target)
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "input_regular_nofollow" in receipt["failed_assertions"]
+
+
+def test_symlinked_inbox_parent_cannot_qualify(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    inbox = values["inbox_root"]
+    candidate = values["input_path"]
+    assert isinstance(inbox, Path)
+    assert isinstance(candidate, Path)
+    inbox_alias = tmp_path / "inbox-alias"
+    inbox_alias.symlink_to(inbox.name, target_is_directory=True)
+    values["inbox_root"] = inbox_alias
+    values["input_path"] = inbox_alias / candidate.name
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "input_regular_nofollow" in receipt["failed_assertions"]
+
+
+def test_symlinked_scheduler_envelope_cannot_qualify(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    envelope = values["scheduler_envelope_path"]
+    assert isinstance(envelope, Path)
+    target = envelope.with_name("scheduler-envelope-real.json")
+    envelope.rename(target)
+    envelope.symlink_to(target.name)
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "scheduler_envelope_regular_nofollow" in receipt["failed_assertions"]
+
+
+def test_symlinked_state_evidence_cannot_qualify(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    post_state = values["post_state_path"]
+    assert isinstance(post_state, Path)
+    target = post_state.with_name("post-real.json")
+    post_state.rename(target)
+    post_state.symlink_to(target.name)
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "state_evidence_regular_nofollow" in receipt["failed_assertions"]
+
+
+def test_symlinked_nonce_ledger_cannot_qualify(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    nonce_root = values["consumed_nonce_root"]
+    assert isinstance(nonce_root, Path)
+    target = nonce_root.with_name("actual-trusted-consumed-nonces")
+    nonce_root.rename(target)
+    nonce_root.symlink_to(target.name, target_is_directory=True)
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "nonce_ledger_trusted_scope" in receipt["failed_assertions"]
+
+
+def test_oversized_inbound_input_cannot_qualify(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    candidate = values["input_path"]
+    assert isinstance(candidate, Path)
+    candidate.write_bytes(b"x" * (MAX_EVIDENCE_BYTES + 1))
+    _bind_post_state_to_input(values)
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is False
+    assert "input_regular_nofollow" in receipt["failed_assertions"]
 
 
 def test_frozen_wall_clock_cannot_qualify(tmp_path, monkeypatch):
