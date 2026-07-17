@@ -155,6 +155,9 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
     with _memory_session() as db:
         session = _fresh_session(db, case.case_id)
         response = session.handle(primary, alternates=alternates, context=context)
+        selected_response: dict[str, Any] | None = None
+        if "selection_position" in expected:
+            selected_response = session.handle(str(expected["selection_position"]), context=context)
         captured = db.query(CapturedIntent).count()
 
     choices = response.get("choices") or []
@@ -173,6 +176,22 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
             if "first_choice_action_type" in expected
             else True
         ),
+        "first_choice_label": (
+            bool(choices) and choices[0].get("label") == expected["first_choice_label"]
+            if "first_choice_label" in expected
+            else True
+        ),
+        "selected_kind": (
+            selected_response is not None and selected_response.get("kind") == expected["selected_kind"]
+            if "selected_kind" in expected
+            else True
+        ),
+        "resolved_query": (
+            selected_response is not None
+            and selected_response.get("resolved_query") == expected["resolved_query"]
+            if "resolved_query" in expected
+            else True
+        ),
     }
     unsafe = captured > 0 and expected.get("no_capture", True)
     nuisance_choice_failure = expected.get("no_choices") and bool(choices)
@@ -188,7 +207,13 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
         "captured_intents": captured,
         "choice_count": len(choices),
         "first_choice_action_type": choices[0].get("action_type") if choices else None,
+        "first_choice_label": choices[0].get("label") if choices else None,
         "action_type": response.get("action_type"),
+        "selected_kind": selected_response.get("kind") if selected_response else None,
+        "resolved_query": selected_response.get("resolved_query") if selected_response else None,
+        "informational_repair": bool(
+            selected_response and selected_response.get("informational_repair")
+        ),
         "checks": checks,
         "passed": passed,
         "unsafe": unsafe,
@@ -214,6 +239,9 @@ def evaluate(cases: list[WakeContextCase]) -> dict[str, Any]:
         "ambient_noop_cases": sum(1 for result in results if result["observed_kind"] == "ambient_noop"),
         "wake_answer_cases": sum(1 for result in results if result["observed_kind"] == "answer"),
         "wake_repair_choice_cases": sum(1 for result in results if result["observed_kind"] == "choices"),
+        "wake_informational_repair_answer_cases": sum(
+            1 for result in results if result["informational_repair"] and result["selected_kind"] == "answer"
+        ),
         "wake_context_required_cases": sum(
             1 for result in results if result["observed_kind"] == "context_required"
         ),
@@ -288,9 +316,14 @@ def _write_reports(payload: dict[str, Any], reports_dir: Path = DEFAULT_REPORTS_
         lines.append(f"- {status} `{check['name']}`")
     lines.extend(["", "## Case breakdown", ""])
     for result in payload["results"]:
+        selection = (
+            f"; selected={result['selected_kind']}; resolved_query={result['resolved_query']!r}"
+            if result["selected_kind"]
+            else ""
+        )
         lines.append(
             "- `{case_id}`: context={context}; ASR={asr!r}; expected={expected}; "
-            "observed={observed}; choices={choices}; captured={captured}; passed={passed}".format(
+            "observed={observed}; choices={choices}; captured={captured}{selection}; passed={passed}".format(
                 case_id=result["case_id"],
                 context="addressed" if result["context"].get("addressed_to_parker") else "ambient",
                 asr=result["primary_asr"],
@@ -298,6 +331,7 @@ def _write_reports(payload: dict[str, Any], reports_dir: Path = DEFAULT_REPORTS_
                 observed=result["observed_kind"],
                 choices=result["choice_count"],
                 captured=result["captured_intents"],
+                selection=selection,
                 passed=result["passed"],
             )
         )

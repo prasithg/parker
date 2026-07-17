@@ -23,14 +23,15 @@ def test_wake_context_cases_pass_and_cover_context_lanes() -> None:
     payload = evaluate(cases)
     metrics = payload["metrics"]
 
-    assert metrics["total_cases"] == 13
-    assert metrics["public_corpus_audio_derived_cases"] == 12
+    assert metrics["total_cases"] == 14
+    assert metrics["public_corpus_audio_derived_cases"] == 13
     assert metrics["synthetic_audio_derived_cases"] == 1
     assert metrics["ambient_cases"] == 3
-    assert metrics["wake_confirmed_cases"] == 10
+    assert metrics["wake_confirmed_cases"] == 11
     assert metrics["ambient_noop_cases"] == 3
     assert metrics["wake_answer_cases"] == 4
-    assert metrics["wake_repair_choice_cases"] == 1
+    assert metrics["wake_repair_choice_cases"] == 2
+    assert metrics["wake_informational_repair_answer_cases"] == 1
     assert metrics["wake_context_required_cases"] == 1
     assert metrics["wake_refusal_cases"] == 2
     assert metrics["wake_local_capture_cases"] == 1
@@ -75,6 +76,12 @@ def test_wake_context_wake_rows_split_answers_from_confirmation_gated_actions() 
     assert lookup["observed_kind"] == "answer"
     assert lookup["action_type"] == "item_search"
     assert lookup["captured_intents"] == 0
+    weather = by_id["wake-014-slurp-weather-place-informational-repair"]
+    assert weather["observed_kind"] == "choices"
+    assert weather["first_choice_label"] == "look up the current weather in Orange, Texas"
+    assert weather["selected_kind"] == "answer"
+    assert weather["resolved_query"] == "What is the current weather in Orange, Texas?"
+    assert weather["captured_intents"] == 0
 
 
 def test_wake_context_wake_rows_preserve_safety_boundaries_after_wake() -> None:
@@ -111,7 +118,7 @@ def test_wake_context_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "wake_context_audio_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 13
+    assert payload["metrics"]["total_cases"] == 14
 
 
 def test_makefile_exposes_wake_context_eval() -> None:

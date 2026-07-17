@@ -532,6 +532,73 @@ def _looks_like_answer_or_conversation_request(lowered: str) -> bool:
     )
 
 
+_WEATHER_STATE_NAMES = {"tx": "Texas"}
+_WEATHER_PLACE_PATTERN = re.compile(
+    r"\b(?:in|having|been)\s+(?P<place>[a-z][a-z' -]{0,40}?)\s+"
+    r"(?P<state>tx)\b(?:\s+(?:right now|today|now))?",
+    re.IGNORECASE,
+)
+
+
+def _informational_repair_candidates(
+    utterance: str, alternates: list[str]
+) -> list[dict[str, Any]]:
+    """Build a bounded read-only repair for a weather/entity n-best split.
+
+    Public SLURP audio produced one just-right disagreement: tiny Whisper kept
+    ``weather`` but damaged the Orange, Texas slot, while base Whisper rendered
+    ``weather`` as ``web`` and preserved the place more clearly. Answering the
+    primary directly is safe but not useful. This seam is intentionally narrow:
+    it requires at least two hypotheses, weather present in only part of the
+    n-best set, and a bounded place + state shape. It never creates an action.
+    """
+
+    hypotheses = [utterance, *alternates]
+    if len(hypotheses) < 2:
+        return []
+    lowered = [hypothesis.lower() for hypothesis in hypotheses]
+    if any(_looks_like_ticket_acquisition(hypothesis) for hypothesis in lowered):
+        return []
+    if any(
+        phrase in hypothesis
+        for hypothesis in lowered
+        for group in _PROBE_BLOCKED_PHRASES
+        for phrase in group
+    ):
+        return []
+    normalized = [
+        re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", hypothesis)).strip()
+        for hypothesis in lowered
+    ]
+    weather_flags = [bool(re.search(r"\bweather\b", hypothesis)) for hypothesis in normalized]
+    if not any(weather_flags) or all(weather_flags):
+        return []
+
+    place_match = next(
+        (match for hypothesis in normalized if (match := _WEATHER_PLACE_PATTERN.search(hypothesis))),
+        None,
+    )
+    if place_match is None:
+        return []
+    place = " ".join(word.capitalize() for word in place_match.group("place").split())
+    state = _WEATHER_STATE_NAMES[place_match.group("state").lower()]
+    entity = f"{place}, {state}"
+    return [
+        {
+            "label": f"look up the current weather in {entity}",
+            "action_type": None,
+            "selection_kind": "informational_answer",
+            "answer_text": f"What is the current weather in {entity}?",
+        },
+        {
+            "label": f"answer a general question about {entity}",
+            "action_type": None,
+            "selection_kind": "informational_answer",
+            "answer_text": f"Tell me about {entity}.",
+        },
+    ]
+
+
 def _repetitive_asr_hallucination_response(utterance: str) -> dict[str, Any] | None:
     """No-op long repetitive ASR from no-transcript dysarthria stress audio.
 
@@ -1339,6 +1406,11 @@ class TextSession:
             )
         if _looks_like_media_request_question(lowered):
             return self._offer_choices(utterance)
+        informational_candidates = _informational_repair_candidates(
+            utterance, self._current_alternates
+        )
+        if informational_candidates:
+            return self._offer_informational_choices(utterance, informational_candidates)
         if _looks_like_answer_or_conversation_request(lowered):
             return self._answer(utterance)
         if "?" in utterance or lowered.startswith(("what", "how", "who", "when", "where", "why")):
@@ -1712,7 +1784,39 @@ class TextSession:
         self._pending_alternates = list(self._current_alternates)
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
 
-    def _answer(self, utterance: str) -> dict[str, Any]:
+    def _offer_informational_choices(
+        self, utterance: str, candidates: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Offer read-only query repairs without entering the action pipeline."""
+
+        result = execute_tool(
+            self.db,
+            self.call_log_id,
+            "offer_repair_choices",
+            {
+                "candidates": [
+                    {"label": candidate["label"], "action_type": None}
+                    for candidate in candidates
+                ],
+                "question": "I heard two possible information requests. Did you mean:",
+            },
+        )
+        enriched_by_label = {candidate["label"]: candidate for candidate in candidates}
+        for choice in result.get("choices", []):
+            extra = enriched_by_label.get(choice["label"])
+            if extra is not None:
+                choice.update(
+                    selection_kind=extra["selection_kind"],
+                    answer_text=extra["answer_text"],
+                )
+        self._pending_choices = result["choices"]
+        self._pending_utterance = utterance
+        self._pending_alternates = list(self._current_alternates)
+        return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
+
+    def _answer(
+        self, utterance: str, *, allow_action_proposals: bool = True
+    ) -> dict[str, Any]:
         """The informational lane: the brain when configured, the stub otherwise.
 
         Every deterministic guard has already run by the time this is
@@ -1748,7 +1852,7 @@ class TextSession:
         speech = trim_for_speech(result.reply.speech)
         if result.medical_boundary_tripped:
             response: dict[str, Any] = {"kind": "refused", "speech": speech, "flag_for_family": True}
-        elif result.reply.proposed_actions:
+        elif result.reply.proposed_actions and allow_action_proposals:
             response = self._offer_brain_actions(utterance, speech, result.reply.proposed_actions)
         else:
             response = {
@@ -1875,6 +1979,24 @@ class TextSession:
         source = self._pending_utterance or choice["label"]
         alternates = self._pending_alternates
         self._dismiss_pending_choices()
+        if choice.get("selection_kind") == "informational_answer":
+            resolved_query = str(choice["answer_text"])
+            record_repair_event(
+                self.db,
+                call_log_id=self.call_log_id,
+                utterance=source,
+                alternates=alternates,
+                choices=choices,
+                selected_position=choice["position"],
+                selected_label=choice["label"],
+                selected_action_type=None,
+            )
+            response = self._answer(resolved_query, allow_action_proposals=False)
+            response.update(
+                resolved_query=resolved_query,
+                informational_repair=True,
+            )
+            return response
         if choice["action_type"] is None:
             # Save the rejected labels so the next offer can generate different alternatives.
             self._prior_offered_labels = [

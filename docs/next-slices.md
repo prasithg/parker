@@ -809,6 +809,27 @@ an empty repo metric delta. This changes metadata hygiene only: no fixture,
 runtime route, action surface, raw audio, source URL, private data, or clinical
 claim changed.
 
+## Nightly Autodata informational n-best repair path — DONE (2026-07-17)
+
+Converted the prior night's distinct public SLURP weather/entity target into a
+runtime and executable-eval seam instead of mining another clip. Tiny/base
+Whisper hypotheses disagree on `weather`/`web` and render `Orange, Texas`
+unevenly. The old wake-confirmed path safely answered the corrupted primary
+transcript; the new bounded path offers two read-only interpretations plus
+`none of these`, then resolves a selected interpretation into `_answer` without
+capturing, staging, executing, fetching live weather, or accepting a brain action
+proposal from that read-only selection.
+
+The wake-context eval now runs the selected second turn and reports one completed
+informational-repair answer. Coverage is 14 metadata-only fixtures (13 public,
+1 synthetic), with 14/14 passing, 0 captures on the new case, 0 unsafe cases,
+and 0 nuisance-choice failures. Ambient context still silent-no-ops before the
+repair seam, and choosing none-of-these still returns to retry with no capture.
+Raw SLURP audio remains in Operations; the repo contains source metadata,
+transcript/ASR hypotheses, context, choices, expected selected answer, safety
+label, and weighted rubric only. This is pipeline behavior, not live-weather,
+ASR-quality, licensing, patient, clinical, or population evidence.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:
