@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -144,8 +145,71 @@ def test_honest_scheduled_run_qualifies(tmp_path):
     assert receipt["failed_assertions"] == []
     assert all(receipt["assertions"].values())
     assert scheduler_token not in serialized
+    assert "test-fire-0001" not in serialized
+    assert receipt["observations"]["scheduler"]["nonce_fingerprint"] == hashlib.sha256(
+        b"test-fire-0001"
+    ).hexdigest()
     assert KEY.decode() not in serialized
     assert str(tmp_path) not in serialized
+
+
+def test_inbound_filename_is_not_reflected_in_receipt(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    candidate = values["input_path"]
+    assert isinstance(candidate, Path)
+    sensitive_name = "private-family-label-candidate.json"
+    renamed = candidate.with_name(sensitive_name)
+    candidate.rename(renamed)
+    values["input_path"] = renamed
+    _bind_post_state_to_input(values)
+
+    receipt = _verify(values)
+
+    serialized = json.dumps(receipt)
+    assert receipt["provenance_complete"] is True
+    assert sensitive_name not in serialized
+    assert "name" not in receipt["observations"]["input"]
+
+
+def test_oversized_state_integer_fails_closed_without_reflection(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    post_state = values["post_state_path"]
+    assert isinstance(post_state, Path)
+    oversized_integer = "9" * 10_000
+    post_state.write_text(
+        '{"run_sequence":'
+        + oversized_integer
+        + ',"last_status":"ok","last_input_sha256":"'
+        + "0" * 64
+        + '","error":null}'
+    )
+
+    receipt = _verify(values)
+
+    serialized = json.dumps(receipt)
+    assert receipt["provenance_complete"] is False
+    assert "state_evidence_schema_valid" in receipt["failed_assertions"]
+    assert oversized_integer not in serialized
+    assert len(serialized.encode("utf-8")) < 16 * 1024
+
+
+def test_oversized_state_status_is_not_reflected(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    post_state = values["post_state_path"]
+    assert isinstance(post_state, Path)
+    payload = json.loads(post_state.read_text())
+    oversized_status = "s" * 100_000
+    payload["last_status"] = oversized_status
+    post_state.write_text(json.dumps(payload))
+
+    receipt = _verify(values)
+
+    serialized = json.dumps(receipt)
+    assert receipt["provenance_complete"] is False
+    assert "state_evidence_schema_valid" in receipt["failed_assertions"]
+    assert oversized_status not in serialized
+    assert receipt["observations"]["state_delta"]["last_status"] is None
+    assert len(serialized.encode("utf-8")) < 16 * 1024
 
 
 def test_old_sha_cannot_qualify(tmp_path):
@@ -170,6 +234,30 @@ def test_manual_trigger_without_scheduler_envelope_cannot_qualify(tmp_path):
 
     assert receipt["provenance_complete"] is False
     assert "scheduler_signature_valid" in receipt["failed_assertions"]
+
+
+def test_oversized_signed_nonce_cannot_qualify_or_be_reflected(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    envelope_path = values["scheduler_envelope_path"]
+    assert isinstance(envelope_path, Path)
+    envelope = json.loads(envelope_path.read_text())
+    envelope["nonce"] = "n" * 129
+    unsigned = {key: value for key, value in envelope.items() if key != "token"}
+    envelope["token"] = hmac.new(
+        KEY,
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    envelope_path.write_text(json.dumps(envelope))
+
+    receipt = _verify(values)
+
+    serialized = json.dumps(receipt)
+    assert receipt["provenance_complete"] is False
+    assert "scheduler_signature_valid" in receipt["failed_assertions"]
+    assert envelope["nonce"] not in serialized
+    assert receipt["observations"]["scheduler"]["nonce_fingerprint"] is None
+    assert len(serialized.encode("utf-8")) < 16 * 1024
 
 
 def test_scheduler_envelope_cannot_be_replayed(tmp_path):

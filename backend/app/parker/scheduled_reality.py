@@ -30,6 +30,11 @@ MAX_EVIDENCE_BYTES = 1024 * 1024
 MAX_GIT_OBSERVATION_BYTES = 64 * 1024
 GIT_OBSERVATION_TIMEOUT_SECONDS = 2.0
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_MAX_RUN_SEQUENCE = 2**63 - 1
+_MAX_STATE_STATUS_LENGTH = 64
+_MAX_STATE_ERROR_LENGTH = 1024
 
 
 def _canonical_envelope_payload(
@@ -68,12 +73,12 @@ def mint_scheduler_envelope(
 
     if not key:
         raise ValueError("scheduler key must not be empty")
-    if not job_id.strip():
-        raise ValueError("job_id must not be empty")
+    if not _IDENTIFIER_RE.fullmatch(job_id):
+        raise ValueError("job_id must be a bounded ASCII identifier")
     if not _SHA_RE.fullmatch(expected_code_sha):
         raise ValueError("expected_code_sha must be a 40-character lowercase git SHA")
-    if not nonce.strip():
-        raise ValueError("nonce must not be empty")
+    if not _IDENTIFIER_RE.fullmatch(nonce):
+        raise ValueError("nonce must be a bounded ASCII identifier")
     payload = _canonical_envelope_payload(
         job_id=job_id,
         scheduled_fire_epoch=float(scheduled_fire_epoch),
@@ -135,6 +140,7 @@ def verify_scheduled_reality(
         "input_is_real_inbound": False,
         "input_recent": False,
         "state_evidence_regular_nofollow": False,
+        "state_evidence_schema_valid": False,
         "wall_monotonic_coherent": False,
         "state_delta_matches_input": False,
         "post_status_ok": False,
@@ -235,19 +241,28 @@ def verify_scheduled_reality(
     )
     pre_state = _decode_object(pre_state_evidence[0] if pre_state_evidence else None)
     post_state = _decode_object(post_state_evidence[0] if post_state_evidence else None)
+    state_schema_valid = bool(
+        _state_has_bounded_schema(pre_state) and _state_has_bounded_schema(post_state)
+    )
+    assertions["state_evidence_schema_valid"] = state_schema_valid
     pre_state_sha = (
         hashlib.sha256(pre_state_evidence[0]).hexdigest() if pre_state_evidence else None
     )
     post_state_sha = (
         hashlib.sha256(post_state_evidence[0]).hexdigest() if post_state_evidence else None
     )
-    post_status_ok = bool(post_state.get("last_status") == "ok" and not post_state.get("error"))
+    post_status_ok = bool(
+        state_schema_valid
+        and post_state.get("last_status") == "ok"
+        and post_state.get("error") is None
+    )
     assertions["post_status_ok"] = post_status_ok
     assertions["state_delta_matches_input"] = bool(
         input_sha
         and pre_state_sha
         and post_state_sha
         and pre_state_sha != post_state_sha
+        and state_schema_valid
         and _is_exact_increment(pre_state.get("run_sequence"), post_state.get("run_sequence"))
         and post_state.get("last_input_sha256") == input_sha
         and post_status_ok
@@ -292,7 +307,11 @@ def verify_scheduled_reality(
             "scheduler": {
                 "job_id": scheduler_job_id if isinstance(scheduler_job_id, str) else None,
                 "scheduled_fire_epoch": scheduled_fire,
-                "nonce": nonce,
+                "nonce_fingerprint": (
+                    hashlib.sha256(nonce.encode("ascii")).hexdigest()
+                    if isinstance(nonce, str) and _IDENTIFIER_RE.fullmatch(nonce)
+                    else None
+                ),
                 "token_verified": assertions["scheduler_signature_valid"],
                 "nonce_ledger_scope": (
                     "trusted_external"
@@ -302,7 +321,6 @@ def verify_scheduled_reality(
                 "nonce_claimed": assertions["scheduler_nonce_single_use"],
             },
             "input": {
-                "name": candidate.name,
                 "sha256": input_sha,
                 "mtime_epoch": candidate_mtime,
                 "scope": "allowlisted_external_inbox"
@@ -318,10 +336,10 @@ def verify_scheduled_reality(
             "state_delta": {
                 "pre_sha256": pre_state_sha,
                 "post_sha256": post_state_sha,
-                "pre_run_sequence": pre_state.get("run_sequence"),
-                "post_run_sequence": post_state.get("run_sequence"),
-                "last_status": post_state.get("last_status"),
-                "error_present": bool(post_state.get("error")),
+                "pre_run_sequence": pre_state.get("run_sequence") if state_schema_valid else None,
+                "post_run_sequence": post_state.get("run_sequence") if state_schema_valid else None,
+                "last_status": post_state.get("last_status") if state_schema_valid else None,
+                "error_present": bool(post_state.get("error")) if state_schema_valid else False,
                 "last_input_matches": bool(input_sha and post_state.get("last_input_sha256") == input_sha),
             },
         },
@@ -389,12 +407,12 @@ def _verified_envelope_payload(envelope: dict[str, Any], key: bytes) -> dict[str
     token = envelope.get("token")
     if not (
         isinstance(job_id, str)
-        and job_id
+        and _IDENTIFIER_RE.fullmatch(job_id)
         and fire_epoch is not None
         and isinstance(expected_code_sha, str)
         and _SHA_RE.fullmatch(expected_code_sha)
         and isinstance(nonce, str)
-        and nonce
+        and _IDENTIFIER_RE.fullmatch(nonce)
         and isinstance(token, str)
         and re.fullmatch(r"[0-9a-f]{64}", token)
     ):
@@ -643,9 +661,34 @@ def _decode_object(payload: bytes | None) -> dict[str, Any]:
         return {}
     try:
         value = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _state_has_bounded_schema(value: dict[str, Any]) -> bool:
+    """Accept only receipt fields that are safe to validate and reflect."""
+
+    required = {"run_sequence", "last_status", "last_input_sha256", "error"}
+    if not required.issubset(value):
+        return False
+    sequence = value.get("run_sequence")
+    status_value = value.get("last_status")
+    input_sha = value.get("last_input_sha256")
+    error = value.get("error")
+    return bool(
+        isinstance(sequence, int)
+        and not isinstance(sequence, bool)
+        and 0 <= sequence <= _MAX_RUN_SEQUENCE
+        and isinstance(status_value, str)
+        and 0 < len(status_value) <= _MAX_STATE_STATUS_LENGTH
+        and isinstance(input_sha, str)
+        and _SHA256_RE.fullmatch(input_sha)
+        and (
+            error is None
+            or (isinstance(error, str) and len(error) <= _MAX_STATE_ERROR_LENGTH)
+        )
+    )
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

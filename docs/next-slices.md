@@ -851,6 +851,18 @@ receipt reports only the bound, observed byte count, and a narrow failure reason
 raw git output is not emitted. Timeout, overflow, invalid output, or process
 failure leaves `git_observation_bounded` false and the full receipt unverified.
 
+A third fail-closed hardening bounds and sanitizes the verifier's own receipt.
+Before the patch, an honest receipt reflected the raw scheduler nonce and inbound
+filename; malformed JSON with a 10,000-digit state sequence raised instead of
+returning `unverified`; and a 100 KiB state status was copied into the receipt.
+State evidence now needs bounded scalar status/error fields, a SHA-256 input
+binding, and a nonnegative signed-64-bit sequence before its values are emitted.
+Malformed numeric JSON is caught as unverified. Scheduler IDs/nonces use bounded
+ASCII syntax, the receipt emits only a nonce fingerprint, and the inbound
+filename is omitted. Negative controls pin all three pre-patch failures plus an
+oversized but correctly signed nonce; every resulting receipt stays below the
+16 KiB test ceiling without reflecting the adversarial value.
+
 This is operational provenance machinery only, not a genuine scheduled receipt
 or product/ASR/clinical evidence. Production wrapper configuration, protected
 scheduler-key/ledger ownership, and one actual verifier-passing scheduled run

@@ -176,21 +176,28 @@ observation instead of blocking or buffering without limit.
 Envelope, input, pre/post state, and nonce-ledger paths are traversed
 component-by-component with descriptor-relative `O_NOFOLLOW`; regular evidence
 is read once from a stable descriptor, capped at 1 MiB, and hashed/timestamped
-from that same read. Missing, malformed, symlinked, unstable, hard-linked, or
-oversized evidence emits `verdict: unverified` and `provenance_complete: false`.
-The receipt omits absolute paths, the HMAC token, and the key.
+from that same read. State evidence must expose bounded scalar status/error,
+SHA-256, and signed-64-bit sequence fields before any of those values can be
+reflected in a receipt; malformed giant integers fail closed rather than raising.
+Scheduler job IDs and nonces are bounded ASCII identifiers. The receipt emits a
+nonce fingerprint instead of the raw nonce and never emits the inbound filename.
+Missing, malformed, symlinked, unstable, hard-linked, or oversized evidence emits
+`verdict: unverified` and `provenance_complete: false`. The receipt omits absolute
+paths, inbound filenames, raw nonces, HMAC tokens, keys, and unvalidated state
+values.
 
 ```bash
 backend/.venv/bin/pytest backend/tests/test_scheduled_reality.py -q
 ```
 
 The tests are the mandatory negative controls: old SHA, absent scheduler
-envelope, replay of the same signed envelope, a nonce ledger inside the repo,
-repo fixture input, symlinked or hard-linked final input, a symlinked parent
-input path, symlinked envelope, state, or nonce-ledger paths, oversized input,
-frozen wall clock, missing state delta, and dirty checkout must all remain
-unverified, while one isolated
-synthetic Operations-shaped run qualifies once. This proves the verifier
-contract only. Until a trusted wrapper owns a protected nonce ledger and
-scheduler key and an actual scheduled event passes it, Parker still has no
-genuine scheduled-production provenance receipt.
+envelope, replay of the same signed envelope, an oversized signed nonce, a nonce
+ledger inside the repo, repo fixture input, symlinked or hard-linked final input,
+a symlinked parent input path, symlinked envelope, state, or nonce-ledger paths,
+oversized input, malformed giant state integers, oversized reflected state
+status, frozen wall clock, missing state delta, dirty checkout, and bounded git
+observation failures must all remain unverified, while one isolated synthetic
+Operations-shaped run qualifies once without reflecting its nonce or inbound
+filename. This proves the verifier contract only. Until a trusted wrapper owns a
+protected nonce ledger and scheduler key and an actual scheduled event passes it,
+Parker still has no genuine scheduled-production provenance receipt.
