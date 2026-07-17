@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -151,6 +152,24 @@ def test_honest_scheduled_run_qualifies(tmp_path):
     ).hexdigest()
     assert KEY.decode() not in serialized
     assert str(tmp_path) not in serialized
+
+
+def test_nonce_claim_fsyncs_file_and_ledger_directory(tmp_path, monkeypatch):
+    values = _honest_run_inputs(tmp_path)
+    real_fsync = os.fsync
+    fsynced_modes: list[int] = []
+
+    def recording_fsync(descriptor: int) -> None:
+        fsynced_modes.append(os.fstat(descriptor).st_mode)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr("app.parker.scheduled_reality.os.fsync", recording_fsync)
+
+    receipt = _verify(values)
+
+    assert receipt["provenance_complete"] is True
+    assert any(stat.S_ISREG(mode) for mode in fsynced_modes)
+    assert any(stat.S_ISDIR(mode) for mode in fsynced_modes)
 
 
 def test_inbound_filename_is_not_reflected_in_receipt(tmp_path):

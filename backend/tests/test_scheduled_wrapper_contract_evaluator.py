@@ -107,6 +107,18 @@ def test_worker_failure_cannot_ack_or_consume_pending_run():
     assert any(failure["check"] == "pending_ack_protocol" for failure in result["failures"])
 
 
+def test_worker_cannot_forge_protected_ack_event():
+    forged_ack = _scenario("wrapper-001-success-final-ack")
+    ack = next(event for event in forged_ack["events"] if event["type"] == "ack_committed")
+    ack.update({"actor": "worker", "target": "worker_sandbox"})
+
+    result = evaluate([forged_ack]).as_dict()
+
+    assert result["gate"]["passed"] is False
+    assert result["metrics"]["pending_ack_failures"] == 1
+    assert any(failure["check"] == "pending_ack_protocol" for failure in result["failures"])
+
+
 def test_receipt_cannot_reflect_key_token_nonce_path_or_unbounded_output():
     reflected = _scenario("wrapper-003-verifier-failure-retains-pending")
     reflected["receipt"].update(

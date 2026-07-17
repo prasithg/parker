@@ -872,6 +872,13 @@ atomically claims the nonce. A red-capable retry control pins both sides: failed
 evidence leaves `nonce_claimed: false`, repaired evidence can qualify once with
 the same envelope, and any subsequent replay remains unverified.
 
+A revision-bound review then found that the create-once tombstone was fsynced
+without fsyncing its containing ledger directory. After a host crash, that left
+the directory entry outside the durability claim and could make a completed
+envelope replayable. A red-capable descriptor-mode control observed the missing
+directory fsync; the verifier now fsyncs the tombstone and ledger directory
+before reporting nonce-claim success.
+
 This is operational provenance machinery only, not a genuine scheduled receipt
 or product/ASR/clinical evidence. Production wrapper configuration, protected
 scheduler-key/ledger ownership, and one actual verifier-passing scheduled run
@@ -890,6 +897,13 @@ Four adversarial regression controls prove that a worker receiving key/envelope
 inputs, a worker-writable nonce ledger, eager acknowledgement after worker
 failure, or a receipt reflecting token/nonce/path/oversized text fails the gate.
 The reference fixture passes 15/15 checks. CI runs the same evaluator.
+
+The same revision-bound review found a false-green semantic trace: changing the
+successful `ack_committed` event to a worker-owned, worker-targeted event still
+passed all five checks. The evaluator now accepts only the three exact bounded
+lifecycle sequences and requires each event's actor, target, and field schema to
+match the scheduler/verifier/worker trust contract. The forged-ack trace is a
+durable negative control.
 
 This is a deployable contract, not a deployment claim: no live key was loaded,
 no scheduler configuration or 01:15 job was changed, no wrapper process or OS

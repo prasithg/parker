@@ -45,6 +45,53 @@ _MAX_RECEIPT_BYTES = 16 * 1024
 _EXPECTED_CLAIM_BOUNDARY = (
     "Synthetic wrapper-contract evidence only; not a live deployment or genuine scheduled event."
 )
+_EVENT_SHAPES: dict[str, tuple[str, str | None]] = {
+    "envelope_minted": ("scheduler", "pending_envelope"),
+    "pending_created": ("scheduler", "ack_state"),
+    "worker_succeeded": ("worker", None),
+    "worker_failed": ("worker", None),
+    "verifier_started": ("verifier_wrapper", "pending_envelope"),
+    "evidence_verified": ("verifier_wrapper", None),
+    "evidence_rejected": ("verifier_wrapper", None),
+    "nonce_claimed": ("verifier_wrapper", "nonce_ledger"),
+    "ack_committed": ("verifier_wrapper", "ack_state"),
+    "pending_retained": ("verifier_wrapper", "ack_state"),
+    "sanitized_receipt_written": ("verifier_wrapper", "sanitized_receipt"),
+}
+_SUCCESS_EVENT_TYPES = [
+    "key_access",
+    "envelope_minted",
+    "pending_created",
+    "worker_started",
+    "worker_succeeded",
+    "key_access",
+    "verifier_started",
+    "evidence_verified",
+    "nonce_claimed",
+    "ack_committed",
+    "sanitized_receipt_written",
+]
+_WORKER_FAILURE_EVENT_TYPES = [
+    "key_access",
+    "envelope_minted",
+    "pending_created",
+    "worker_started",
+    "worker_failed",
+    "pending_retained",
+    "sanitized_receipt_written",
+]
+_EVIDENCE_REJECTION_EVENT_TYPES = [
+    "key_access",
+    "envelope_minted",
+    "pending_created",
+    "worker_started",
+    "worker_succeeded",
+    "key_access",
+    "verifier_started",
+    "evidence_rejected",
+    "pending_retained",
+    "sanitized_receipt_written",
+]
 
 
 @dataclass(frozen=True)
@@ -205,11 +252,20 @@ def _score_pending_ack_protocol(scenario: dict[str, Any]) -> tuple[bool, str]:
     if not isinstance(state, dict):
         return False, "final_state must be an object"
     event_types = [event.get("type") for event in events]
-    required_prefix = ["key_access", "envelope_minted", "pending_created", "worker_started"]
-    if event_types[:4] != required_prefix:
-        return False, "wrapper trace must mint and persist pending state before worker start"
     worker_failed = "worker_failed" in event_types
     evidence_rejected = "evidence_rejected" in event_types
+    expected_event_types = (
+        _WORKER_FAILURE_EVENT_TYPES
+        if worker_failed
+        else _EVIDENCE_REJECTION_EVENT_TYPES
+        if evidence_rejected
+        else _SUCCESS_EVENT_TYPES
+    )
+    if event_types != expected_event_types:
+        return False, "wrapper trace must use one exact bounded lifecycle sequence"
+    if not _events_have_trusted_shapes(events):
+        return False, "wrapper lifecycle actors, targets, and fields must match the trust contract"
+
     evidence_verified = "evidence_verified" in event_types
     nonce_claimed = "nonce_claimed" in event_types
     ack_committed = "ack_committed" in event_types
@@ -295,6 +351,45 @@ def _events(scenario: dict[str, Any]) -> list[dict[str, Any]]:
     if any(not isinstance(event, dict) for event in events):
         raise ValueError("events must be objects")
     return events
+
+
+def _events_have_trusted_shapes(events: list[dict[str, Any]]) -> bool:
+    """Reject lifecycle rows whose actor, target, or fields weaken the contract."""
+
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "key_access":
+            if event not in (
+                {"actor": "scheduler", "type": "key_access", "target": "scheduler_key"},
+                {
+                    "actor": "verifier_wrapper",
+                    "type": "key_access",
+                    "target": "scheduler_key",
+                },
+            ):
+                return False
+            continue
+        if event_type == "worker_started":
+            inputs = event.get("inputs")
+            if (
+                set(event) != {"actor", "type", "inputs"}
+                or event.get("actor") != "worker"
+                or not isinstance(inputs, list)
+                or not 1 <= len(inputs) <= 16
+                or any(not isinstance(value, str) for value in inputs)
+            ):
+                return False
+            continue
+        shape = _EVENT_SHAPES.get(str(event_type))
+        if shape is None:
+            return False
+        actor, target = shape
+        expected = {"actor": actor, "type": event_type}
+        if target is not None:
+            expected["target"] = target
+        if event != expected:
+            return False
+    return True
 
 
 def _worker_inputs(events: list[dict[str, Any]]) -> list[str]:

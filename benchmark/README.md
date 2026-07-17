@@ -184,7 +184,9 @@ nonce fingerprint instead of the raw nonce and never emits the inbound filename.
 Nonce consumption is the final verifier acknowledgement: malformed or transient
 evidence stays unverified without advancing the ledger, so the same signed run
 can be retried after its evidence is repaired. Only a run that passes every
-other assertion may atomically claim the nonce; later replay still fails closed.
+other assertion may atomically claim the nonce. The verifier fsyncs both the
+tombstone and its containing ledger directory before reporting success, so a
+completed claim is durable across a crash; later replay still fails closed.
 Missing, malformed, symlinked, unstable, hard-linked, or oversized evidence emits
 `verdict: unverified` and `provenance_complete: false`. The receipt omits absolute
 paths, inbound filenames, raw nonces, HMAC tokens, keys, and unvalidated state
@@ -200,7 +202,8 @@ ledger inside the repo, repo fixture input, symlinked or hard-linked final input
 a symlinked parent input path, symlinked envelope, state, or nonce-ledger paths,
 oversized input, malformed giant state integers, oversized reflected state
 status, frozen wall clock, missing state delta, eager nonce consumption on failed
-evidence, dirty checkout, and bounded git observation failures must all remain
+evidence, a nonce claim without directory durability, dirty checkout, and
+bounded git observation failures must all remain
 unverified, while one isolated synthetic
 Operations-shaped run qualifies once without reflecting its nonce or inbound
 filename. This proves the verifier contract only. Until a trusted wrapper owns a
@@ -214,7 +217,8 @@ the verifier: one final-ack success, one worker failure that retains pending
 state, and one verifier rejection that also remains retryable. Five checks per
 trace fail closed on scheduler-key or envelope exposure to the worker,
 pre-completion verifier handoff, worker-writable nonce-ledger scope, eager
-nonce/ack advancement, and receipts that reflect keys, tokens, raw nonces,
+nonce/ack advancement, forged lifecycle actors/targets/fields, and receipts that
+reflect keys, tokens, raw nonces,
 paths, URLs, command output, or more than 16 KiB.
 
 The fixture and evaluator are public-safe contract evidence only. They use no

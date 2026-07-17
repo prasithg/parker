@@ -363,9 +363,10 @@ def _claim_scheduler_nonce_once(root_descriptor: int, *, job_id: str, nonce: str
     The report/agent process must not be able to write the ledger. The caller
     opens the directory with descriptor-relative no-follow traversal, then this
     function creates the tombstone relative to that same descriptor. ``O_EXCL``
-    makes concurrent or sequential reuse fail closed. A write/fsync failure
-    leaves the tombstone in place and returns false rather than making the
-    signed envelope reusable.
+    makes concurrent or sequential reuse fail closed. The tombstone file and
+    containing ledger directory are both fsynced before success, so a completed
+    claim cannot disappear after a crash and make the envelope replayable. Any
+    write/fsync failure leaves the tombstone in place and returns false.
     """
 
     claim_id = hashlib.sha256(f"{job_id}\0{nonce}".encode("utf-8")).hexdigest()
@@ -391,6 +392,7 @@ def _claim_scheduler_nonce_once(root_descriptor: int, *, job_id: str, nonce: str
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        os.fsync(root_descriptor)
     except OSError:
         return False
     return True
