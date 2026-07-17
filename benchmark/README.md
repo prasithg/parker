@@ -227,3 +227,25 @@ actual verifier-passing scheduled fire.
 ```bash
 make eval-scheduled-wrapper
 ```
+
+### Run the inactive subprocess/ownership harness
+
+`make eval-scheduled-wrapper-harness` executes one real synthetic worker under
+the current unprivileged account with an exact scrubbed environment, closed
+extra descriptors, a one-second deadline, and a 16 KiB combined-output cap. In
+an OS temporary directory it creates synthetic pending, ledger, and
+acknowledgement state, then validates current-owner identity, exact `0600`/`0700`
+modes, regular file types, and descriptor-relative no-follow opens. Symlinked
+state, group-readable acknowledgement state, a hanging worker, and an output
+flood are pinned as negative controls; timeout/overflow kills and reaps the
+worker process group.
+
+The harness does not inspect or change cron, read a credential, mint an
+envelope, call the production verifier, or enforce a distinct scheduler/wrapper
+OS account. It emits only bounded synthetic metadata and reports zero live
+activations. Separate production identities, protected runtime state, complete
+stack review, and one genuine verifier-passing scheduled event remain blocked.
+
+```bash
+make eval-scheduled-wrapper-harness
+```

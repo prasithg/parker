@@ -65,5 +65,8 @@ jobs:
       - name: Scheduled-wrapper synthetic contract eval
         run: make eval-scheduled-wrapper
 
+      - name: Scheduled-wrapper inactive subprocess and ownership harness
+        run: make eval-scheduled-wrapper-harness
+
       - name: Release-readiness rollup
         run: make eval-release-readiness

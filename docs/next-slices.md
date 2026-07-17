@@ -899,6 +899,24 @@ wrapper plus protected external pending/nonce/ack state, followed by one real
 verifier-passing scheduled fire after the stacked provenance PRs receive a
 revision-bound integration review.
 
+## Scheduled-wrapper inactive subprocess/ownership harness — DONE (2026-07-17, inactive only)
+
+Added `make eval-scheduled-wrapper-harness` above the synthetic trace contract.
+It executes one real non-root synthetic worker with an exact five-variable
+launch environment, no inherited extra descriptors, a one-second deadline, and
+a 16 KiB combined-output budget. Its OS-temporary protected layout checks four
+pending/ledger/ack resources through descriptor-relative no-follow opens,
+current-owner identity, and exact `0600`/`0700` modes. Negative controls pin a
+symlinked pending file, group-readable acknowledgement state, a hanging worker,
+and incremental output overflow; failed workers are killed and reaped.
+
+The machine receipt reports 9/9 checks and zero live activations. This is still
+an inactive same-account integration harness: it does not read or change cron,
+materialize credentials, call the production verifier, enforce separate
+scheduler/wrapper OS identities, or prove a genuine scheduled event. Those
+remain prerequisites for later protected deployment after complete-stack
+revision-bound review.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

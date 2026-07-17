@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper reset-db repl demo digest voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -124,6 +124,13 @@ eval-hands: backend-venv
 # does not read a live key, configure cron, deploy a wrapper, or prove an event.
 eval-scheduled-wrapper:
 	python3 benchmark/evaluate_scheduled_wrapper_v0.py
+
+# Inactive wrapper integration harness: executes one scrubbed, unprivileged
+# synthetic subprocess and checks real temporary filesystem ownership/modes with
+# no-follow opens plus bounded timeout/output cleanup. It does not read cron or
+# credentials, call the production verifier, or prove separate OS identities.
+eval-scheduled-wrapper-harness:
+	python3 benchmark/scheduled_wrapper_harness_v0.py
 
 # Deterministic local reset: v0 uses create_tables(), which never ALTERs,
 # so schema changes require a fresh DB. Removes both historical locations.
