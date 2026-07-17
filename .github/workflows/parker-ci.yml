@@ -62,5 +62,8 @@ jobs:
       - name: Hands-lane eval (fake OpenClaw gateway)
         run: make eval-hands
 
+      - name: Scheduled-wrapper synthetic contract eval
+        run: make eval-scheduled-wrapper
+
       - name: Release-readiness rollup
         run: make eval-release-readiness

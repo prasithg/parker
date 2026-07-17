@@ -206,3 +206,24 @@ Operations-shaped run qualifies once without reflecting its nonce or inbound
 filename. This proves the verifier contract only. Until a trusted wrapper owns a
 protected nonce ledger and scheduler key and an actual scheduled event passes it,
 Parker still has no genuine scheduled-production provenance receipt.
+
+### Evaluate the no-agent wrapper contract
+
+`make eval-scheduled-wrapper` checks three synthetic control-plane traces around
+the verifier: one final-ack success, one worker failure that retains pending
+state, and one verifier rejection that also remains retryable. Five checks per
+trace fail closed on scheduler-key or envelope exposure to the worker,
+pre-completion verifier handoff, worker-writable nonce-ledger scope, eager
+nonce/ack advancement, and receipts that reflect keys, tokens, raw nonces,
+paths, URLs, command output, or more than 16 KiB.
+
+The fixture and evaluator are public-safe contract evidence only. They use no
+live key, do not configure or invoke cron, do not deploy an OS-account wrapper,
+and do not turn any historical job status into trusted provenance. A real
+deployment still requires separate scheduler/verifier ownership, a protected
+external pending/nonce/ack store, an unprivileged worker identity, and one
+actual verifier-passing scheduled fire.
+
+```bash
+make eval-scheduled-wrapper
+```

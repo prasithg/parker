@@ -878,6 +878,27 @@ scheduler-key/ledger ownership, and one actual verifier-passing scheduled run
 remain blocked until the stacked PR state is reviewed; no Parker PR was merged
 and no active 01:15 branch/job was changed in this slice.
 
+## Scheduled-reality no-agent wrapper contract — DONE (2026-07-17, synthetic only)
+
+Added `make eval-scheduled-wrapper` as the public-safe contract immediately
+outside the verifier. Three synthetic traces cover a final-ack success, a worker
+failure, and rejected verifier evidence. Each is scored for scheduler-only key
+access, verifier-only post-worker handoff, a verifier-owned external nonce
+ledger with no worker access, pending/ack ordering, and bounded sanitized output.
+
+Four adversarial regression controls prove that a worker receiving key/envelope
+inputs, a worker-writable nonce ledger, eager acknowledgement after worker
+failure, or a receipt reflecting token/nonce/path/oversized text fails the gate.
+The reference fixture passes 15/15 checks. CI runs the same evaluator.
+
+This is a deployable contract, not a deployment claim: no live key was loaded,
+no scheduler configuration or 01:15 job was changed, no wrapper process or OS
+identity was installed, and no historical status became a genuine event. The
+remaining production prerequisite is a separately owned scheduler/verifier
+wrapper plus protected external pending/nonce/ack state, followed by one real
+verifier-passing scheduled fire after the stacked provenance PRs receive a
+revision-bound integration review.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:
