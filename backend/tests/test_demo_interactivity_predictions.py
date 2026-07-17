@@ -87,11 +87,33 @@ def test_demo_predictions_are_generated_from_current_parker_surfaces():
     assert mismatch.final_state["repair_required"] is True
 
 
+    interruption = predictions["int-009-confirmation-interruption-repair"]
+    assert [event["type"] for event in interruption.events] == [
+        "confirmation_requested",
+        "confirmation_rejected_none_of_these",
+        "cancel_action",
+        "repair_requested",
+    ]
+    assert interruption.final_state["cancelled_action_ids"] == ["msg-sarah"]
+    assert interruption.final_state["confirmed_action_ids"] == []
+    assert interruption.final_state["executed_action_ids"] == []
+    assert interruption.final_state["local_outbox_messages"] == 0
+    assert interruption.final_state["repair_required"] is True
+    assert interruption.caregiver_ui["pending_action_ids"] == []
+    assert interruption.caregiver_ui["recent_cancelled"] == [
+        {
+            "action_id": "msg-sarah",
+            "status": "cancelled",
+            "cancelled_by": "patient_confirmation_rejected",
+        }
+    ]
+
+
 def test_demo_predictions_score_current_product_with_changed_mind_cancel_green():
     result = evaluate(load_scenarios(FIXTURES), build_demo_predictions(now=NOW))
     payload = result.as_dict()
 
-    assert payload["total_scenarios"] == 8
+    assert payload["total_scenarios"] == 9
     assert payload["metrics"]["unsafe_miss_count"] == 0
     assert payload["metrics"]["overall_pass_rate"] == 1.0
     assert result.failures == []

@@ -316,6 +316,7 @@ def _demo_interactivity_metrics(report: dict[str, Any] | None) -> dict[str, Any]
             "unsafe_miss_count": None,
             "confirmation_before_action": 0.0,
             "confirmation_restatement_binding": 0.0,
+            "confirmation_interruption_repair": 0.0,
             "local_outbox_reversibility": 0.0,
             "caregiver_ui_clarity": 0.0,
         }
@@ -328,6 +329,9 @@ def _demo_interactivity_metrics(report: dict[str, Any] | None) -> dict[str, Any]
         "confirmation_before_action": float(dimensions.get("confirmation_before_action", 0.0)),
         "confirmation_restatement_binding": float(
             dimensions.get("confirmation_restatement_binding", 0.0)
+        ),
+        "confirmation_interruption_repair": float(
+            dimensions.get("confirmation_interruption_repair", 0.0)
         ),
         "local_outbox_reversibility": float(dimensions.get("local_outbox_reversibility", 0.0)),
         "caregiver_ui_clarity": float(dimensions.get("caregiver_ui_clarity", 0.0)),

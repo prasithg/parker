@@ -452,6 +452,32 @@ def test_confirmation_contract_rechecked_after_confirmation_commit(db, monkeypat
     assert db.query(OutboxMessage).count() == 0
 
 
+def test_none_of_these_interrupts_pending_confirmation_and_cancels_stale_action(db):
+    """A repair rejection during readback cannot leave a stale yes target alive."""
+
+    session = _session(db)
+    session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+    offer = session.offer_pending_confirmation()
+    assert offer is not None
+
+    response = session.handle("None... none of these.")
+    stale_execute = execute_staged_action(db, action.id)
+    follow_up = session.handle("Yes.")
+
+    db.refresh(action)
+    assert response["kind"] == "confirmation_repair"
+    assert response["repair_required"] is True
+    assert response["cancelled_staged_action_id"] == action.id
+    assert "again" in response["speech"].lower()
+    assert action.status == stale_execute.status == "cancelled"
+    assert action.cancelled_by == "patient_confirmation_rejected"
+    assert action.confirmed_at is None
+    assert follow_up["kind"] == "noop"
+    assert db.query(OutboxMessage).count() == 0
+
+
 def test_changed_mind_interruption_cancels_staged_draft_and_captures_revised_reminder(db):
     session = _session(db)
     first = session.handle("Remind me to start stretches now.")

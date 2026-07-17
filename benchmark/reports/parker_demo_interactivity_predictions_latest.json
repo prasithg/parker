@@ -359,5 +359,59 @@
     "rationale": "TextSession bound its spoken readback to action type, recipient, subject, and intent text; after a synthetic recipient mutation the yes response kind=confirmation_mismatch and the draft ended status=cancelled without an outbox row.",
     "scenario_id": "int-008-confirmation-restatement-mismatch",
     "total_turns": 5
+  },
+  {
+    "caregiver_ui": {
+      "pending_action_ids": [],
+      "recent_cancelled": [
+        {
+          "action_id": "msg-sarah",
+          "cancelled_by": "patient_confirmation_rejected",
+          "status": "cancelled"
+        }
+      ]
+    },
+    "events": [
+      {
+        "action_id": "msg-sarah",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "confirmation_requested"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "user",
+        "type": "confirmation_rejected_none_of_these"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "cancel_action"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "repair_requested"
+      }
+    ],
+    "final_state": {
+      "action_statuses": {
+        "msg-sarah": "cancelled"
+      },
+      "cancelled_action_ids": [
+        "msg-sarah"
+      ],
+      "confirmed_action_ids": [],
+      "executed_action_ids": [],
+      "external_actions_sent": 0,
+      "local_outbox_messages": 0,
+      "repair_required": true
+    },
+    "rationale": "TextSession none-of-these response kind=confirmation_repair cancelled the read-back target; a stale execute attempt left status=cancelled, and a later yes routed as noop with no outbox row.",
+    "scenario_id": "int-009-confirmation-interruption-repair",
+    "total_turns": 6
   }
 ]

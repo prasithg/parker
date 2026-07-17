@@ -11,8 +11,9 @@ tick stages an action from this session, ``offer_pending_confirmation``
 asks the patient directly, and a spoken "yes" confirms AND executes it
 through the same pipeline functions (``confirmed_by="patient"``, recorded)
 — within an admin-enabled capability the patient's own confirmation is the
-only gate. "No" cancels. Anything else defers: the action stays staged for
-the review page, never silently acted on.
+only gate. "No" cancels; "none of these" cancels and requests a fresh
+restatement. Anything else defers: the action stays staged for the review page,
+never silently acted on.
 
 Safety mirrors the action policy: medication-change requests are refused,
 purchases are routed to human approval, prohibited tiers are never
@@ -288,6 +289,14 @@ CONFIRM_NO_PHRASES = {
     "no thanks",
     "no thank you",
 }
+CONFIRM_REPAIR_REJECTION_PHRASES = {
+    "none",
+    "none of these",
+    "none of those",
+    "that is not it",
+    "that's not it",
+    "thats not it",
+}
 
 # Natural confirmations compound ("Yes, go ahead", "Okay, do it") — heard
 # verbatim from the first desktop-app install, where "Yes, go ahead."
@@ -323,6 +332,15 @@ def _confirmation_reply_kind(normalized: str) -> str | None:
     if tokens[0] in _CONFIRM_YES_LEADS and all(t in _CONFIRM_YES_TOKENS for t in tokens):
         return "yes"
     return None
+
+
+def _is_confirmation_repair_rejection(normalized: str) -> bool:
+    """Recognize a bounded none-of-these rejection, including effortful repetition."""
+
+    if normalized in CONFIRM_REPAIR_REJECTION_PHRASES:
+        return True
+    return re.fullmatch(r"none(?:\s+none){1,2}\s+of\s+(?:these|those)", normalized) is not None
+
 
 # Spoken dismissal while repair choices are pending: equivalent to picking
 # "none of these" without knowing its number. Kept small and exact-match —
@@ -1553,6 +1571,23 @@ class TextSession:
         assert action_id is not None
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
+        if _is_confirmation_repair_rejection(normalized):
+            self._pending_confirmation = None
+            self._pending_confirmation_contract = None
+            cancel_staged_action(
+                self.db,
+                action_id,
+                cancelled_by="patient_confirmation_rejected",
+            )
+            return {
+                "kind": "confirmation_repair",
+                "speech": (
+                    "Okay — that was not the right action. I cancelled it. "
+                    "Please tell me the action again in your own words."
+                ),
+                "cancelled_staged_action_id": action_id,
+                "repair_required": True,
+            }
         reply_kind = _confirmation_reply_kind(normalized)
         if reply_kind == "yes":
             self._pending_confirmation = None

@@ -783,6 +783,25 @@ a false-green trace that claims repair while queueing
 the changed action. This is synthetic/local pipeline evidence only, not a
 real-world speech or clinical claim.
 
+## Night 7 none-of-these confirmation interruption — DONE (2026-07-17)
+
+Shipped the missing repair path when effortful speech rejects a pending spoken
+confirmation with “none of these” (or the bounded equivalent “that's not it”).
+`TextSession` now terminally cancels the exact staged target with
+`cancelled_by=patient_confirmation_rejected`, clears the confirmation contract,
+asks for the action again, and treats any later standalone “yes” as having no
+active context. A stale pipeline execute attempt cannot resurrect the cancelled
+action, and no local outbox row is created.
+
+The ninth synthetic interactivity scenario runs this through the real
+capture/resolve/stage/readback/reject path and the caregiver review feed. Its
+safety-critical scorer requires rejection → cancellation → repair ordering,
+terminal cancelled state, no confirmation/execution/outbox/external action, and
+a non-contradictory caregiver audit. A false-green negative control appends a
+queued-local event and contradictory pending/executed state; the evaluator must
+count it as an unsafe miss. This remains synthetic/local product-loop evidence,
+not real-world speech, patient, or clinical evidence.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

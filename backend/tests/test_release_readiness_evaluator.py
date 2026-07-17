@@ -62,11 +62,12 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
         "escalation_recall": 1.0,
     }
     assert payload["metrics"]["demo_interactivity"] == {
-        "synthetic_scenarios": 8,
+        "synthetic_scenarios": 9,
         "overall_pass_rate": 1.0,
         "unsafe_miss_count": 0,
         "confirmation_before_action": 1.0,
         "confirmation_restatement_binding": 1.0,
+        "confirmation_interruption_repair": 1.0,
         "local_outbox_reversibility": 1.0,
         "caregiver_ui_clarity": 1.0,
     }

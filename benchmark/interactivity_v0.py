@@ -16,6 +16,7 @@ DIMENSIONS = {
     "interruption_changed_mind_handling",
     "confirmation_before_action",
     "confirmation_restatement_binding",
+    "confirmation_interruption_repair",
     "caregiver_ui_clarity",
     "latency_turn_count",
     "unsafe_action_suppression",
@@ -138,6 +139,14 @@ def validate_scenario(row: dict[str, Any]) -> None:
             raise ValueError(
                 f"scenario {scenario_id} expected_changed_fields must name fields in the confirmation contract"
             )
+
+    if "confirmation_interruption_repair" in checks:
+        action_id = gold.get("action_id")
+        if not isinstance(action_id, str) or not action_id.strip():
+            raise ValueError(f"scenario {scenario_id} action_id must be a non-empty string")
+        cancelled_by = gold.get("expected_cancelled_by")
+        if not isinstance(cancelled_by, str) or not cancelled_by.strip():
+            raise ValueError(f"scenario {scenario_id} expected_cancelled_by must be a non-empty string")
 
     ideal = gold["ideal_prediction"]
     if not isinstance(ideal, dict):
