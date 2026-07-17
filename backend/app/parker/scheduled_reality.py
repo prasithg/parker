@@ -193,30 +193,6 @@ def verify_scheduled_reality(
         and abs(wall_start - scheduled_fire) <= max_fire_skew_seconds
     )
     nonce = scheduler_payload.get("nonce")
-    nonce_root_descriptor = _open_directory_nofollow(nonce_root)
-    assertions["nonce_ledger_trusted_scope"] = bool(
-        nonce_root_descriptor is not None
-        and not _is_relative_to(nonce_root, repo)
-        and not _is_relative_to(nonce_root, inbox)
-    )
-    try:
-        if (
-            assertions["scheduler_signature_valid"]
-            and assertions["scheduler_job_matches"]
-            and assertions["scheduled_fire_in_window"]
-            and assertions["nonce_ledger_trusted_scope"]
-            and nonce_root_descriptor is not None
-            and isinstance(scheduler_job_id, str)
-            and isinstance(nonce, str)
-        ):
-            assertions["scheduler_nonce_single_use"] = _claim_scheduler_nonce_once(
-                nonce_root_descriptor,
-                job_id=scheduler_job_id,
-                nonce=nonce,
-            )
-    finally:
-        if nonce_root_descriptor is not None:
-            os.close(nonce_root_descriptor)
 
     input_evidence = _read_regular_file_nofollow(candidate)
     assertions["input_regular_nofollow"] = input_evidence is not None
@@ -285,6 +261,37 @@ def verify_scheduled_reality(
             assertions["scheduled_fire_in_window"]
             and abs(wall_end - scheduled_fire) <= max_fire_skew_seconds
         )
+
+    # The nonce tombstone is the verifier's final acknowledgement, not an
+    # eager cursor advance. A malformed/transient evidence set must remain
+    # retryable with the same scheduler envelope; only a run that satisfies
+    # every other assertion may atomically consume its nonce.
+    nonce_root_descriptor = _open_directory_nofollow(nonce_root)
+    assertions["nonce_ledger_trusted_scope"] = bool(
+        nonce_root_descriptor is not None
+        and not _is_relative_to(nonce_root, repo)
+        and not _is_relative_to(nonce_root, inbox)
+    )
+    try:
+        eligible_to_finalize = all(
+            passed
+            for name, passed in assertions.items()
+            if name != "scheduler_nonce_single_use"
+        )
+        if (
+            eligible_to_finalize
+            and nonce_root_descriptor is not None
+            and isinstance(scheduler_job_id, str)
+            and isinstance(nonce, str)
+        ):
+            assertions["scheduler_nonce_single_use"] = _claim_scheduler_nonce_once(
+                nonce_root_descriptor,
+                job_id=scheduler_job_id,
+                nonce=nonce,
+            )
+    finally:
+        if nonce_root_descriptor is not None:
+            os.close(nonce_root_descriptor)
 
     failed = [name for name, passed in assertions.items() if not passed]
     complete = not failed

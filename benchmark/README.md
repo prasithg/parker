@@ -181,6 +181,10 @@ SHA-256, and signed-64-bit sequence fields before any of those values can be
 reflected in a receipt; malformed giant integers fail closed rather than raising.
 Scheduler job IDs and nonces are bounded ASCII identifiers. The receipt emits a
 nonce fingerprint instead of the raw nonce and never emits the inbound filename.
+Nonce consumption is the final verifier acknowledgement: malformed or transient
+evidence stays unverified without advancing the ledger, so the same signed run
+can be retried after its evidence is repaired. Only a run that passes every
+other assertion may atomically claim the nonce; later replay still fails closed.
 Missing, malformed, symlinked, unstable, hard-linked, or oversized evidence emits
 `verdict: unverified` and `provenance_complete: false`. The receipt omits absolute
 paths, inbound filenames, raw nonces, HMAC tokens, keys, and unvalidated state
@@ -195,8 +199,9 @@ envelope, replay of the same signed envelope, an oversized signed nonce, a nonce
 ledger inside the repo, repo fixture input, symlinked or hard-linked final input,
 a symlinked parent input path, symlinked envelope, state, or nonce-ledger paths,
 oversized input, malformed giant state integers, oversized reflected state
-status, frozen wall clock, missing state delta, dirty checkout, and bounded git
-observation failures must all remain unverified, while one isolated synthetic
+status, frozen wall clock, missing state delta, eager nonce consumption on failed
+evidence, dirty checkout, and bounded git observation failures must all remain
+unverified, while one isolated synthetic
 Operations-shaped run qualifies once without reflecting its nonce or inbound
 filename. This proves the verifier contract only. Until a trusted wrapper owns a
 protected nonce ledger and scheduler key and an actual scheduled event passes it,

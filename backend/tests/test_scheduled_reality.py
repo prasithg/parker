@@ -272,6 +272,27 @@ def test_scheduler_envelope_cannot_be_replayed(tmp_path):
     assert "scheduler_nonce_single_use" in replayed_receipt["failed_assertions"]
 
 
+def test_failed_evidence_does_not_consume_scheduler_nonce(tmp_path):
+    values = _honest_run_inputs(tmp_path)
+    pre_state = values["pre_state_path"]
+    post_state = values["post_state_path"]
+    assert isinstance(pre_state, Path)
+    assert isinstance(post_state, Path)
+    valid_post_state = post_state.read_bytes()
+    post_state.write_bytes(pre_state.read_bytes())
+
+    failed_receipt = _verify(values)
+    post_state.write_bytes(valid_post_state)
+    retried_receipt = _verify(values)
+
+    assert failed_receipt["provenance_complete"] is False
+    assert "state_delta_matches_input" in failed_receipt["failed_assertions"]
+    assert failed_receipt["assertions"]["scheduler_nonce_single_use"] is False
+    assert failed_receipt["observations"]["scheduler"]["nonce_claimed"] is False
+    assert retried_receipt["provenance_complete"] is True
+    assert retried_receipt["assertions"]["scheduler_nonce_single_use"] is True
+
+
 def test_nonce_ledger_inside_repository_cannot_qualify(tmp_path):
     values = _honest_run_inputs(tmp_path)
     repo = values["repo_root"]

@@ -863,6 +863,15 @@ filename is omitted. Negative controls pin all three pre-patch failures plus an
 oversized but correctly signed nonce; every resulting receipt stays below the
 16 KiB test ceiling without reflecting the adversarial value.
 
+A fourth hardening makes nonce consumption a final acknowledgement rather than
+an eager cursor advance. Before the patch, a signed run with a transiently
+invalid state delta returned `unverified` but still consumed its nonce, so fixing
+the evidence could never produce a valid receipt. The verifier now evaluates
+all checkout, envelope, input, state, and clock assertions first and only then
+atomically claims the nonce. A red-capable retry control pins both sides: failed
+evidence leaves `nonce_claimed: false`, repaired evidence can qualify once with
+the same envelope, and any subsequent replay remains unverified.
+
 This is operational provenance machinery only, not a genuine scheduled receipt
 or product/ASR/clinical evidence. Production wrapper configuration, protected
 scheduler-key/ledger ownership, and one actual verifier-passing scheduled run
