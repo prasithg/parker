@@ -908,14 +908,17 @@ a 16 KiB combined-output budget. Its OS-temporary protected layout checks four
 pending/ledger/ack resources through descriptor-relative no-follow opens,
 current-owner identity, and exact `0600`/`0700` modes. Negative controls pin a
 symlinked pending file, group-readable acknowledgement state, a hanging worker,
-and incremental output overflow; failed workers are killed and reaped.
+and incremental output overflow. Timeout/overflow signals the original worker
+process group and reaps the direct worker; a deliberately detached descendant
+is explicitly outside this same-account harness's containment claim.
 
 The machine receipt reports 9/9 checks and zero live activations. This is still
 an inactive same-account integration harness: it does not read or change cron,
 materialize credentials, call the production verifier, enforce separate
-scheduler/wrapper OS identities, or prove a genuine scheduled event. Those
-remain prerequisites for later protected deployment after complete-stack
-revision-bound review.
+scheduler/wrapper OS identities, contain deliberately detached descendants, or
+prove a genuine scheduled event. Separate OS identities, OS-enforced descendant
+containment, and a genuine verifier-passing event remain prerequisites for later
+protected deployment after complete-stack revision-bound review.
 
 ## Next open slice — product usefulness first
 

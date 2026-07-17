@@ -71,7 +71,7 @@ The goal is not to replace family. The goal is to help the person be understood,
 This is a living public project and it wants collaborators:
 
 - **Families**: the [runbook](docs/runbook.md) walks through running the local demo end to end with zero external services, and the [pilot recording protocol](docs/pilot-recording-protocol.md) shows how to (consensually) measure Parker against your person's actual voice.
-- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (653 tests) plus `make eval-release-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
+- **Developers**: the eval harness is the front door. Every claim in this README maps to a runnable eval; `make test` (668 tests) plus `make eval-release-readiness` reproduces the evidence. The action layer is deliberately small and policy-gated — adding a skill means adding it to the taxonomy with its safety tier, not bolting on a webhook.
 - **Researchers**: fixtures derived from public dysarthria corpora (TORGO, EasyCall, SJTU, and others) are metadata-only in-repo; the harness design and construct-validity guards are documented in [benchmark/README.md](benchmark/README.md).
 
 ## Naming and repo map
@@ -137,7 +137,7 @@ The backend standardizes on Python 3.11 in `backend/.venv`.
 
 ```bash
 make backend-venv    # venv + deps
-make test            # full backend suite should pass (660 tests as of 2026-07-17)
+make test            # full backend suite should pass (668 tests as of 2026-07-17)
 ```
 
 **Fastest demo** (three commands, zero config):

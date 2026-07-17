@@ -265,6 +265,7 @@ def _run_in_workspace(workspace: Path) -> InactiveHarnessResult:
             "production_verifier_called": False,
             "credential_materialized": False,
             "separate_os_identity_enforced": False,
+            "detached_descendant_containment": False,
         },
     }
     failures = [name for name, passed in assertions.items() if not passed]
@@ -460,6 +461,14 @@ def _decode_worker_payload(payload: bytes) -> dict[str, Any]:
 
 
 def _stop_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Signal the original worker process group and reap the direct worker.
+
+    A descendant that deliberately creates a new session leaves this process
+    group and is not contained by this inactive same-account harness. The fixed
+    synthetic worker does not spawn descendants; a production wrapper still
+    needs a separately enforced launcher/OS containment boundary.
+    """
+
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except (OSError, ProcessLookupError):

@@ -237,14 +237,17 @@ an OS temporary directory it creates synthetic pending, ledger, and
 acknowledgement state, then validates current-owner identity, exact `0600`/`0700`
 modes, regular file types, and descriptor-relative no-follow opens. Symlinked
 state, group-readable acknowledgement state, a hanging worker, and an output
-flood are pinned as negative controls; timeout/overflow kills and reaps the
-worker process group.
+flood are pinned as negative controls. Timeout/overflow signals the original
+worker process group and reaps the direct worker. This inactive same-account
+harness does not contain a descendant that deliberately creates a new session;
+the fixed synthetic worker does not spawn one.
 
 The harness does not inspect or change cron, read a credential, mint an
 envelope, call the production verifier, or enforce a distinct scheduler/wrapper
 OS account. It emits only bounded synthetic metadata and reports zero live
 activations. Separate production identities, protected runtime state, complete
-stack review, and one genuine verifier-passing scheduled event remain blocked.
+stack review, OS-enforced descendant containment, and one genuine
+verifier-passing scheduled event remain blocked.
 
 ```bash
 make eval-scheduled-wrapper-harness

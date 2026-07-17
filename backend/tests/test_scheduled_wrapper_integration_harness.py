@@ -171,4 +171,5 @@ def test_harness_cli_reports_machine_gate_without_live_activation():
         "production_verifier_called": False,
         "credential_materialized": False,
         "separate_os_identity_enforced": False,
+        "detached_descendant_containment": False,
     }
