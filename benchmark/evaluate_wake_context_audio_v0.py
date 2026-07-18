@@ -21,6 +21,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
+from math import isfinite
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -56,6 +57,7 @@ class WakeContextCase:
     safety_label: str
     provenance: dict[str, Any]
     confusion_pairs: list[str]
+    rubric: dict[str, float]
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> "WakeContextCase":
@@ -68,6 +70,7 @@ class WakeContextCase:
             "context",
             "expected",
             "safety_label",
+            "rubric",
             "confusion_pairs",
         }
         missing = required - set(row)
@@ -89,6 +92,17 @@ class WakeContextCase:
             raise ValueError(f"wake-context case {case_id} provenance must be an object")
         if not isinstance(row["confusion_pairs"], list) or not row["confusion_pairs"]:
             raise ValueError(f"wake-context case {case_id} needs confusion_pairs")
+        raw_rubric = row["rubric"]
+        if not isinstance(raw_rubric, dict) or not raw_rubric:
+            raise ValueError(f"wake-context case {case_id} rubric must be a non-empty object")
+        try:
+            rubric = {str(key): float(value) for key, value in raw_rubric.items()}
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"wake-context case {case_id} rubric weights must be numeric") from exc
+        if any(not isfinite(weight) or weight <= 0 or weight > 1 for weight in rubric.values()):
+            raise ValueError(f"wake-context case {case_id} rubric weights must be in (0, 1]")
+        if abs(sum(rubric.values()) - 1.0) > 0.001:
+            raise ValueError(f"wake-context case {case_id} rubric weights must sum to 1.0")
         return cls(
             case_id=case_id,
             source_type=str(row["source_type"]),
@@ -99,6 +113,7 @@ class WakeContextCase:
             safety_label=str(row["safety_label"]),
             provenance=row["provenance"],
             confusion_pairs=[str(item) for item in row["confusion_pairs"]],
+            rubric=rubric,
         )
 
 
@@ -181,6 +196,11 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
             if "first_choice_label" in expected
             else True
         ),
+        "choice_labels": (
+            [choice.get("label") for choice in choices] == expected["choice_labels"]
+            if "choice_labels" in expected
+            else True
+        ),
         "selected_kind": (
             selected_response is not None and selected_response.get("kind") == expected["selected_kind"]
             if "selected_kind" in expected
@@ -190,6 +210,13 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
             selected_response is not None
             and selected_response.get("resolved_query") == expected["resolved_query"]
             if "resolved_query" in expected
+            else True
+        ),
+        "informational_repair_family": (
+            selected_response is not None
+            and selected_response.get("informational_repair_family")
+            == expected["informational_repair_family"]
+            if "informational_repair_family" in expected
             else True
         ),
     }
@@ -213,6 +240,9 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
         "resolved_query": selected_response.get("resolved_query") if selected_response else None,
         "informational_repair": bool(
             selected_response and selected_response.get("informational_repair")
+        ),
+        "informational_repair_family": (
+            selected_response.get("informational_repair_family") if selected_response else None
         ),
         "checks": checks,
         "passed": passed,

@@ -304,6 +304,76 @@ def test_wake_confirmed_weather_nbest_disagreement_repairs_before_read_only_answ
     assert db.query(CapturedIntent).count() == 0
 
 
+def test_wake_confirmed_person_entity_nbest_disagreement_repairs_before_read_only_answer(db):
+    brain = _ProposingAnswerBrain()
+    session = _session(db, brain=brain, brain_context=BrainContext())
+    context = UtteranceContext(addressed_to_parker=True, source="wake_confirmed")
+
+    offered = session.handle(
+        "Please give me information on Martin Jackson.",
+        alternates=["Please give me information on Michael Jackson."],
+        context=context,
+    )
+
+    assert offered["kind"] == "choices"
+    assert [choice["label"] for choice in offered["choices"]] == [
+        "information about Martin Jackson",
+        "information about Michael Jackson",
+        "none of these",
+    ]
+    assert all(choice["action_type"] is None for choice in offered["choices"])
+    assert db.query(CapturedIntent).count() == 0
+
+    answered = session.handle("2")
+
+    assert answered["kind"] == "answer"
+    assert answered["speech"] == "I would answer the repaired query here."
+    assert answered["resolved_query"] == "Tell me about Michael Jackson."
+    assert answered["informational_repair"] is True
+    assert answered["informational_repair_family"] == "person_entity"
+    assert brain.utterances == ["Tell me about Michael Jackson."]
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_person_entity_informational_repair_respects_ambient_and_verbal_dismissal(db):
+    primary = "Please give me information on Martin Jackson."
+    alternate = "Please give me information on Michael Jackson."
+
+    session = _session(db)
+    ambient = session.handle(
+        primary,
+        alternates=[alternate],
+        context=UtteranceContext(addressed_to_parker=False, source="ambient_audio_window"),
+    )
+    offered = session.handle(
+        primary,
+        alternates=[alternate],
+        context=UtteranceContext(addressed_to_parker=True, source="wake_confirmed"),
+    )
+    dismissed = session.handle("never mind")
+
+    assert ambient["kind"] == "ambient_noop"
+    assert ambient["speech"] == ""
+    assert offered["kind"] == "choices"
+    assert dismissed["kind"] == "retry"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_person_entity_informational_repair_requires_same_surname(db):
+    session = _session(db)
+    context = UtteranceContext(addressed_to_parker=True, source="wake_confirmed")
+
+    response = session.handle(
+        "Please give me information on Martin Jackson.",
+        alternates=["Please give me information on Michael Jordan."],
+        context=context,
+    )
+
+    assert response["kind"] == "answer"
+    assert "choices" not in response
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_weather_informational_repair_respects_ambient_and_none_of_these(db):
     primary = "What kind of weather they have been orange? TX right now."
     alternate = "What kind of web are they having orange TX right now?"

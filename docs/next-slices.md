@@ -830,6 +830,25 @@ transcript/ASR hypotheses, context, choices, expected selected answer, safety
 label, and weighted rubric only. This is pipeline behavior, not live-weather,
 ASR-quality, licensing, patient, clinical, or population evidence.
 
+## Nightly Autodata person-name n-best repair + rubric contract — DONE (2026-07-18)
+
+Reused the existing public SLURP information-request row instead of adding another
+overlapping fixture. Tiny/base Whisper preserve the read-only request but disagree
+on `Martin Jackson` vs `Michael Jackson`. The prior path safely answered from the
+corrupted primary; the new bounded path offers both names plus `none of these`,
+then resolves the selected name through `_answer` with action proposals suppressed
+and zero capture/stage/execute. Ambient context still silent-no-ops, verbal
+`never mind` now reaches the actual none-of-these choice rather than accidentally
+selecting the first informational interpretation, and different-surname pairs do
+not trigger this narrow matcher.
+
+The runtime now uses an explicit `InformationalRepairCandidate` value type shared
+by separate weather/place and person-name extractors; it is not a generic entity
+resolver. The existing 14-case wake eval now completes two informational repairs
+and requires every fixture's non-empty weighted rubric to sum to 1.0. Raw audio,
+private family data, live fetches, credentials, external messages, purchases, and
+clinical claims remain outside the slice.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

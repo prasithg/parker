@@ -65,6 +65,23 @@ class UtteranceContext:
     note: str | None = None
 
 
+@dataclass(frozen=True)
+class InformationalRepairCandidate:
+    """One read-only interpretation of an n-best informational disagreement.
+
+    Keeping this distinct from action repair makes the authority boundary
+    explicit: selecting it resolves a query for ``_answer`` and never supplies
+    an action type, recipient, capture payload, or executable tool request.
+    """
+
+    label: str
+    resolved_query: str
+    repair_family: str
+
+    def tool_candidate(self) -> dict[str, Any]:
+        return {"label": self.label, "action_type": None}
+
+
 ANSWER_STUB_SPEECH = (
     "I'd look that up and summarize it for you. "
     "(Research answers are stubbed in the local text loop.)"
@@ -538,37 +555,31 @@ _WEATHER_PLACE_PATTERN = re.compile(
     r"(?P<state>tx)\b(?:\s+(?:right now|today|now))?",
     re.IGNORECASE,
 )
+_PERSON_INFORMATION_PATTERN = re.compile(
+    r"^\s*(?:please\s+)?give\s+me\s+(?:information|info)\s+on\s+"
+    r"(?P<entity>[a-z][a-z' -]{1,60}?)\s*[.?!]?\s*$",
+    re.IGNORECASE,
+)
 
 
-def _informational_repair_candidates(
-    utterance: str, alternates: list[str]
-) -> list[dict[str, Any]]:
-    """Build a bounded read-only repair for a weather/entity n-best split.
-
-    Public SLURP audio produced one just-right disagreement: tiny Whisper kept
-    ``weather`` but damaged the Orange, Texas slot, while base Whisper rendered
-    ``weather`` as ``web`` and preserved the place more clearly. Answering the
-    primary directly is safe but not useful. This seam is intentionally narrow:
-    it requires at least two hypotheses, weather present in only part of the
-    n-best set, and a bounded place + state shape. It never creates an action.
-    """
-
-    hypotheses = [utterance, *alternates]
-    if len(hypotheses) < 2:
-        return []
+def _informational_hypotheses_are_policy_safe(hypotheses: list[str]) -> bool:
     lowered = [hypothesis.lower() for hypothesis in hypotheses]
     if any(_looks_like_ticket_acquisition(hypothesis) for hypothesis in lowered):
-        return []
-    if any(
+        return False
+    return not any(
         phrase in hypothesis
         for hypothesis in lowered
         for group in _PROBE_BLOCKED_PHRASES
         for phrase in group
-    ):
-        return []
+    )
+
+
+def _weather_informational_candidates(
+    hypotheses: list[str],
+) -> list[InformationalRepairCandidate]:
     normalized = [
-        re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", hypothesis)).strip()
-        for hypothesis in lowered
+        re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", hypothesis.lower())).strip()
+        for hypothesis in hypotheses
     ]
     weather_flags = [bool(re.search(r"\bweather\b", hypothesis)) for hypothesis in normalized]
     if not any(weather_flags) or all(weather_flags):
@@ -584,19 +595,76 @@ def _informational_repair_candidates(
     state = _WEATHER_STATE_NAMES[place_match.group("state").lower()]
     entity = f"{place}, {state}"
     return [
-        {
-            "label": f"look up the current weather in {entity}",
-            "action_type": None,
-            "selection_kind": "informational_answer",
-            "answer_text": f"What is the current weather in {entity}?",
-        },
-        {
-            "label": f"answer a general question about {entity}",
-            "action_type": None,
-            "selection_kind": "informational_answer",
-            "answer_text": f"Tell me about {entity}.",
-        },
+        InformationalRepairCandidate(
+            label=f"look up the current weather in {entity}",
+            resolved_query=f"What is the current weather in {entity}?",
+            repair_family="weather_place",
+        ),
+        InformationalRepairCandidate(
+            label=f"answer a general question about {entity}",
+            resolved_query=f"Tell me about {entity}.",
+            repair_family="weather_place",
+        ),
     ]
+
+
+def _person_entity_informational_candidates(
+    hypotheses: list[str],
+) -> list[InformationalRepairCandidate]:
+    """Offer both person names when a bounded factoid n-best pair disagrees.
+
+    The reviewed SLURP row keeps the same read-only request frame while tiny and
+    base Whisper disagree on ``Martin Jackson`` vs ``Michael Jackson``. Require
+    exactly two two-part names with the same surname and the exact reviewed request
+    frame; do not guess which is right from spelling similarity. The user chooses,
+    or uses none-of-these.
+    """
+
+    entities: list[str] = []
+    for hypothesis in hypotheses:
+        match = _PERSON_INFORMATION_PATTERN.match(hypothesis)
+        if match is None:
+            continue
+        words = [word.capitalize() for word in match.group("entity").split()]
+        if len(words) != 2 or not all(
+            re.fullmatch(r"[A-Za-z][A-Za-z'-]*", word) for word in words
+        ):
+            continue
+        entity = " ".join(words)
+        if entity.lower() not in {prior.lower() for prior in entities}:
+            entities.append(entity)
+    if len(entities) != 2:
+        return []
+    left, right = (entity.split() for entity in entities)
+    if left[-1].lower() != right[-1].lower():
+        return []
+    return [
+        InformationalRepairCandidate(
+            label=f"information about {entity}",
+            resolved_query=f"Tell me about {entity}.",
+            repair_family="person_entity",
+        )
+        for entity in entities
+    ]
+
+
+def _informational_repair_candidates(
+    utterance: str, alternates: list[str]
+) -> list[InformationalRepairCandidate]:
+    """Build bounded read-only repair choices from reviewed n-best patterns.
+
+    Weather/place and person/factoid episodes share an explicit candidate type
+    and selection path, but keep separate narrow extractors. This is not generic
+    entity resolution: it requires at least two hypotheses, a reviewed query
+    frame, a bounded entity shape, and no sensitive/action-policy markers.
+    """
+
+    hypotheses = [utterance, *alternates]
+    if len(hypotheses) < 2 or not _informational_hypotheses_are_policy_safe(hypotheses):
+        return []
+    return _weather_informational_candidates(hypotheses) or _person_entity_informational_candidates(
+        hypotheses
+    )
 
 
 def _repetitive_asr_hallucination_response(utterance: str) -> dict[str, Any] | None:
@@ -1785,7 +1853,7 @@ class TextSession:
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
 
     def _offer_informational_choices(
-        self, utterance: str, candidates: list[dict[str, Any]]
+        self, utterance: str, candidates: list[InformationalRepairCandidate]
     ) -> dict[str, Any]:
         """Offer read-only query repairs without entering the action pipeline."""
 
@@ -1794,20 +1862,18 @@ class TextSession:
             self.call_log_id,
             "offer_repair_choices",
             {
-                "candidates": [
-                    {"label": candidate["label"], "action_type": None}
-                    for candidate in candidates
-                ],
+                "candidates": [candidate.tool_candidate() for candidate in candidates],
                 "question": "I heard two possible information requests. Did you mean:",
             },
         )
-        enriched_by_label = {candidate["label"]: candidate for candidate in candidates}
+        enriched_by_label = {candidate.label: candidate for candidate in candidates}
         for choice in result.get("choices", []):
             extra = enriched_by_label.get(choice["label"])
             if extra is not None:
                 choice.update(
-                    selection_kind=extra["selection_kind"],
-                    answer_text=extra["answer_text"],
+                    selection_kind="informational_answer",
+                    answer_text=extra.resolved_query,
+                    repair_family=extra.repair_family,
                 )
         self._pending_choices = result["choices"]
         self._pending_utterance = utterance
@@ -1955,7 +2021,15 @@ class TextSession:
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
         if normalized in DISMISS_CHOICE_PHRASES or _control_negation_response(utterance) is not None:
-            none_choice = next((c for c in choices if c.get("action_type") is None), None)
+            none_choice = next(
+                (
+                    choice
+                    for choice in choices
+                    if choice.get("action_type") is None
+                    and choice.get("selection_kind") != "informational_answer"
+                ),
+                None,
+            )
             if none_choice is not None:
                 return self._select_choice(none_choice, choices)
             self._dismiss_pending_choices()
@@ -1995,6 +2069,7 @@ class TextSession:
             response.update(
                 resolved_query=resolved_query,
                 informational_repair=True,
+                informational_repair_family=choice.get("repair_family"),
             )
             return response
         if choice["action_type"] is None:
