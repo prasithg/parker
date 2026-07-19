@@ -34,6 +34,7 @@ def test_wake_context_cases_pass_and_cover_context_lanes() -> None:
     assert metrics["wake_answer_cases"] == 3
     assert metrics["wake_repair_choice_cases"] == 3
     assert metrics["wake_informational_repair_answer_cases"] == 2
+    assert metrics["wake_research_handoff_created_cases"] == 1
     assert metrics["wake_context_required_cases"] == 1
     assert metrics["wake_refusal_cases"] == 2
     assert metrics["wake_local_capture_cases"] == 1
@@ -72,6 +73,13 @@ def test_wake_context_wake_rows_split_answers_from_confirmation_gated_actions() 
     assert person["selected_kind"] == "answer"
     assert person["resolved_query"] == "Tell me about Michael Jackson."
     assert person["informational_repair_family"] == "person_entity"
+    assert person["research_handoff_offered"] is True
+    assert person["research_handoff_created"] is True
+    assert person["research_handoff_query"] == "Tell me about Michael Jackson."
+    assert person["research_handoff_status"] == "ready"
+    assert person["research_handoff_provenance_status"] == (
+        "user_confirmed_interpretation_no_external_source_fetched"
+    )
     assert person["captured_intents"] == 0
     media = by_id["wake-006-slurp-wake-media-still-repairs"]
     assert media["observed_kind"] == "choices"
@@ -89,6 +97,8 @@ def test_wake_context_wake_rows_split_answers_from_confirmation_gated_actions() 
     assert weather["first_choice_label"] == "look up the current weather in Orange, Texas"
     assert weather["selected_kind"] == "answer"
     assert weather["resolved_query"] == "What is the current weather in Orange, Texas?"
+    assert weather["research_handoff_offered"] is True
+    assert weather["research_handoff_created"] is False
     assert weather["captured_intents"] == 0
 
 

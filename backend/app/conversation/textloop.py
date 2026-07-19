@@ -1880,6 +1880,43 @@ class TextSession:
         self._pending_alternates = list(self._current_alternates)
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
 
+    def _offer_research_handoff_choices(
+        self,
+        *,
+        resolved_query: str,
+        selected_interpretation: str,
+        repair_family: str,
+    ) -> list[dict[str, Any]]:
+        """Ask before making a repaired query visible to family review.
+
+        This is deliberately not an action-tool proposal. Both options are
+        local conversation state; only the explicit first selection creates a
+        local card, and neither option can fetch, send, purchase, submit, or
+        change an account.
+        """
+
+        choices = [
+            {
+                "position": 1,
+                "label": "leave a local research card for family",
+                "action_type": None,
+                "selection_kind": "research_handoff_create",
+                "resolved_query": resolved_query,
+                "selected_interpretation": selected_interpretation,
+                "repair_family": repair_family,
+            },
+            {
+                "position": 2,
+                "label": "do not create a card",
+                "action_type": None,
+                "selection_kind": "research_handoff_skip",
+            },
+        ]
+        self._pending_choices = choices
+        self._pending_utterance = resolved_query
+        self._pending_alternates = []
+        return choices
+
     def _answer(
         self, utterance: str, *, allow_action_proposals: bool = True
     ) -> dict[str, Any]:
@@ -2020,16 +2057,41 @@ class TextSession:
             return counting
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
+        handoff_create = next(
+            (choice for choice in choices if choice.get("selection_kind") == "research_handoff_create"),
+            None,
+        )
+        if handoff_create is not None:
+            confirmation = _confirmation_reply_kind(normalized)
+            if confirmation == "yes":
+                return self._select_choice(handoff_create, choices)
+            if confirmation == "no":
+                handoff_skip = next(
+                    choice
+                    for choice in choices
+                    if choice.get("selection_kind") == "research_handoff_skip"
+                )
+                return self._select_choice(handoff_skip, choices)
         if normalized in DISMISS_CHOICE_PHRASES or _control_negation_response(utterance) is not None:
             none_choice = next(
                 (
                     choice
                     for choice in choices
-                    if choice.get("action_type") is None
-                    and choice.get("selection_kind") != "informational_answer"
+                    if choice.get("selection_kind") in {"none_of_these", "research_handoff_skip"}
                 ),
                 None,
             )
+            if none_choice is None:
+                none_choice = next(
+                    (
+                        choice
+                        for choice in choices
+                        if choice.get("action_type") is None
+                        and choice.get("selection_kind")
+                        not in {"informational_answer", "research_handoff_create"}
+                    ),
+                    None,
+                )
             if none_choice is not None:
                 return self._select_choice(none_choice, choices)
             self._dismiss_pending_choices()
@@ -2053,6 +2115,29 @@ class TextSession:
         source = self._pending_utterance or choice["label"]
         alternates = self._pending_alternates
         self._dismiss_pending_choices()
+        if choice.get("selection_kind") == "research_handoff_create":
+            from app.parker.research_handoff import create_local_research_handoff
+
+            card = create_local_research_handoff(
+                self.db,
+                call_log_id=self.call_log_id,
+                query=str(choice["resolved_query"]),
+                selected_interpretation=str(choice["selected_interpretation"]),
+                repair_family=str(choice["repair_family"]),
+            )
+            return {
+                "kind": "research_handoff_created",
+                "speech": (
+                    "I left a local read-only research card for family. "
+                    "It did not fetch, send, buy, submit, or change anything."
+                ),
+                "research_handoff_id": card.id,
+            }
+        if choice.get("selection_kind") == "research_handoff_skip":
+            return {
+                "kind": "research_handoff_skipped",
+                "speech": "Okay, I won't create a research card.",
+            }
         if choice.get("selection_kind") == "informational_answer":
             resolved_query = str(choice["answer_text"])
             record_repair_event(
@@ -2066,10 +2151,22 @@ class TextSession:
                 selected_action_type=None,
             )
             response = self._answer(resolved_query, allow_action_proposals=False)
+            handoff_choices = self._offer_research_handoff_choices(
+                resolved_query=resolved_query,
+                selected_interpretation=str(choice["label"]),
+                repair_family=str(choice.get("repair_family") or ""),
+            )
             response.update(
                 resolved_query=resolved_query,
                 informational_repair=True,
                 informational_repair_family=choice.get("repair_family"),
+                research_handoff_offered=True,
+                research_handoff_choices=handoff_choices,
+                speech=(
+                    f"{response.get('speech', '')} Should I leave this as a local research card "
+                    "for family? Say yes or 1 to leave a local research card for family; "
+                    "say no or 2 to not create a card."
+                ).strip(),
             )
             return response
         if choice["action_type"] is None:

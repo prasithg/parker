@@ -296,7 +296,12 @@ def test_wake_confirmed_weather_nbest_disagreement_repairs_before_read_only_answ
     answered = session.handle("1")
 
     assert answered["kind"] == "answer"
-    assert answered["speech"] == "I would answer the repaired query here."
+    assert answered["speech"].startswith("I would answer the repaired query here.")
+    assert answered["research_handoff_offered"] is True
+    assert [choice["label"] for choice in answered["research_handoff_choices"]] == [
+        "leave a local research card for family",
+        "do not create a card",
+    ]
     assert "choices" not in answered
     assert answered["resolved_query"] == "What is the current weather in Orange, Texas?"
     assert answered["informational_repair"] is True
@@ -327,7 +332,12 @@ def test_wake_confirmed_person_entity_nbest_disagreement_repairs_before_read_onl
     answered = session.handle("2")
 
     assert answered["kind"] == "answer"
-    assert answered["speech"] == "I would answer the repaired query here."
+    assert answered["speech"].startswith("I would answer the repaired query here.")
+    assert answered["research_handoff_offered"] is True
+    assert [choice["label"] for choice in answered["research_handoff_choices"]] == [
+        "leave a local research card for family",
+        "do not create a card",
+    ]
     assert answered["resolved_query"] == "Tell me about Michael Jackson."
     assert answered["informational_repair"] is True
     assert answered["informational_repair_family"] == "person_entity"

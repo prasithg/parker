@@ -40,6 +40,12 @@ from app.parker.pipeline import (
     resolve_captured_intents,
     stage_resolved_actions,
 )
+from app.parker.research_handoff import (
+    cancel_local_research_handoff,
+    complete_local_research_handoff,
+    list_recent_local_research_handoffs,
+    serialize_local_research_handoff,
+)
 from app.parker.digest import render_digest_page
 from app.parker.review_ui import REVIEW_PAGE_HTML
 from app.parker.screen import get_screen_state, serialize_screen_state
@@ -85,6 +91,16 @@ class CompleteEveningRequest(BaseModel):
 
 class CancelEveningRequest(BaseModel):
     caregiver_note: str | None = None
+    now: datetime | None = None
+
+
+class CompleteResearchHandoffRequest(BaseModel):
+    completed_by: str = "caregiver"
+    now: datetime | None = None
+
+
+class CancelResearchHandoffRequest(BaseModel):
+    cancelled_by: str = "caregiver"
     now: datetime | None = None
 
 
@@ -236,11 +252,61 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
             _serialize_evening_session(session)
             for session in list_recent_local_evening_sessions(db, limit=RECENT_HISTORY_LIMIT)
         ],
+        "research_handoffs": [
+            serialize_local_research_handoff(handoff)
+            for handoff in list_recent_local_research_handoffs(db, limit=RECENT_HISTORY_LIMIT)
+        ],
         "recent_history": [_serialize_action(action) for action in history],
         "recent_failed": [_serialize_action(action) for action in failed_actions],
         "recent_cancelled": [_serialize_action(action) for action in cancelled_actions],
         "outbox_cancelled": [_serialize_outbox_message(message) for message in cancelled_messages],
     }
+
+
+@router.post(
+    "/research-handoffs/{handoff_id}/complete",
+    dependencies=[Depends(require_dashboard_auth)],
+)
+def complete_research_handoff(
+    handoff_id: int,
+    payload: CompleteResearchHandoffRequest | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Caregiver completes one local read-only research card."""
+
+    payload = payload or CompleteResearchHandoffRequest()
+    handoff = complete_local_research_handoff(
+        db,
+        handoff_id,
+        completed_by=payload.completed_by,
+        now=payload.now,
+    )
+    if handoff is None:
+        raise HTTPException(status_code=404, detail=f"Research handoff not found: {handoff_id}")
+    return serialize_local_research_handoff(handoff)
+
+
+@router.post(
+    "/research-handoffs/{handoff_id}/cancel",
+    dependencies=[Depends(require_dashboard_auth)],
+)
+def cancel_research_handoff(
+    handoff_id: int,
+    payload: CancelResearchHandoffRequest | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Caregiver cancels one local research card without external action."""
+
+    payload = payload or CancelResearchHandoffRequest()
+    handoff = cancel_local_research_handoff(
+        db,
+        handoff_id,
+        cancelled_by=payload.cancelled_by,
+        now=payload.now,
+    )
+    if handoff is None:
+        raise HTTPException(status_code=404, detail=f"Research handoff not found: {handoff_id}")
+    return serialize_local_research_handoff(handoff)
 
 
 @router.post("/evening/{session_id}/complete", dependencies=[Depends(require_dashboard_auth)])

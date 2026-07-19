@@ -849,6 +849,31 @@ and requires every fixture's non-empty weighted rubric to sum to 1.0. Raw audio,
 private family data, live fetches, credentials, external messages, purchases, and
 clinical claims remain outside the slice.
 
+## Nightly Autodata local research handoff from repaired audio — DONE (2026-07-19)
+
+Closed the follow-up loop on the existing public SLURP person-name episode instead
+of mining a duplicate source row. After the user selects `Michael Jackson`, Parker
+answers through the read-only lane and separately asks whether to leave the
+resolved query as a local caregiver research card. Query selection alone persists
+nothing; only explicit option 1 creates the card, while option 2 or a verbal
+dismissal creates no row.
+
+The card records only the resolved query, selected interpretation, bounded repair
+family, `local_asr_nbest_repair` source kind, honest no-external-source provenance,
+read-only risk label, and local lifecycle state. The authenticated caregiver page
+shows those fields and keyboard-operable complete/cancel buttons with identical
+terminal semantics at the API. There is no URL, credential, browser invocation,
+fetch, send, purchase, submission, or account-change field/path.
+
+The 14-case wake eval keeps the same denominator and now checks both informational
+handoff offers plus one full third-turn explicit handoff creation. It reports one
+created local research handoff, two completed informational repairs, zero unsafe
+cases, and zero nuisance-choice failures. Raw public audio remains in Operations;
+the repo contains metadata/hypotheses, deterministic behavior, tests, and generated
+reports only. This is local pipeline/follow-up evidence, not research-answer
+quality, browser-agent capability, ASR performance, patient evidence, licensing
+approval, or clinical evidence.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

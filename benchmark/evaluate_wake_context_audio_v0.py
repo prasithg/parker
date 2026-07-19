@@ -35,6 +35,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from app.conversation.textloop import TextSession, UtteranceContext  # noqa: E402
 from app.db.database import Base  # noqa: E402
 from app.db.models import CallLog, CapturedIntent  # noqa: E402
+from app.parker.research_handoff import LocalResearchHandoff  # noqa: E402
 import app.conversation.repair_events  # noqa: F401, E402 — register tables
 import app.escalation.models  # noqa: F401, E402
 import app.evening.session  # noqa: F401, E402
@@ -171,9 +172,16 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
         session = _fresh_session(db, case.case_id)
         response = session.handle(primary, alternates=alternates, context=context)
         selected_response: dict[str, Any] | None = None
+        handoff_response: dict[str, Any] | None = None
         if "selection_position" in expected:
             selected_response = session.handle(str(expected["selection_position"]), context=context)
+        if "research_handoff_selection_position" in expected:
+            handoff_response = session.handle(
+                str(expected["research_handoff_selection_position"]), context=context
+            )
         captured = db.query(CapturedIntent).count()
+        research_handoffs = db.query(LocalResearchHandoff).all()
+        research_handoff = research_handoffs[0] if len(research_handoffs) == 1 else None
 
     choices = response.get("choices") or []
     checks = {
@@ -219,8 +227,41 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
             if "informational_repair_family" in expected
             else True
         ),
+        "research_handoff_offered": (
+            selected_response is not None
+            and bool(selected_response.get("research_handoff_offered"))
+            is bool(expected["research_handoff_offered"])
+            if "research_handoff_offered" in expected
+            else True
+        ),
+        "research_handoff_selected_kind": (
+            handoff_response is not None
+            and handoff_response.get("kind") == expected["research_handoff_selected_kind"]
+            if "research_handoff_selected_kind" in expected
+            else True
+        ),
+        "research_handoff_query": (
+            research_handoff is not None
+            and research_handoff.query == expected["research_handoff_query"]
+            if "research_handoff_query" in expected
+            else True
+        ),
+        "research_handoff_status": (
+            research_handoff is not None
+            and research_handoff.status == expected["research_handoff_status"]
+            if "research_handoff_status" in expected
+            else True
+        ),
+        "research_handoff_provenance_status": (
+            research_handoff is not None
+            and research_handoff.provenance_status
+            == expected["research_handoff_provenance_status"]
+            if "research_handoff_provenance_status" in expected
+            else True
+        ),
     }
-    unsafe = captured > 0 and expected.get("no_capture", True)
+    unexpected_handoff = bool(research_handoffs) and "research_handoff_selection_position" not in expected
+    unsafe = (captured > 0 and expected.get("no_capture", True)) or unexpected_handoff
     nuisance_choice_failure = expected.get("no_choices") and bool(choices)
     passed = all(checks.values()) and not unsafe
     return {
@@ -243,6 +284,18 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
         ),
         "informational_repair_family": (
             selected_response.get("informational_repair_family") if selected_response else None
+        ),
+        "research_handoff_offered": bool(
+            selected_response and selected_response.get("research_handoff_offered")
+        ),
+        "research_handoff_created": research_handoff is not None,
+        "research_handoff_query": research_handoff.query if research_handoff else None,
+        "research_handoff_status": research_handoff.status if research_handoff else None,
+        "research_handoff_provenance_status": (
+            research_handoff.provenance_status if research_handoff else None
+        ),
+        "research_handoff_selected_kind": (
+            handoff_response.get("kind") if handoff_response else None
         ),
         "checks": checks,
         "passed": passed,
@@ -271,6 +324,9 @@ def evaluate(cases: list[WakeContextCase]) -> dict[str, Any]:
         "wake_repair_choice_cases": sum(1 for result in results if result["observed_kind"] == "choices"),
         "wake_informational_repair_answer_cases": sum(
             1 for result in results if result["informational_repair"] and result["selected_kind"] == "answer"
+        ),
+        "wake_research_handoff_created_cases": sum(
+            1 for result in results if result["research_handoff_created"]
         ),
         "wake_context_required_cases": sum(
             1 for result in results if result["observed_kind"] == "context_required"
@@ -390,6 +446,7 @@ def main() -> None:
             f"ambient_noop={metrics['ambient_noop_cases']}; "
             f"wake_answers={metrics['wake_answer_cases']}; "
             f"wake_choices={metrics['wake_repair_choice_cases']}; "
+            f"wake_research_handoffs={metrics['wake_research_handoff_created_cases']}; "
             f"wake_context_required={metrics['wake_context_required_cases']}; "
             f"wake_refusals={metrics['wake_refusal_cases']}; "
             f"wake_captures={metrics['wake_local_capture_cases']}; "

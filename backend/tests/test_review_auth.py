@@ -26,6 +26,8 @@ PROTECTED = [
     ("POST", "/parker/actions/999/cancel"),
     ("POST", "/parker/outbox/999/approve"),
     ("POST", "/parker/outbox/999/cancel"),
+    ("POST", "/parker/research-handoffs/999/complete"),
+    ("POST", "/parker/research-handoffs/999/cancel"),
 ]
 
 
