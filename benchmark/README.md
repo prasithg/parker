@@ -115,7 +115,7 @@ python3 benchmark/evaluate_claim_metric_map_v0.py --write-report
 make eval-claim-metric-map
 ```
 
-The evaluator currently checks four release-critical claims: real-audio repair recovery (58.3% → 76.3% with repair, 82.0% with n-best, on the 333-clip manifest with reality-grounded degradations, 0 unsafe), brain-lane keyless red-team safety (10/10 routed, 0 unsafe), the audio-autodata fixture pipeline (36/36 accepted, 0 unsafe), and caregiver state legibility (6/6 vs 0/6). A claim only passes if its referenced synthetic/local reports exist, every required metric assertion passes, and the claim remains caveated as synthetic/local evidence with no private data.
+The evaluator currently checks four release-critical claims: real-audio repair recovery (58.3% → 76.3% with repair, 82.0% with n-best, on the 333-clip manifest with reality-grounded degradations, 0 unsafe), brain-lane keyless red-team safety (10/10 routed, 0 unsafe), the audio-autodata fixture pipeline (36/36 accepted, 0 unsafe), and caregiver state legibility (9/9 vs 0/9, including three local research-card lifecycle tasks grounded in sanitized metadata from one reviewed public-audio repair episode). A claim only passes if its referenced reports exist, every required metric assertion passes, and the claim remains caveated with no raw audio or private data.
 
 ## Run construct-validity matrix evaluator
 
@@ -131,7 +131,7 @@ The evaluator currently reports 6 constructs: 4 citable with caveats, 2 explicit
 
 ## Run caregiver-state legibility proxy
 
-`data/caregiver_state_legibility_v0.json` defines six synthetic review-state tasks for pending actions, queued local outbox, approved-local outbox, cancelled audit rows, review-only non-response candidates, and the visible demo safety contract. The evaluator compares Parker's structured review UI/state-card observation against a raw chat-only baseline.
+`data/caregiver_state_legibility_v0.json` defines nine review-state tasks for pending actions, queued local outbox, approved-local outbox, cancelled audit rows, review-only non-response candidates, the visible demo safety contract, and ready/completed/cancelled local research cards. The three research-card tasks use synthetic lifecycle observations while retaining the full sanitized source transcript, same-clip ASR disagreement, scenario/intent, weak-vs-strong path, repair choices including none-of-these, expected confirmation/local transition, safety label, and weighted rubric from the reviewed public SLURP person-name episode. The evaluator compares Parker's structured review UI/state-card observation against a raw chat-only baseline.
 
 ```bash
 python3 benchmark/evaluate_caregiver_state_legibility_v0.py --json
@@ -139,7 +139,7 @@ python3 benchmark/evaluate_caregiver_state_legibility_v0.py --write-report
 make eval-caregiver-state-legibility
 ```
 
-This is a construct-validity bump for Parker's caregiver/operator legibility claim: current synthetic proxy result is Parker review UI 6/6 tasks vs raw chat-only 0/6, with 0 unsafe misses. It is **not** a caregiver usability study, human-graded evidence, or real family data.
+This is a construct-validity bump for Parker's caregiver/operator legibility claim: current proxy result is Parker review UI 9/9 tasks vs raw chat-only 0/9, with 0 unsafe misses and three audio-grounded lifecycle tasks. It is **not** a caregiver usability study, human-graded evidence, ASR-performance proof, or real family data; no raw audio is committed.
 
 ## Run release-readiness rollup
 

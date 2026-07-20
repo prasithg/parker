@@ -874,6 +874,25 @@ reports only. This is local pipeline/follow-up evidence, not research-answer
 quality, browser-agent capability, ASR performance, patient evidence, licensing
 approval, or clinical evidence.
 
+## Nightly Autodata research-card caregiver legibility — DONE (2026-07-20)
+
+Extended the existing caregiver-state proxy from 6 to 9 tasks without adding a
+new runtime action or duplicating another source episode. Three new tasks cover
+the `ready`, `completed`, and `cancelled` states of the local research card seeded
+by the reviewed public SLURP Michael-Jackson repair. Each task retains sanitized
+source provenance, source transcript, same-clip tiny/base hypotheses, scenario and
+intent, weak-vs-strong path, both person choices plus `none of these`, expected
+confirmation/local transition, safety label, and a weighted rubric summing to 1.0.
+
+The stronger review-state oracle requires a ready card to show explicit user
+confirmation, no-external-source provenance, risk, and complete/cancel controls;
+completed/cancelled cards are terminal, show actor/time, and expose no controls.
+The raw-chat baseline cannot identify persisted lifecycle state. The gate is now
+9/9 Parker vs 0/9 raw chat, three audio-grounded lifecycle tasks, and 0 unsafe
+misses. This is metadata-grounded local-state evidence only: no raw audio, live
+fetch, browser action, send, purchase, submission, account change, private family
+data, ASR-performance claim, caregiver usability claim, or clinical claim.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

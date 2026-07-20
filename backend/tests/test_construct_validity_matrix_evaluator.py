@@ -68,7 +68,7 @@ def test_construct_validity_evaluator_verifies_current_reports_and_surfaces_gaps
         "research_gap_constructs": 2,
         "passing_citable_constructs": 4,
         "failing_citable_constructs": 0,
-        "assertions_checked": 14,
+        "assertions_checked": 15,
         "assertions_failed": 0,
     }
     assert payload["construct_validity_gate"]["passed"] is True

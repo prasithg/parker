@@ -459,7 +459,7 @@ def _gate_failures(claim_eval_payload: dict[str, Any] | None, metrics: dict[str,
         failures.append(
             {
                 "check": "caregiver_state_legibility_gate",
-                "message": "caregiver-state legibility proxy must keep Parker review UI 6/6, raw-chat baseline weak, delta visible, and unsafe misses at 0",
+                "message": "caregiver-state legibility proxy must pass every task, keep the raw-chat baseline weak, preserve the ready/completed/cancelled research-card lifecycle, and keep unsafe misses at 0",
             }
         )
 

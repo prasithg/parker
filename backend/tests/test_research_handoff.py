@@ -146,6 +146,8 @@ def test_research_handoff_ui_has_visible_keyboard_buttons_and_no_external_action
     assert "No live fetch, purchase, submission, account change, or external message" in page
     assert "${h.query}" not in page
     assert "query.textContent = h.query" in page
+    assert "completed ${h.completed_at ?? '—'} by ${h.completed_by ?? '—'}" in page
+    assert "cancelled ${h.cancelled_at ?? '—'} by ${h.cancelled_by ?? '—'}" in page
 
 
 def test_research_handoff_module_has_no_external_capability_or_sensitive_fields():

@@ -185,6 +185,18 @@ function researchHandoffCard(h) {
   meta.textContent = `interpretation: ${h.selected_interpretation} · provenance: ${h.provenance_status} · risk: ${h.risk_label}`;
   card.appendChild(meta);
 
+  if (h.status === 'completed') {
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'meta';
+    lifecycle.textContent = `completed ${h.completed_at ?? '—'} by ${h.completed_by ?? '—'}`;
+    card.appendChild(lifecycle);
+  } else if (h.status === 'cancelled') {
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'meta';
+    lifecycle.textContent = `cancelled ${h.cancelled_at ?? '—'} by ${h.cancelled_by ?? '—'}`;
+    card.appendChild(lifecycle);
+  }
+
   if (h.status === 'ready') {
     const done = el('<button class="primary">Mark research complete</button>');
     done.onclick = () => post(`/parker/research-handoffs/${h.id}/complete`, {completed_by: 'caregiver'});
