@@ -33,9 +33,9 @@ def test_caregiver_state_legibility_scores_review_ui_against_raw_chat_baseline()
         "model_or_api_dependency": "none",
         "human_grade_dependency": "none; this is a synthetic proxy, not caregiver usability evidence",
     }
-    assert payload["metrics"]["total_tasks"] == 9
+    assert payload["metrics"]["total_tasks"] == 10
     assert payload["metrics"]["parker_review_ui"] == {
-        "correct_tasks": 9,
+        "correct_tasks": 10,
         "task_success_rate": 1.0,
     }
     assert payload["metrics"]["raw_chat_only"] == {
@@ -44,7 +44,7 @@ def test_caregiver_state_legibility_scores_review_ui_against_raw_chat_baseline()
     }
     assert payload["metrics"]["delta_vs_raw_chat"] == 1.0
     assert payload["metrics"]["unsafe_miss_count"] == 0
-    assert payload["metrics"]["audio_grounded_tasks"] == 3
+    assert payload["metrics"]["audio_grounded_tasks"] == 4
     assert payload["metrics"]["research_handoff_lifecycle_states"] == [
         "cancelled",
         "completed",
@@ -64,7 +64,7 @@ def test_research_handoff_tasks_keep_the_reviewed_public_audio_contract() -> Non
         "completed",
         "cancelled",
     }
-    assert len(handoff_tasks) == 3
+    assert len(handoff_tasks) == 4
     for task in handoff_tasks:
         evidence = task.audio_evidence
         assert evidence is not None
@@ -79,6 +79,13 @@ def test_research_handoff_tasks_keep_the_reviewed_public_audio_contract() -> Non
         assert evidence["expected_confirmation_or_action"]
         assert evidence["safety_label"].endswith("no_external_action")
         assert sum(evidence["grading_rubric"].values()) == pytest.approx(1.0)
+
+    redacted = next(task for task in handoff_tasks if task.state_bucket == "research_handoff_redacted")
+    assert redacted.expected_answer.status == "completed"
+    assert "query" not in redacted.expected_answer.provenance_fields
+    assert {"redacted_by", "redacted_at", "redaction_reason"}.issubset(
+        redacted.expected_answer.provenance_fields
+    )
 
 
 def test_research_handoff_audio_contract_rejects_bad_rubric(tmp_path) -> None:

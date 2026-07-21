@@ -1,10 +1,11 @@
 """Auth seam for the caregiver decision surface.
 
-What these pin down: auth is OFF by default (empty password — localhost
+What these pin down: ordinary review auth is OFF by default (empty password — localhost
 demos stay zero-config); once a password is set, the review feed/page,
 outbox, and action mutations all require correct HTTP Basic credentials
 (401 + WWW-Authenticate challenge otherwise); and the assistant-loop
-surface (/tick, /resurface) deliberately stays open either way.
+surface (/tick, /resurface) deliberately stays open either way. Irreversible
+research-query redaction fails closed until dashboard auth is configured.
 """
 
 import pytest
@@ -28,6 +29,7 @@ PROTECTED = [
     ("POST", "/parker/outbox/999/cancel"),
     ("POST", "/parker/research-handoffs/999/complete"),
     ("POST", "/parker/research-handoffs/999/cancel"),
+    ("POST", "/parker/research-handoffs/999/redact"),
 ]
 
 
@@ -48,6 +50,12 @@ def test_auth_disabled_by_default_everything_open():
     assert client.get("/parker/review").status_code == 200
     assert client.get("/parker/review/ui").status_code == 200
     assert client.get("/parker/outbox").status_code == 200
+    assert (
+        client.post(
+            "/parker/research-handoffs/999/redact", json={"confirmed": True}
+        ).status_code
+        == 503
+    )
 
 
 @pytest.mark.parametrize("method,path", PROTECTED)
@@ -74,6 +82,14 @@ def test_correct_credentials_accepted(password_set):
     # and resource layer stay distinguishable.
     assert client.post("/parker/actions/999/confirm", json={}, auth=CREDS).status_code == 404
     assert client.post("/parker/outbox/999/approve", json={}, auth=CREDS).status_code == 404
+    assert (
+        client.post(
+            "/parker/research-handoffs/999/redact",
+            json={"confirmed": True},
+            auth=CREDS,
+        ).status_code
+        == 404
+    )
 
 
 def test_assistant_loop_surface_stays_open(password_set):

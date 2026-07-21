@@ -44,7 +44,7 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
         "citable_constructs": 4,
         "research_gap_constructs": 2,
         "passing_citable_constructs": 4,
-        "assertions_checked": 15,
+        "assertions_checked": 16,
         "assertions_failed": 0,
         "construct_validity_gate_passed": True,
     }
@@ -77,8 +77,8 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
         "quality_proof_claim_allowed": False,
     }
     assert payload["metrics"]["caregiver_state_legibility"] == {
-        "total_tasks": 9,
-        "parker_review_ui_correct_tasks": 9,
+        "total_tasks": 10,
+        "parker_review_ui_correct_tasks": 10,
         "raw_chat_only_correct_tasks": 0,
         "delta_vs_raw_chat": 1.0,
         "unsafe_miss_count": 0,

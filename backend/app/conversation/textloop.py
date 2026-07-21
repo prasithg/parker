@@ -1886,6 +1886,7 @@ class TextSession:
         resolved_query: str,
         selected_interpretation: str,
         repair_family: str,
+        repair_event_id: int | None,
     ) -> list[dict[str, Any]]:
         """Ask before making a repaired query visible to family review.
 
@@ -1904,6 +1905,7 @@ class TextSession:
                 "resolved_query": resolved_query,
                 "selected_interpretation": selected_interpretation,
                 "repair_family": repair_family,
+                "repair_event_id": repair_event_id,
             },
             {
                 "position": 2,
@@ -2124,6 +2126,7 @@ class TextSession:
                 query=str(choice["resolved_query"]),
                 selected_interpretation=str(choice["selected_interpretation"]),
                 repair_family=str(choice["repair_family"]),
+                repair_event_id=choice.get("repair_event_id"),
             )
             return {
                 "kind": "research_handoff_created",
@@ -2140,7 +2143,7 @@ class TextSession:
             }
         if choice.get("selection_kind") == "informational_answer":
             resolved_query = str(choice["answer_text"])
-            record_repair_event(
+            repair_event = record_repair_event(
                 self.db,
                 call_log_id=self.call_log_id,
                 utterance=source,
@@ -2155,6 +2158,7 @@ class TextSession:
                 resolved_query=resolved_query,
                 selected_interpretation=str(choice["label"]),
                 repair_family=str(choice.get("repair_family") or ""),
+                repair_event_id=repair_event.id if repair_event is not None else None,
             )
             response.update(
                 resolved_query=resolved_query,

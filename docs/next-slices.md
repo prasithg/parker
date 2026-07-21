@@ -893,6 +893,44 @@ misses. This is metadata-grounded local-state evidence only: no raw audio, live
 fetch, browser action, send, purchase, submission, account change, private family
 data, ASR-performance claim, caregiver usability claim, or clinical claim.
 
+## Nightly Autodata research-query retention/redaction — DONE (2026-07-21)
+
+Closed the privacy gap documented by the prior public-audio handoff run without
+adding research execution or external authority. Every new local research card
+now receives a 30-day `retention_expires_at`. The normal local `/parker/tick` and
+review-feed paths redact expired rows before reporting them; startup plus an
+hourly scheduler enforce the same policy while Parker runs. A keyboard-operable
+caregiver button and matching API can redact sooner, but this irreversible path
+fails closed until `DASHBOARD_PASSWORD` is configured and then requires valid
+Basic credentials plus explicit confirmation. Its actor and timestamp come from
+authenticated identity and the server clock, never request fields. Redaction
+clears the query, selected ASR interpretation, and any linked consented
+repair-event transcript/hypothesis/choice text; it is idempotent and preserves
+status, source/provenance/risk,
+completion/cancellation audit, and redaction actor/time/reason. A ready redacted
+card cannot be marked complete as though research happened; it may only be
+cancelled locally.
+
+The caregiver-state proxy adds one synthetic redacted-query contrast grounded in
+the same reviewed public SLURP `Martin Jackson` / `Michael Jackson` metadata
+episode. The full data contract remains present: source/provenance, source
+transcript, same-clip hypotheses, scenario/intent, weak current retention versus
+the stronger bounded-retention oracle, both person choices plus `none of these`,
+expected confirmation/redaction, safety label, and weighted rubric. The gate is
+now 10/10 Parker vs 0/10 raw chat, four audio-grounded lifecycle/privacy tasks,
+and 0 unsafe misses. This is one source episode with four state contrasts, not
+four clips or ASR examples.
+
+This slice changes the v0 table shape. Parker still has no general Alembic lane,
+so a narrowly scoped additive SQLite startup migration adds/backfills the five
+privacy/link columns, preserves all existing rows, links an exact same-call and
+same-selected-label consented repair event when present, and is idempotent.
+`make reset-db` is not required. No raw audio, source clip, URL-bearing
+unreviewed manifest, private family data, live
+fetch, browser action, message, purchase, submission, credential, account,
+medical, emergency, caregiver-usability, ASR-performance, or clinical claim was
+added.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

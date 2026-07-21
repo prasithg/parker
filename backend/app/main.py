@@ -15,6 +15,7 @@ from app.memory.router import router as memory_router
 from app.db.database import SessionLocal, create_tables
 from app.meds.verification_router import router as dose_verification_router
 from app.parker.router import router as parker_router
+from app.parker.research_handoff import run_research_handoff_retention
 from app.parker.setup_api import router as setup_router
 
 
@@ -22,6 +23,7 @@ from app.parker.setup_api import router as setup_router
 async def lifespan(app: FastAPI):
     """Startup: create DB tables, discover OpenClaw skills, start scheduler."""
     create_tables()
+    run_research_handoff_retention(SessionLocal)
     # Skill discovery (app/parker/hands.py): no gateway configured -> no-op;
     # gateway down -> logged, hands disabled, the server still boots.
     from app.parker.hands import configure_hands_from_settings
@@ -29,6 +31,16 @@ async def lifespan(app: FastAPI):
     configure_hands_from_settings()
     scheduler = BackgroundScheduler(timezone="America/New_York")
     setup_scheduler(scheduler, SessionLocal)
+    scheduler.add_job(
+        run_research_handoff_retention,
+        "interval",
+        hours=1,
+        kwargs={"db_session_factory": SessionLocal},
+        id="parker-research-handoff-retention",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
     try:

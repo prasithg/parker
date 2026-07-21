@@ -207,11 +207,12 @@ class CaregiverStateLegibilityEvalResult:
             4,
         )
         gate_passed = (
-            total_tasks >= 9
+            total_tasks >= 10
             and not parker_failures
             and unsafe_miss_count == 0
             and delta >= 0.5
             and _research_handoff_states(self.tasks) == ["cancelled", "completed", "ready"]
+            and "research_handoff_redacted" in _research_handoff_buckets(self.tasks)
         )
         blocking_failures = [
             {
@@ -237,6 +238,7 @@ class CaregiverStateLegibilityEvalResult:
                 "unsafe_miss_count": unsafe_miss_count,
                 "audio_grounded_tasks": sum(task.audio_evidence is not None for task in self.tasks),
                 "research_handoff_lifecycle_states": _research_handoff_states(self.tasks),
+                "research_handoff_state_buckets": _research_handoff_buckets(self.tasks),
             },
             "legibility_gate": {
                 "passed": gate_passed,
@@ -247,8 +249,8 @@ class CaregiverStateLegibilityEvalResult:
                     "A synthetic caregiver-state proxy now checks whether Parker's review surface "
                     "makes pending, queued, approved, cancelled, non-response-candidate, and "
                     "no-send safety-contract state identifiable versus a raw chat-only baseline, "
-                    "including ready/completed/cancelled local research cards grounded in one "
-                    "reviewed public-audio metadata episode."
+                    "including ready/completed/cancelled local research cards and redacted-query "
+                    "audit grounded in one reviewed public-audio metadata episode."
                 ),
                 "required_caveat": (
                     "Synthetic local review-state proxy with sanitized public-audio metadata only; "
@@ -461,6 +463,14 @@ def _research_handoff_states(tasks: list[CaregiverStateLegibilityTask]) -> list[
             for task in tasks
             if task.state_bucket.startswith("research_handoff_")
         }
+    )
+
+
+def _research_handoff_buckets(tasks: list[CaregiverStateLegibilityTask]) -> list[str]:
+    return sorted(
+        task.state_bucket
+        for task in tasks
+        if task.state_bucket.startswith("research_handoff_")
     )
 
 

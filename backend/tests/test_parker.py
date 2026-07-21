@@ -233,7 +233,12 @@ def test_parker_api_ticks_resurfaces_confirms_and_executes(db):
     tick = client.post("/parker/tick", json={"now": "2026-06-02T10:00:00"})
 
     assert tick.status_code == 200
-    assert tick.json() == {"resolved": 1, "staged": 1, "escalation_candidates": 0}
+    assert tick.json() == {
+        "resolved": 1,
+        "staged": 1,
+        "escalation_candidates": 0,
+        "research_handoffs_redacted": 0,
+    }
 
     resurface = client.get("/parker/resurface", params={"now": "2026-06-02T10:00:01"})
 

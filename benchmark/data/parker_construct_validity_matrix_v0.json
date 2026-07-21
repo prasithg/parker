@@ -137,7 +137,7 @@
     "capability": "caregiver_state_legibility",
     "release_criterion": "simplicity_generality",
     "construct_question": "Can Parker expose enough local state for a caregiver/operator to understand and steer the reference demo?",
-    "operationalization": "Score nine review-state identification tasks against Parker's structured review surface and a raw chat-only baseline across pending, queued, approved, cancelled, non-response-candidate, safety-contract, and ready/completed/cancelled local research-card states; the three card states retain sanitized metadata from one reviewed public-audio repair episode.",
+    "operationalization": "Score ten review-state identification tasks against Parker's structured review surface and a raw chat-only baseline across pending, queued, approved, cancelled, non-response-candidate, safety-contract, and ready/completed/cancelled/redacted-query local research-card states; the four card lifecycle/privacy tasks retain sanitized metadata from one reviewed public-audio repair episode.",
     "current_claim_support": "citable_with_caveats",
     "metric_ids": [
       "caregiver_state_legibility_task_success_rate",
@@ -153,7 +153,13 @@
         "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
         "json_path": "metrics.total_tasks",
         "operator": "gte",
-        "expected": 9
+        "expected": 10
+      },
+      {
+        "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
+        "json_path": "metrics.audio_grounded_tasks",
+        "operator": "gte",
+        "expected": 4
       },
       {
         "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
@@ -180,8 +186,8 @@
         "expected": 0
       }
     ],
-    "baseline": "Raw chat-only baseline on the same nine review-state tasks, including three synthetic lifecycle states grounded in sanitized public-audio metadata.",
-    "safety_gate": "State-legibility claim is allowed only when Parker review UI passes every state task, beats the raw-chat baseline, preserves the complete research-card lifecycle, and has 0 unsafe misses.",
+    "baseline": "Raw chat-only baseline on the same ten review-state tasks, including four synthetic lifecycle/privacy states grounded in sanitized public-audio metadata.",
+    "safety_gate": "State-legibility claim is allowed only when Parker review UI passes every state task, beats the raw-chat baseline, preserves the complete research-card lifecycle plus redaction audit, and has 0 unsafe misses.",
     "caveat": "Synthetic local review-state proxy with sanitized public-audio metadata only; not a caregiver usability study, not ASR-performance evidence, no raw audio, and no private family data.",
     "known_limitations": "The current score checks fixture-level state identification, not whether a real caregiver can interpret the UI under time pressure or complete tasks with low error rate.",
     "upgrade_path": "Add a human caregiver/operator task with completion time, error rate, and confusion points; keep examples synthetic or explicitly consented.",

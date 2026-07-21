@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.db.models import OutboxMessage, StagedAction
+from app.config import settings
 from app.evening.session import (
     LocalEveningSession,
     cancel_local_evening_session,
@@ -25,7 +26,7 @@ from app.exercises.session import (
     complete_local_exercise_session,
     list_recent_local_exercise_sessions,
 )
-from app.parker.auth import require_dashboard_auth
+from app.parker.auth import require_configured_dashboard_auth, require_dashboard_auth
 from app.escalation.candidates import CANDIDATE_REASON_PREFIX, flag_non_response_candidates
 from app.escalation.engine import get_open_escalations
 from app.escalation.router import serialize_escalation
@@ -44,6 +45,8 @@ from app.parker.research_handoff import (
     cancel_local_research_handoff,
     complete_local_research_handoff,
     list_recent_local_research_handoffs,
+    redact_expired_local_research_handoffs,
+    redact_local_research_handoff,
     serialize_local_research_handoff,
 )
 from app.parker.digest import render_digest_page
@@ -104,6 +107,10 @@ class CancelResearchHandoffRequest(BaseModel):
     now: datetime | None = None
 
 
+class RedactResearchHandoffRequest(BaseModel):
+    confirmed: bool = False
+
+
 @router.post("/tick")
 def run_parker_tick(payload: TickRequest, db: Session = Depends(get_db)) -> dict[str, int]:
     """Run one resolve→stage tick and flag non-response escalation candidates."""
@@ -111,10 +118,15 @@ def run_parker_tick(payload: TickRequest, db: Session = Depends(get_db)) -> dict
     resolutions = resolve_captured_intents(db, now=payload.now)
     staged = stage_resolved_actions(db, now=payload.now)
     candidates = flag_non_response_candidates(db, now=payload.now)
+    # ``/tick`` is an open assistant-loop endpoint and its injectable ``now`` is
+    # for deterministic resolve/escalation tests. Never let that untrusted value
+    # drive irreversible privacy deletion; retention uses server wall-clock time.
+    redacted = redact_expired_local_research_handoffs(db)
     return {
         "resolved": len(resolutions),
         "staged": len(staged),
         "escalation_candidates": len(candidates),
+        "research_handoffs_redacted": len(redacted),
     }
 
 
@@ -191,6 +203,9 @@ def cancel_action(
 def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Aggregated caregiver review feed: everything awaiting a human decision."""
 
+    # Privacy maintenance is deterministic and local: review never serializes a
+    # query after its default retention window has expired.
+    redact_expired_local_research_handoffs(db)
     pending = (
         db.query(StagedAction)
         .filter(StagedAction.status.in_(["staged", "confirmed"]))
@@ -256,6 +271,7 @@ def caregiver_review(db: Session = Depends(get_db)) -> dict[str, Any]:
             serialize_local_research_handoff(handoff)
             for handoff in list_recent_local_research_handoffs(db, limit=RECENT_HISTORY_LIMIT)
         ],
+        "research_handoff_manual_redaction_enabled": bool(settings.dashboard_password),
         "recent_history": [_serialize_action(action) for action in history],
         "recent_failed": [_serialize_action(action) for action in failed_actions],
         "recent_cancelled": [_serialize_action(action) for action in cancelled_actions],
@@ -303,6 +319,31 @@ def cancel_research_handoff(
         handoff_id,
         cancelled_by=payload.cancelled_by,
         now=payload.now,
+    )
+    if handoff is None:
+        raise HTTPException(status_code=404, detail=f"Research handoff not found: {handoff_id}")
+    return serialize_local_research_handoff(handoff)
+
+
+@router.post("/research-handoffs/{handoff_id}/redact")
+def redact_research_handoff(
+    handoff_id: int,
+    payload: RedactResearchHandoffRequest | None = None,
+    db: Session = Depends(get_db),
+    caregiver_username: str = Depends(require_configured_dashboard_auth),
+) -> dict[str, object]:
+    """Caregiver removes local query text while retaining lifecycle audit."""
+
+    payload = payload or RedactResearchHandoffRequest()
+    if payload.confirmed is not True:
+        raise HTTPException(
+            status_code=400,
+            detail="Research query redaction is irreversible and requires confirmed=true.",
+        )
+    handoff = redact_local_research_handoff(
+        db,
+        handoff_id,
+        redacted_by=caregiver_username,
     )
     if handoff is None:
         raise HTTPException(status_code=404, detail=f"Research handoff not found: {handoff_id}")

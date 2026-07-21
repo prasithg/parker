@@ -29,7 +29,15 @@ def create_tables(bind=None):
     import app.parker.research_handoff  # noqa: F401
     import app.parker.screen  # noqa: F401
 
-    Base.metadata.create_all(bind=bind if bind is not None else engine)
+    target = bind if bind is not None else engine
+    Base.metadata.create_all(bind=target)
+
+    # Additive migration for the research-handoff table shipped one stacked
+    # slice before its privacy fields. Preserve local family state; never ask a
+    # privacy upgrade to reset the whole database.
+    from app.parker.research_handoff import ensure_local_research_handoff_privacy_schema
+
+    ensure_local_research_handoff_privacy_schema(target)
 
 
 def get_db():
