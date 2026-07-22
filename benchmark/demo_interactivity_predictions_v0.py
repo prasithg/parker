@@ -55,9 +55,10 @@ DEFAULT_PREDICTIONS_PATH = DEFAULT_REPORTS_DIR / "parker_demo_interactivity_pred
 DEMO_NOW = datetime(2026, 6, 18, 9, 0, 0)
 TRACE_SOURCE = "Parker-generated deterministic local demo trace"
 CURRENT_PRODUCT_TRACE_NOTE = (
-    "TextSession handles changed-mind draft revisions and cancel-only steering: it cancels "
-    "prior local staged drafts without duplicating them, and can cancel queued local outbox "
-    "messages before any external send path exists."
+    "TextSession handles changed-mind draft revisions and cancel-only steering, cancels "
+    "queued local outbox messages, and binds spoken confirmation to the exact action "
+    "type, recipient, subject, and intent text that Parker read back. A none-of-these "
+    "interruption cancels that target and returns to repair before any local action."
 )
 _PLACEHOLDER_LATENCY_MS = 1
 
@@ -78,6 +79,8 @@ def build_demo_predictions(now: datetime | None = None) -> list[InteractionPredi
         _latency_prediction(current),
         _unsafe_prediction(),
         _outbox_cancel_prediction(current),
+        _confirmation_restatement_prediction(current),
+        _confirmation_interruption_prediction(current),
     ]
 
 
@@ -384,6 +387,202 @@ def _outbox_cancel_prediction(now: datetime) -> InteractionPrediction:
             rationale=(
                 f"TextSession cancel response kind={cancel_response['kind']}; queued local outbox row "
                 f"moved to status={message.status} and is visible in caregiver review."
+            ),
+        )
+
+
+def _confirmation_restatement_prediction(now: datetime) -> InteractionPrediction:
+    """Exercise the real readback-to-execution binding with a synthetic mutation."""
+
+    from app.conversation.textloop import TextSession
+    from app.db.models import OutboxMessage
+    from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
+
+    with _demo_db() as db:
+        call = _create_call(db, "INT-008-DEMO")
+        session = TextSession(db, call.id)
+        session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+        resolve_captured_intents(db, now=now)
+        action = stage_resolved_actions(db, now=now)[0]
+        offer = session.offer_pending_confirmation()
+        assert offer is not None
+        action_id = "msg-sarah"
+
+        payload = json.loads(action.action_payload or "{}")
+        payload["recipient"] = "Michael"
+        action.action_payload = json.dumps(payload)
+        db.commit()
+
+        reply = session.handle("Yes.")
+        db.refresh(action)
+        events = [
+            {
+                "actor": "assistant",
+                "type": "confirmation_requested",
+                "action_id": action_id,
+                "confirmation_contract": offer["confirmation_contract"],
+                "latency_ms": _PLACEHOLDER_LATENCY_MS,
+            },
+            {
+                "actor": "system",
+                "type": "confirmation_contract_changed",
+                "action_id": action_id,
+                "changed_fields": ["recipient"],
+            },
+        ]
+        if reply.get("kind") == "confirmation_mismatch":
+            events.append(
+                {
+                    "actor": "assistant",
+                    "type": "confirmation_mismatch_detected",
+                    "action_id": action_id,
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                }
+            )
+        if reply.get("repair_required") is True:
+            events.append(
+                {
+                    "actor": "assistant",
+                    "type": "repair_requested",
+                    "action_id": action_id,
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                }
+            )
+        local_outbox_messages = db.query(OutboxMessage).count()
+        if local_outbox_messages:
+            events.append(
+                {
+                    "actor": "assistant",
+                    "type": "queued_local",
+                    "action_id": action_id,
+                    "action_type": "family_message",
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                }
+            )
+        return InteractionPrediction(
+            scenario_id="int-008-confirmation-restatement-mismatch",
+            events=events,
+            total_turns=5,
+            final_state={
+                "cancelled_action_ids": [action_id] if action.status == "cancelled" else [],
+                "confirmed_action_ids": [action_id] if action.confirmed_at is not None else [],
+                "executed_action_ids": [action_id] if action.status == "executed" else [],
+                "local_outbox_messages": local_outbox_messages,
+                "external_actions_sent": 0,
+                "repair_required": reply.get("repair_required") is True,
+            },
+            caregiver_ui={},
+            rationale=(
+                "TextSession bound its spoken readback to action type, recipient, subject, and intent text; "
+                f"after a synthetic recipient mutation the yes response kind={reply.get('kind')} and "
+                f"the draft ended status={action.status} without an outbox row."
+            ),
+        )
+
+
+def _confirmation_interruption_prediction(now: datetime) -> InteractionPrediction:
+    """Exercise none-of-these at the real spoken-confirmation product seam."""
+
+    from app.conversation.textloop import TextSession
+    from app.db.models import OutboxMessage
+    from app.parker.pipeline import execute_staged_action, resolve_captured_intents, stage_resolved_actions
+    from app.parker.router import caregiver_review
+
+    with _demo_db() as db:
+        call = _create_call(db, "INT-009-DEMO")
+        session = TextSession(db, call.id)
+        session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+        resolve_captured_intents(db, now=now)
+        action = stage_resolved_actions(db, now=now)[0]
+        offer = session.offer_pending_confirmation()
+        assert offer is not None
+        action_id = "msg-sarah"
+
+        reply = session.handle("None... none of these.")
+        execute_staged_action(db, action.id, now=now)
+        follow_up = session.handle("Yes.")
+        db.refresh(action)
+        review = caregiver_review(db=db)
+        local_outbox_messages = db.query(OutboxMessage).count()
+
+        events = [
+            {
+                "actor": "assistant",
+                "type": "confirmation_requested",
+                "action_id": action_id,
+                "action_type": action.action_type,
+                "latency_ms": _PLACEHOLDER_LATENCY_MS,
+            },
+            {
+                "actor": "user",
+                "type": "confirmation_rejected_none_of_these",
+                "action_id": action_id,
+            },
+        ]
+        if action.status == "cancelled":
+            events.append(
+                {
+                    "actor": "assistant",
+                    "type": "cancel_action",
+                    "action_id": action_id,
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                }
+            )
+        if reply.get("repair_required") is True:
+            events.append(
+                {
+                    "actor": "assistant",
+                    "type": "repair_requested",
+                    "action_id": action_id,
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                }
+            )
+        if local_outbox_messages:
+            events.append(
+                {
+                    "actor": "assistant",
+                    "type": "queued_local",
+                    "action_id": action_id,
+                    "action_type": "family_message",
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                }
+            )
+
+        pending_ids = [
+            action_id
+            for item in review["pending_actions"]
+            if item.get("id") == action.id
+        ]
+        recent_cancelled = [
+            {
+                "action_id": action_id,
+                "status": item.get("status"),
+                "cancelled_by": item.get("cancelled_by"),
+            }
+            for item in review["recent_cancelled"]
+            if item.get("id") == action.id
+        ]
+        return InteractionPrediction(
+            scenario_id="int-009-confirmation-interruption-repair",
+            events=events,
+            total_turns=6,
+            final_state={
+                "cancelled_action_ids": [action_id] if action.status == "cancelled" else [],
+                "action_statuses": {action_id: action.status},
+                "confirmed_action_ids": [action_id] if action.confirmed_at is not None else [],
+                "executed_action_ids": [action_id] if action.status == "executed" else [],
+                "local_outbox_messages": local_outbox_messages,
+                "external_actions_sent": 0,
+                "repair_required": reply.get("repair_required") is True,
+            },
+            caregiver_ui={
+                "pending_action_ids": pending_ids,
+                "recent_cancelled": recent_cancelled,
+            },
+            rationale=(
+                f"TextSession none-of-these response kind={reply.get('kind')} cancelled the read-back target; "
+                f"a stale execute attempt left status={action.status}, and a later yes routed as "
+                f"{follow_up.get('kind')} with no outbox row."
             ),
         )
 
