@@ -154,3 +154,105 @@ make eval-release-readiness
 `make eval-release-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so public-claim metrics do not silently survive from an older run. (Reports are written under `benchmark/reports/release_readiness_eval_*`; historical dated `grant_readiness_eval_*` reports from the retired grant lane remain in place as records but are no longer read.)
 
 Passing means only that the current synthetic/local reports are safe to cite with caveats. It does **not** establish real-world, clinical, patient, audio, emergency-readiness, or private-data proof.
+
+## Verify scheduled-reality provenance
+
+`backend/app/parker/scheduled_reality.py` is a fail-closed verifier for a
+nightly Operations receipt. A narrow, no-agent scheduler wrapper mints an HMAC
+envelope containing its job ID, fire time, nonce, and expected checkout SHA;
+the report/agent process must never receive that key. A trusted post-run wrapper
+then calls `verify_scheduled_reality` and supplies the key only to the verifier.
+
+The verifier independently checks a clean checkout against both the
+scheduler-authorized SHA and an independently pinned approved SHA, a valid
+scheduler envelope in its fire window, an atomic single-use nonce claim in a
+trusted ledger outside the repository and inbound tree, a recent input under an
+allowlisted inbox outside the repository, coherent wall/monotonic clock
+movement, and a successful one-step state delta tied to the input hash. Checkout
+identity and cleanliness observations share a 2-second deadline and a 64 KiB
+combined stdout/stderr budget; output is captured incrementally, and timeout,
+overflow, malformed output, or process failure emits a named unverified git
+observation instead of blocking or buffering without limit.
+Envelope, input, pre/post state, and nonce-ledger paths are traversed
+component-by-component with descriptor-relative `O_NOFOLLOW`; regular evidence
+is read once from a stable descriptor, capped at 1 MiB, and hashed/timestamped
+from that same read. State evidence must expose bounded scalar status/error,
+SHA-256, and signed-64-bit sequence fields before any of those values can be
+reflected in a receipt; malformed giant integers fail closed rather than raising.
+Scheduler job IDs and nonces are bounded ASCII identifiers. The receipt emits a
+nonce fingerprint instead of the raw nonce and never emits the inbound filename.
+Nonce consumption is the final verifier acknowledgement: malformed or transient
+evidence stays unverified without advancing the ledger, so the same signed run
+can be retried after its evidence is repaired. Only a run that passes every
+other assertion may atomically claim the nonce. The verifier fsyncs both the
+tombstone and its containing ledger directory before reporting success, so a
+completed claim is durable across a crash; later replay still fails closed.
+Missing, malformed, symlinked, unstable, hard-linked, or oversized evidence emits
+`verdict: unverified` and `provenance_complete: false`. The receipt omits absolute
+paths, inbound filenames, raw nonces, HMAC tokens, keys, and unvalidated state
+values.
+
+```bash
+backend/.venv/bin/pytest backend/tests/test_scheduled_reality.py -q
+```
+
+The tests are the mandatory negative controls: old SHA, absent scheduler
+envelope, replay of the same signed envelope, an oversized signed nonce, a nonce
+ledger inside the repo, repo fixture input, symlinked or hard-linked final input,
+a symlinked parent input path, symlinked envelope, state, or nonce-ledger paths,
+oversized input, malformed giant state integers, oversized reflected state
+status, frozen wall clock, missing state delta, eager nonce consumption on failed
+evidence, a nonce claim without directory durability, dirty checkout, and
+bounded git observation failures must all remain
+unverified, while one isolated synthetic
+Operations-shaped run qualifies once without reflecting its nonce or inbound
+filename. This proves the verifier contract only. Until a trusted wrapper owns a
+protected nonce ledger and scheduler key and an actual scheduled event passes it,
+Parker still has no genuine scheduled-production provenance receipt.
+
+### Evaluate the no-agent wrapper contract
+
+`make eval-scheduled-wrapper` checks three synthetic control-plane traces around
+the verifier: one final-ack success, one worker failure that retains pending
+state, and one verifier rejection that also remains retryable. Five checks per
+trace fail closed on scheduler-key or envelope exposure to the worker,
+pre-completion verifier handoff, worker-writable nonce-ledger scope, eager
+nonce/ack advancement, forged lifecycle actors/targets/fields, and receipts that
+reflect keys, tokens, raw nonces,
+paths, URLs, command output, or more than 16 KiB.
+
+The fixture and evaluator are public-safe contract evidence only. They use no
+live key, do not configure or invoke cron, do not deploy an OS-account wrapper,
+and do not turn any historical job status into trusted provenance. A real
+deployment still requires separate scheduler/verifier ownership, a protected
+external pending/nonce/ack store, an unprivileged worker identity, and one
+actual verifier-passing scheduled fire.
+
+```bash
+make eval-scheduled-wrapper
+```
+
+### Run the inactive subprocess/ownership harness
+
+`make eval-scheduled-wrapper-harness` executes one real synthetic worker under
+the current unprivileged account with an exact scrubbed environment, closed
+extra descriptors, a one-second deadline, and a 16 KiB combined-output cap. In
+an OS temporary directory it creates synthetic pending, ledger, and
+acknowledgement state, then validates current-owner identity, exact `0600`/`0700`
+modes, regular file types, and descriptor-relative no-follow opens. Symlinked
+state, group-readable acknowledgement state, a hanging worker, and an output
+flood are pinned as negative controls. Timeout/overflow signals the original
+worker process group and reaps the direct worker. This inactive same-account
+harness does not contain a descendant that deliberately creates a new session;
+the fixed synthetic worker does not spawn one.
+
+The harness does not inspect or change cron, read a credential, mint an
+envelope, call the production verifier, or enforce a distinct scheduler/wrapper
+OS account. It emits only bounded synthetic metadata and reports zero live
+activations. Separate production identities, protected runtime state, complete
+stack review, OS-enforced descendant containment, and one genuine
+verifier-passing scheduled event remain blocked.
+
+```bash
+make eval-scheduled-wrapper-harness
+```
