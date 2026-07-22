@@ -20,6 +20,11 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.db.database import Base
 
+# Register the foreign-key target whenever this model is imported. Without this,
+# isolated test/module loads can call Base.metadata.create_all before the repair
+# event model has populated the shared metadata.
+from app.conversation import repair_events as _repair_events  # noqa: F401, E402
+
 SOURCE_KIND = "local_asr_nbest_repair"
 PROVENANCE_STATUS = "user_confirmed_interpretation_no_external_source_fetched"
 RISK_LABEL = "read_only_research_no_external_action"

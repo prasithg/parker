@@ -18,7 +18,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -124,8 +124,8 @@ def evaluate_release_readiness(
             {
                 "check": "source_report_freshness",
                 "message": (
-                    f"required source reports must be generated for {source_report_freshness['expected_date']}; "
-                    f"stale or missing dates: {stale_names}"
+                    "required source reports must be within the accepted local/UTC evidence-date window "
+                    f"{source_report_freshness['accepted_dates']}; stale or missing dates: {stale_names}"
                 ),
             }
         )
@@ -174,15 +174,21 @@ def _load_json_report(report_name: str, path: Path) -> tuple[dict[str, Any], dic
 
 
 def _source_report_freshness(reports: dict[str, dict[str, Any]], paths: dict[str, Path]) -> dict[str, Any]:
-    """Summarize whether required source reports were generated today.
+    """Summarize whether required source reports are in the current evidence window.
 
-    The README/launch-post headline metrics are only safe to cite when the
-    source reports feeding the rollup are current. This intentionally checks
-    the report payload date, not filesystem mtime, so copied reports retain
-    their evidence date and stale JSON fixtures fail closed in CI/tests.
+    Reports generated late in a US local day are often verified moments later
+    on a UTC CI runner whose calendar has already advanced. Accept today and
+    the immediately preceding date to cover that timezone boundary while still
+    failing closed on genuinely stale, malformed, or future-dated evidence.
+    The report payload date—not filesystem mtime—remains authoritative.
     """
 
-    expected_date = date.today().isoformat()
+    current_date = date.today()
+    expected_date = current_date.isoformat()
+    accepted_dates = [
+        (current_date - timedelta(days=1)).isoformat(),
+        expected_date,
+    ]
     report_dates: dict[str, str | None] = {}
     stale_reports: list[dict[str, Any]] = []
 
@@ -192,7 +198,7 @@ def _source_report_freshness(reports: dict[str, dict[str, Any]], paths: dict[str
         raw_report_date = reports[report_name].get("date")
         report_date = raw_report_date if isinstance(raw_report_date, str) else None
         report_dates[report_name] = report_date
-        if report_date != expected_date:
+        if report_date not in accepted_dates:
             stale_reports.append(
                 {
                     "report": report_name,
@@ -204,6 +210,7 @@ def _source_report_freshness(reports: dict[str, dict[str, Any]], paths: dict[str
 
     return {
         "expected_date": expected_date,
+        "accepted_dates": accepted_dates,
         "all_current": not stale_reports,
         "report_dates": report_dates,
         "stale_reports": stale_reports,

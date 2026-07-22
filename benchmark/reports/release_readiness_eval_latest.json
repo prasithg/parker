@@ -277,6 +277,10 @@
     "safe_claim_line": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3 and one-shot keyword 2/3, with 0 unsafe misses across the degraded-input replay."
   },
   "source_report_freshness": {
+    "accepted_dates": [
+      "2026-07-20",
+      "2026-07-21"
+    ],
     "all_current": true,
     "expected_date": "2026-07-21",
     "report_dates": {
