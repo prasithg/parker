@@ -4,8 +4,10 @@ The nightly Operations loop is allowed to touch raw/public audio and local cache
 paths. The repo is not: it should only receive metadata, ASR hypotheses, source
 labels, safety labels, and rubrics. This module is the reviewable seam between
 those worlds. It reads a nightly ``promotion_candidates.json`` payload, validates
-any embedded repo-ready fixture/candidate objects, checks for duplicates and raw
-artifact leakage, and emits a deterministic promotion plan.
+embedded accepted, held, repo-rejected, and reviewed Operations-only rejection
+objects, checks for duplicates and raw artifact leakage, and emits a deterministic
+promotion plan. Operations-only rejections get counted by normalized failure mode
+without becoming repo-ledger append suggestions.
 
 It deliberately does **not** mutate the repo. Applying the plan is still a small,
 reviewable JSON patch followed by the normal eval/test gates.
@@ -17,6 +19,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -67,6 +70,7 @@ class CandidateValidation:
     warnings: list[str] = field(default_factory=list)
     dedupe_keys: dict[str, str] = field(default_factory=dict)
     diversity_review: dict[str, Any] = field(default_factory=dict)
+    failure_mode: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +82,7 @@ class CandidateValidation:
             "warnings": self.warnings,
             "dedupe_keys": self.dedupe_keys,
             "diversity_review": self.diversity_review,
+            "failure_mode": self.failure_mode,
         }
 
 
@@ -99,6 +104,14 @@ class PromotionPlan:
     verification: list[str]
 
     def as_dict(self) -> dict[str, Any]:
+        tracked_operations_rejections = [
+            item for item in self.rejected if item.status == "tracked_operations_only"
+        ]
+        operations_failure_modes = dict(sorted(Counter(
+            item.failure_mode
+            for item in tracked_operations_rejections
+            if item.failure_mode
+        ).items()))
         return {
             "source_candidates_path": self.source_candidates_path,
             "target_cases_path": self.target_cases_path,
@@ -108,12 +121,18 @@ class PromotionPlan:
                 "accepted_ready": sum(1 for item in self.accepted if item.ready),
                 "held_ready": sum(1 for item in self.held if item.ready),
                 "rejected_ready": sum(1 for item in self.rejected if item.ready),
-                "blocked_or_duplicate": sum(1 for item in [*self.accepted, *self.held, *self.rejected, *self.skipped] if not item.ready),
+                "operations_only_rejections_tracked": len(tracked_operations_rejections),
+                "blocked_or_duplicate": sum(
+                    1
+                    for item in [*self.accepted, *self.held, *self.rejected, *self.skipped]
+                    if not item.ready and item.status != "tracked_operations_only"
+                ),
                 "skipped": len(self.skipped),
             },
             "accepted": [item.as_dict() for item in self.accepted],
             "held": [item.as_dict() for item in self.held],
             "rejected": [item.as_dict() for item in self.rejected],
+            "operations_only_rejection_failure_modes": operations_failure_modes,
             "skipped": [item.as_dict() for item in self.skipped],
             "before_metrics": self.before_metrics,
             "after_metrics": self.after_metrics,
@@ -167,6 +186,11 @@ def _source_row_key_from_candidate(row: dict[str, Any]) -> str:
 def _source_row_key_from_case(case: AudioAutodataCase) -> str:
     source = str(case.provenance.get("source_url") or case.source_type)
     return "|".join([source, "", case.clean_phrase.lower().strip()])
+
+
+def _source_row_key_from_rejected(candidate: RejectedAudioAutodataCandidate) -> str:
+    source = str(candidate.provenance.get("source_url") or candidate.source_type)
+    return "|".join([source, "", candidate.source_transcript.lower().strip()])
 
 
 def _command_family_for_fixture(case: AudioAutodataCase) -> str:
@@ -287,6 +311,9 @@ def _candidate_id(raw: dict[str, Any], fallback: str) -> str:
     rejected = raw.get("repo_rejected_candidate")
     if isinstance(rejected, dict) and rejected.get("candidate_id"):
         return str(rejected["candidate_id"])
+    operations_rejected = raw.get("operations_rejected_candidate")
+    if isinstance(operations_rejected, dict) and operations_rejected.get("candidate_id"):
+        return str(operations_rejected["candidate_id"])
     return str(raw.get("candidate_id") or raw.get("decision") or fallback)
 
 
@@ -408,17 +435,25 @@ def _validate_rejected_candidate(
     raw: dict[str, Any],
     *,
     existing_rejected_ids: set[str],
+    existing_rejected_source_keys: set[str],
     ordinal: int,
 ) -> tuple[CandidateValidation, RejectedAudioAutodataCandidate | None]:
     candidate_id = _candidate_id(raw, f"rejected[{ordinal}]")
     rejected = raw.get("repo_rejected_candidate")
+    operations_rejected = raw.get("operations_rejected_candidate")
+    operations_only = not isinstance(rejected, dict) and isinstance(operations_rejected, dict)
+    if operations_only:
+        rejected = operations_rejected
     if not isinstance(rejected, dict):
         return CandidateValidation(
             kind="rejected_candidate",
             candidate_id=candidate_id,
             ready=False,
-            status="rejected_without_repo_payload",
-            warnings=["rejected Operations episode has no repo_rejected_candidate ledger object"],
+            status="rejected_without_reviewed_payload",
+            warnings=[
+                "rejected Operations episode needs either a repo_rejected_candidate ledger object "
+                "or a full operations_rejected_candidate reviewed-data-contract object"
+            ],
             dedupe_keys={"source_row": _source_row_key_from_candidate(raw)},
         ), None
 
@@ -429,16 +464,39 @@ def _validate_rejected_candidate(
     except Exception as exc:  # noqa: BLE001
         errors.append(f"schema: {type(exc).__name__}: {exc}")
     rejected_id = str(rejected.get("candidate_id") or candidate_id)
+    source_key = (
+        _source_row_key_from_rejected(candidate)
+        if candidate is not None
+        else _source_row_key_from_candidate(raw)
+    )
+    duplicate_errors: list[str] = []
     if candidate is not None and candidate.candidate_id in existing_rejected_ids:
-        errors.append("duplicate rejected candidate_id already present in repo fixture data")
-    ready = not errors
+        duplicate_errors.append(
+            "duplicate rejected candidate_id already present in repo fixture data or this promotion plan"
+        )
+    if candidate is not None and source_key in existing_rejected_source_keys:
+        duplicate_errors.append(
+            "duplicate rejected source transcript already present in repo fixture data or this promotion plan"
+        )
+    errors.extend(duplicate_errors)
+    schema_ready = not errors
+    ready = schema_ready and not operations_only
+    if duplicate_errors and len(errors) == len(duplicate_errors):
+        status = "duplicate"
+    elif not schema_ready:
+        status = "blocked"
+    elif operations_only:
+        status = "tracked_operations_only"
+    else:
+        status = "ready"
     return CandidateValidation(
         kind="rejected_candidate",
         candidate_id=rejected_id,
         ready=ready,
-        status="ready" if ready else "blocked",
+        status=status,
         errors=errors,
-        dedupe_keys={"source_row": _source_row_key_from_candidate(raw)},
+        dedupe_keys={"source_row": source_key},
+        failure_mode=candidate.rejection_failure_mode if candidate is not None else None,
     ), candidate if ready else None
 
 
@@ -451,6 +509,9 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
     existing_held_ids = {candidate.candidate_id for candidate in existing_held}
     existing_rejected_ids = {candidate.candidate_id for candidate in existing_rejected}
     existing_case_source_keys = {_source_row_key_from_case(case) for case in existing_cases}
+    existing_rejected_source_keys = {
+        _source_row_key_from_rejected(candidate) for candidate in existing_rejected
+    }
 
     accepted_validations: list[CandidateValidation] = []
     held_validations: list[CandidateValidation] = []
@@ -491,9 +552,13 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
         validation, candidate = _validate_rejected_candidate(
             raw,
             existing_rejected_ids=existing_rejected_ids,
+            existing_rejected_source_keys=existing_rejected_source_keys,
             ordinal=ordinal,
         )
         rejected_validations.append(validation)
+        if validation.status in {"ready", "tracked_operations_only"}:
+            existing_rejected_ids.add(validation.candidate_id)
+            existing_rejected_source_keys.add(validation.dedupe_keys["source_row"])
         if candidate is not None:
             ready_rejected.append(candidate)
 
@@ -537,7 +602,7 @@ def build_promotion_plan(candidates_path: Path, *, cases_path: Path = DEFAULT_CA
     }
     verification = [
         "python3 benchmark/evaluate_audio_repair_autodata_v0.py --write-report",
-        "backend/.venv/bin/python -m pytest backend/tests/test_audio_autodata_evaluator.py -q",
+        "backend/.venv/bin/python -m pytest backend/tests/test_audio_autodata_promoter.py backend/tests/test_audio_autodata_evaluator.py -q",
         "git diff --check",
     ]
     if ready_cases:
@@ -587,6 +652,8 @@ def _format_text(plan: PromotionPlan) -> str:
         f"- raw audio not committed: {payload['raw_audio_not_committed']}",
         f"- accepted ready: {payload['counts']['accepted_ready']}",
         f"- held ready: {payload['counts']['held_ready']}",
+        f"- Operations-only rejections tracked: {payload['counts']['operations_only_rejections_tracked']}",
+        f"- Operations-only rejection failure modes: {payload['operations_only_rejection_failure_modes']}",
         f"- blocked/duplicate: {payload['counts']['blocked_or_duplicate']}",
         f"- metric deltas: {payload['patch_suggestions']['count_delta']}",
         "- verification:",

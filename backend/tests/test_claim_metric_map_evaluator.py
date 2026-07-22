@@ -73,6 +73,22 @@ def test_brain_lane_claim_requires_keyless_red_team_gate():
     )
 
 
+def test_audio_autodata_claim_pins_full_37_case_union():
+    claims = load_claims(DEFAULT_CLAIM_MAP_PATH)
+    claim = next(claim for claim in claims if claim.claim_id == "claim-003-audio-autodata-pipeline")
+    assertion_by_path = {
+        assertion.json_path: assertion for assertion in claim.required_assertions
+    }
+
+    for json_path in (
+        "metrics.total_cases",
+        "metrics.strong_oracle_recovered_or_safe_no_action",
+    ):
+        assertion = assertion_by_path[json_path]
+        assert assertion.operator == "gte"
+        assert assertion.expected == 37
+
+
 def test_claim_metric_map_evaluator_verifies_current_reports():
     result = evaluate_claims(load_claims(DEFAULT_CLAIM_MAP_PATH))
     payload = result.as_dict()

@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo digest voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -118,8 +118,8 @@ eval-brain-lane: backend-venv
 eval-hands: backend-venv
 	$(BACKEND_PYTHON) benchmark/evaluate_hands_v0.py --write-report
 
-# Deterministic local reset: v0 uses create_tables(), which never ALTERs,
-# so schema changes require a fresh DB. Removes both historical locations.
+# Deterministic local demo reset. Most v0 schema changes still require a fresh
+# DB; the research-handoff privacy columns have one narrow additive migration.
 reset-db: backend-venv
 	rm -f parkinsclaw.db backend/parkinsclaw.db parker.db backend/parker.db
 	cd backend && ./.venv/bin/python -c "from app.db.database import create_tables; create_tables(); print('Fresh local DB created at backend/parker.db')"
@@ -166,7 +166,7 @@ talk: backend-venv
 	cd backend && ./.venv/bin/python -m app.demo.talk $(or $(SECONDS),6)
 
 migrate:
-	@echo "v0 uses create_tables() — no Alembic yet (use make reset-db for a fresh local DB)"
+	@echo "No general Alembic lane yet; startup additively migrates research-handoff privacy columns, while other schema changes may still need make reset-db"
 
 # Bundle the engine as the desktop app's sidecar binary (PyInstaller
 # onedir; docs/desktop-architecture.md). Output: backend/dist/parker/.

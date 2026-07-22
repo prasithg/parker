@@ -3,7 +3,7 @@
 import json
 import subprocess
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -35,7 +35,7 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
     assert payload["metrics"]["claim_metric_map"] == {
         "total_claims": 4,
         "passing_claims": 4,
-        "assertions_checked": 17,
+        "assertions_checked": 19,
         "assertions_failed": 0,
         "overclaim_gate_passed": True,
     }
@@ -44,7 +44,7 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
         "citable_constructs": 4,
         "research_gap_constructs": 2,
         "passing_citable_constructs": 4,
-        "assertions_checked": 14,
+        "assertions_checked": 16,
         "assertions_failed": 0,
         "construct_validity_gate_passed": True,
     }
@@ -62,10 +62,12 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
         "escalation_recall": 1.0,
     }
     assert payload["metrics"]["demo_interactivity"] == {
-        "synthetic_scenarios": 7,
+        "synthetic_scenarios": 9,
         "overall_pass_rate": 1.0,
         "unsafe_miss_count": 0,
         "confirmation_before_action": 1.0,
+        "confirmation_restatement_binding": 1.0,
+        "confirmation_interruption_repair": 1.0,
         "local_outbox_reversibility": 1.0,
         "caregiver_ui_clarity": 1.0,
     }
@@ -77,8 +79,8 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
         "quality_proof_claim_allowed": False,
     }
     assert payload["metrics"]["caregiver_state_legibility"] == {
-        "total_tasks": 6,
-        "parker_review_ui_correct_tasks": 6,
+        "total_tasks": 10,
+        "parker_review_ui_correct_tasks": 10,
         "raw_chat_only_correct_tasks": 0,
         "delta_vs_raw_chat": 1.0,
         "unsafe_miss_count": 0,
@@ -89,10 +91,14 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
 
     freshness = payload["source_report_freshness"]
     assert freshness["expected_date"] == date.today().isoformat()
+    assert freshness["accepted_dates"] == [
+        (date.today() - timedelta(days=1)).isoformat(),
+        date.today().isoformat(),
+    ]
     assert freshness["all_current"] is True
     assert freshness["stale_reports"] == []
     assert set(freshness["report_dates"]) == set(REQUIRED_REPORTS)
-    assert all(report_date == date.today().isoformat() for report_date in freshness["report_dates"].values())
+    assert all(report_date in freshness["accepted_dates"] for report_date in freshness["report_dates"].values())
 
     assert len(payload["claim_cards"]) == 4
     assert all(card["status"] == "pass" for card in payload["claim_cards"])
@@ -136,6 +142,26 @@ def test_release_readiness_fails_closed_when_required_report_is_missing(tmp_path
         and "missing-demo-report.json" in failure["message"]
         for failure in payload["readiness_gate"]["blocking_failures"]
     )
+
+
+def test_release_readiness_accepts_previous_day_reports_across_timezone_boundary(tmp_path: Path) -> None:
+    """A UTC runner must not reject reports generated late in the prior local day."""
+
+    report_paths: dict[str, Path] = {}
+    previous_day = (date.today() - timedelta(days=1)).isoformat()
+    for report_name, source_path in REQUIRED_REPORTS.items():
+        copied_path = tmp_path / f"{report_name}.json"
+        report = json.loads(source_path.read_text())
+        report["date"] = previous_day
+        copied_path.write_text(json.dumps(report))
+        report_paths[report_name] = copied_path
+
+    payload = evaluate_release_readiness(report_paths=report_paths).as_dict()
+
+    assert payload["readiness_gate"]["passed"] is True
+    assert payload["source_report_freshness"]["all_current"] is True
+    assert payload["source_report_freshness"]["stale_reports"] == []
+    assert previous_day in payload["source_report_freshness"]["accepted_dates"]
 
 
 def test_release_readiness_fails_closed_when_source_report_date_is_stale(tmp_path: Path) -> None:

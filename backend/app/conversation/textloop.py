@@ -11,8 +11,9 @@ tick stages an action from this session, ``offer_pending_confirmation``
 asks the patient directly, and a spoken "yes" confirms AND executes it
 through the same pipeline functions (``confirmed_by="patient"``, recorded)
 — within an admin-enabled capability the patient's own confirmation is the
-only gate. "No" cancels. Anything else defers: the action stays staged for
-the review page, never silently acted on.
+only gate. "No" cancels; "none of these" cancels and requests a fresh
+restatement. Anything else defers: the action stays staged for the review page,
+never silently acted on.
 
 Safety mirrors the action policy: medication-change requests are refused,
 purchases are routed to human approval, prohibited tiers are never
@@ -63,6 +64,23 @@ class UtteranceContext:
     addressed_to_parker: bool = True
     source: str = "assumed_addressed"
     note: str | None = None
+
+
+@dataclass(frozen=True)
+class InformationalRepairCandidate:
+    """One read-only interpretation of an n-best informational disagreement.
+
+    Keeping this distinct from action repair makes the authority boundary
+    explicit: selecting it resolves a query for ``_answer`` and never supplies
+    an action type, recipient, capture payload, or executable tool request.
+    """
+
+    label: str
+    resolved_query: str
+    repair_family: str
+
+    def tool_candidate(self) -> dict[str, Any]:
+        return {"label": self.label, "action_type": None}
 
 
 ANSWER_STUB_SPEECH = (
@@ -178,6 +196,11 @@ TICKET_ACQUISITION_PATTERNS = (
     # runtime guard.
     r"\bby\s+me\s+tickets?\b",
 )
+TICKET_NEGATED_ACQUISITION_PATTERNS = (
+    r"\b(?:do\s+not|don't|dont)\s+(?:want|need)\s+(?:a\s+|the\s+)?tickets?\b",
+    r"\b(?:do\s+not|don't|dont)\s+(?:book|buy|purchase|order|get)\s+"
+    r"(?:me\s+)?(?:a\s+|the\s+)?(?:\w+\s+){0,3}tickets?\b",
+)
 FINANCIAL_ACCOUNT_PHRASES = (
     "account balance",
     "bank balance",
@@ -288,6 +311,14 @@ CONFIRM_NO_PHRASES = {
     "no thanks",
     "no thank you",
 }
+CONFIRM_REPAIR_REJECTION_PHRASES = {
+    "none",
+    "none of these",
+    "none of those",
+    "that is not it",
+    "that's not it",
+    "thats not it",
+}
 
 # Natural confirmations compound ("Yes, go ahead", "Okay, do it") — heard
 # verbatim from the first desktop-app install, where "Yes, go ahead."
@@ -323,6 +354,15 @@ def _confirmation_reply_kind(normalized: str) -> str | None:
     if tokens[0] in _CONFIRM_YES_LEADS and all(t in _CONFIRM_YES_TOKENS for t in tokens):
         return "yes"
     return None
+
+
+def _is_confirmation_repair_rejection(normalized: str) -> bool:
+    """Recognize a bounded none-of-these rejection, including effortful repetition."""
+
+    if normalized in CONFIRM_REPAIR_REJECTION_PHRASES:
+        return True
+    return re.fullmatch(r"none(?:\s+none){1,2}\s+of\s+(?:these|those)", normalized) is not None
+
 
 # Spoken dismissal while repair choices are pending: equivalent to picking
 # "none of these" without knowing its number. Kept small and exact-match —
@@ -413,6 +453,28 @@ def _looks_like_ticket_acquisition(normalized: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in TICKET_ACQUISITION_PATTERNS)
 
 
+def _without_negated_ticket_acquisition(normalized: str) -> tuple[str, bool]:
+    """Remove explicit ticket negations before looking for positive acquisition.
+
+    Clearly synthetic audio preserved ``don't buy tickets`` and ``don't want
+    tickets`` verbatim. Those clauses must not be reinterpreted as affirmative
+    purchase intent. Removing only the narrow verb+ticket span keeps a later
+    positive clause (``don't buy these tickets; buy the Sunday tickets``)
+    visible to the conservative human-approval gate.
+    """
+
+    remaining = normalized
+    for pattern in TICKET_NEGATED_ACQUISITION_PATTERNS:
+        remaining = re.sub(pattern, " ", remaining)
+    remaining = re.sub(r"\s+", " ", remaining).strip()
+    return remaining, remaining != normalized
+
+
+def _looks_like_purchase_after_ticket_negation(normalized: str) -> bool:
+    remaining, _ = _without_negated_ticket_acquisition(normalized)
+    return any(phrase in remaining for phrase in PURCHASE_PHRASES)
+
+
 def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
     """Separate read-only ticket lookup from ticket acquisition/purchase.
 
@@ -436,7 +498,8 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
         or REMIND_PATTERN.match(utterance)
         or EXERCISE_PATTERN.match(utterance)
     )
-    acquisition = _looks_like_ticket_acquisition(normalized)
+    positive_text, has_negated_acquisition = _without_negated_ticket_acquisition(normalized)
+    acquisition = _looks_like_ticket_acquisition(positive_text)
     if direct_local_intent and not acquisition:
         return None
     if acquisition:
@@ -449,7 +512,7 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
                 "A family member must review and approve any purchase outside Parker."
             ),
         }
-    if any(re.search(pattern, normalized) for pattern in TICKET_LOOKUP_PATTERNS):
+    if any(re.search(pattern, positive_text) for pattern in TICKET_LOOKUP_PATTERNS):
         return {
             "kind": "answer",
             "action_type": "item_search",
@@ -458,6 +521,13 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
                 "I can help prepare a read-only ticket search. The local loop does not fetch live results, "
                 "and I won't book or purchase anything."
             ),
+        }
+    if has_negated_acquisition:
+        return {
+            "kind": "noop",
+            "action_type": None,
+            "purchase_permitted": False,
+            "speech": "I heard that you don't want tickets. I won't create or purchase anything.",
         }
     return None
 
@@ -529,6 +599,124 @@ def _looks_like_answer_or_conversation_request(lowered: str) -> bool:
             "describe ",
             "explain ",
         )
+    )
+
+
+_WEATHER_STATE_NAMES = {"tx": "Texas"}
+_WEATHER_PLACE_PATTERN = re.compile(
+    r"\b(?:in|having|been)\s+(?P<place>[a-z][a-z' -]{0,40}?)\s+"
+    r"(?P<state>tx)\b(?:\s+(?:right now|today|now))?",
+    re.IGNORECASE,
+)
+_PERSON_INFORMATION_PATTERN = re.compile(
+    r"^\s*(?:please\s+)?give\s+me\s+(?:information|info)\s+on\s+"
+    r"(?P<entity>[a-z][a-z' -]{1,60}?)\s*[.?!]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _informational_hypotheses_are_policy_safe(hypotheses: list[str]) -> bool:
+    lowered = [hypothesis.lower() for hypothesis in hypotheses]
+    if any(_looks_like_ticket_acquisition(hypothesis) for hypothesis in lowered):
+        return False
+    return not any(
+        phrase in hypothesis
+        for hypothesis in lowered
+        for group in _PROBE_BLOCKED_PHRASES
+        for phrase in group
+    )
+
+
+def _weather_informational_candidates(
+    hypotheses: list[str],
+) -> list[InformationalRepairCandidate]:
+    normalized = [
+        re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", hypothesis.lower())).strip()
+        for hypothesis in hypotheses
+    ]
+    weather_flags = [bool(re.search(r"\bweather\b", hypothesis)) for hypothesis in normalized]
+    if not any(weather_flags) or all(weather_flags):
+        return []
+
+    place_match = next(
+        (match for hypothesis in normalized if (match := _WEATHER_PLACE_PATTERN.search(hypothesis))),
+        None,
+    )
+    if place_match is None:
+        return []
+    place = " ".join(word.capitalize() for word in place_match.group("place").split())
+    state = _WEATHER_STATE_NAMES[place_match.group("state").lower()]
+    entity = f"{place}, {state}"
+    return [
+        InformationalRepairCandidate(
+            label=f"look up the current weather in {entity}",
+            resolved_query=f"What is the current weather in {entity}?",
+            repair_family="weather_place",
+        ),
+        InformationalRepairCandidate(
+            label=f"answer a general question about {entity}",
+            resolved_query=f"Tell me about {entity}.",
+            repair_family="weather_place",
+        ),
+    ]
+
+
+def _person_entity_informational_candidates(
+    hypotheses: list[str],
+) -> list[InformationalRepairCandidate]:
+    """Offer both person names when a bounded factoid n-best pair disagrees.
+
+    The reviewed SLURP row keeps the same read-only request frame while tiny and
+    base Whisper disagree on ``Martin Jackson`` vs ``Michael Jackson``. Require
+    exactly two two-part names with the same surname and the exact reviewed request
+    frame; do not guess which is right from spelling similarity. The user chooses,
+    or uses none-of-these.
+    """
+
+    entities: list[str] = []
+    for hypothesis in hypotheses:
+        match = _PERSON_INFORMATION_PATTERN.match(hypothesis)
+        if match is None:
+            continue
+        words = [word.capitalize() for word in match.group("entity").split()]
+        if len(words) != 2 or not all(
+            re.fullmatch(r"[A-Za-z][A-Za-z'-]*", word) for word in words
+        ):
+            continue
+        entity = " ".join(words)
+        if entity.lower() not in {prior.lower() for prior in entities}:
+            entities.append(entity)
+    if len(entities) != 2:
+        return []
+    left, right = (entity.split() for entity in entities)
+    if left[-1].lower() != right[-1].lower():
+        return []
+    return [
+        InformationalRepairCandidate(
+            label=f"information about {entity}",
+            resolved_query=f"Tell me about {entity}.",
+            repair_family="person_entity",
+        )
+        for entity in entities
+    ]
+
+
+def _informational_repair_candidates(
+    utterance: str, alternates: list[str]
+) -> list[InformationalRepairCandidate]:
+    """Build bounded read-only repair choices from reviewed n-best patterns.
+
+    Weather/place and person/factoid episodes share an explicit candidate type
+    and selection path, but keep separate narrow extractors. This is not generic
+    entity resolution: it requires at least two hypotheses, a reviewed query
+    frame, a bounded entity shape, and no sensitive/action-policy markers.
+    """
+
+    hypotheses = [utterance, *alternates]
+    if len(hypotheses) < 2 or not _informational_hypotheses_are_policy_safe(hypotheses):
+        return []
+    return _weather_informational_candidates(hypotheses) or _person_entity_informational_candidates(
+        hypotheses
     )
 
 
@@ -1089,6 +1277,7 @@ class TextSession:
         # already offered once this session (a deferred offer is not nagged
         # again — the action stays staged for the review page instead).
         self._pending_confirmation: Optional[int] = None
+        self._pending_confirmation_contract: Optional[dict[str, str]] = None
         self._offered_confirmation_ids: set[int] = set()
         # Labels from the most recently offered (and user-rejected) repair choices.
         # Passed to suggest_repair_candidates on the next offer so the model can
@@ -1252,7 +1441,7 @@ class TextSession:
         ticket_response = _ticket_request_response(utterance)
         if ticket_response is not None:
             return ticket_response
-        if any(p in lowered for p in PURCHASE_PHRASES):
+        if _looks_like_purchase_after_ticket_negation(lowered):
             return {
                 "kind": "needs_human_approval",
                 "action_type": "purchase",
@@ -1339,6 +1528,11 @@ class TextSession:
             )
         if _looks_like_media_request_question(lowered):
             return self._offer_choices(utterance)
+        informational_candidates = _informational_repair_candidates(
+            utterance, self._current_alternates
+        )
+        if informational_candidates:
+            return self._offer_informational_choices(utterance, informational_candidates)
         if _looks_like_answer_or_conversation_request(lowered):
             return self._answer(utterance)
         if "?" in utterance or lowered.startswith(("what", "how", "who", "when", "where", "why")):
@@ -1462,7 +1656,7 @@ class TextSession:
         if ticket_response is not None:
             ticket_response["speech"] = f"Cancelled the earlier draft. {ticket_response['speech']}"
             return ticket_response
-        if any(p in safety_text for p in PURCHASE_PHRASES):
+        if _looks_like_purchase_after_ticket_negation(safety_text):
             return {
                 "kind": "needs_human_approval",
                 "speech": (
@@ -1529,11 +1723,13 @@ class TextSession:
             return None
         self._offered_confirmation_ids.add(action.id)
         self._pending_confirmation = action.id
+        self._pending_confirmation_contract = self._confirmation_contract(action)
         description = self._describe_staged_action(action)
         offer = {
             "kind": "confirm_offer",
             "speech": f"Ready when you are: {description}. Shall I go ahead — yes or no?",
             "staged_action_id": action.id,
+            "confirmation_contract": dict(self._pending_confirmation_contract),
         }
         # Parker spoke first: the screen shows the offer with nothing heard.
         self._publish_screen(heard="", response=offer)
@@ -1550,14 +1746,50 @@ class TextSession:
         assert action_id is not None
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
+        if _is_confirmation_repair_rejection(normalized):
+            self._pending_confirmation = None
+            self._pending_confirmation_contract = None
+            cancel_staged_action(
+                self.db,
+                action_id,
+                cancelled_by="patient_confirmation_rejected",
+            )
+            return {
+                "kind": "confirmation_repair",
+                "speech": (
+                    "Okay — that was not the right action. I cancelled it. "
+                    "Please tell me the action again in your own words."
+                ),
+                "cancelled_staged_action_id": action_id,
+                "repair_required": True,
+            }
         reply_kind = _confirmation_reply_kind(normalized)
         if reply_kind == "yes":
             self._pending_confirmation = None
-            confirm_staged_action(self.db, action_id, confirmed_by="patient")
+            offered_contract = self._pending_confirmation_contract
+            self._pending_confirmation_contract = None
+            from app.db.models import StagedAction
+
+            action = self.db.get(StagedAction, action_id)
+            current_contract = self._confirmation_contract(action) if action is not None else None
+            if (
+                action is None
+                or action.status != "staged"
+                or offered_contract is None
+                or current_contract != offered_contract
+            ):
+                return self._confirmation_mismatch_response(action_id, action)
+            confirmed = confirm_staged_action(self.db, action_id, confirmed_by="patient")
+            if (
+                confirmed.status != "confirmed"
+                or self._confirmation_contract(confirmed) != offered_contract
+            ):
+                return self._confirmation_mismatch_response(action_id, confirmed)
             executed = execute_staged_action(self.db, action_id)
             return self._speech_for_execution(executed)
         if reply_kind == "no":
             self._pending_confirmation = None
+            self._pending_confirmation_contract = None
             cancel_staged_action(self.db, action_id, cancelled_by="patient")
             return {
                 "kind": "cancelled",
@@ -1565,7 +1797,48 @@ class TextSession:
                 "cancelled_staged_action_id": action_id,
             }
         self._pending_confirmation = None  # deferred; route the utterance normally
+        self._pending_confirmation_contract = None
         return None
+
+    def _confirmation_mismatch_response(self, action_id: int, action) -> dict[str, Any]:
+        """Cancel a stale confirmation target and request a fresh user restatement."""
+
+        from app.parker.pipeline import cancel_staged_action
+
+        if action is not None and action.status in {"staged", "confirmed"}:
+            cancel_staged_action(
+                self.db,
+                action_id,
+                cancelled_by="confirmation_contract_mismatch",
+            )
+        return {
+            "kind": "confirmation_mismatch",
+            "speech": (
+                "What is waiting no longer matches what I just read back. "
+                "I won't run it. Please tell me the action again so I can confirm the right details."
+            ),
+            "staged_action_id": action_id,
+            "repair_required": True,
+        }
+
+    @staticmethod
+    def _confirmation_contract(action) -> dict[str, str]:
+        """Fields Parker read back and must still match before spoken execution."""
+
+        import json as _json
+
+        try:
+            payload = _json.loads(action.action_payload or "{}")
+        except ValueError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        return {
+            "action_type": str(action.action_type or "").strip(),
+            "recipient": str(payload.get("recipient") or "").strip(),
+            "subject": str(payload.get("subject") or "").strip(),
+            "intent_text": str(payload.get("intent_text") or "").strip(),
+        }
 
     def _describe_staged_action(self, action) -> str:
         import json as _json
@@ -1712,7 +1985,76 @@ class TextSession:
         self._pending_alternates = list(self._current_alternates)
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
 
-    def _answer(self, utterance: str) -> dict[str, Any]:
+    def _offer_informational_choices(
+        self, utterance: str, candidates: list[InformationalRepairCandidate]
+    ) -> dict[str, Any]:
+        """Offer read-only query repairs without entering the action pipeline."""
+
+        result = execute_tool(
+            self.db,
+            self.call_log_id,
+            "offer_repair_choices",
+            {
+                "candidates": [candidate.tool_candidate() for candidate in candidates],
+                "question": "I heard two possible information requests. Did you mean:",
+            },
+        )
+        enriched_by_label = {candidate.label: candidate for candidate in candidates}
+        for choice in result.get("choices", []):
+            extra = enriched_by_label.get(choice["label"])
+            if extra is not None:
+                choice.update(
+                    selection_kind="informational_answer",
+                    answer_text=extra.resolved_query,
+                    repair_family=extra.repair_family,
+                )
+        self._pending_choices = result["choices"]
+        self._pending_utterance = utterance
+        self._pending_alternates = list(self._current_alternates)
+        return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
+
+    def _offer_research_handoff_choices(
+        self,
+        *,
+        resolved_query: str,
+        selected_interpretation: str,
+        repair_family: str,
+        repair_event_id: int | None,
+    ) -> list[dict[str, Any]]:
+        """Ask before making a repaired query visible to family review.
+
+        This is deliberately not an action-tool proposal. Both options are
+        local conversation state; only the explicit first selection creates a
+        local card, and neither option can fetch, send, purchase, submit, or
+        change an account.
+        """
+
+        choices = [
+            {
+                "position": 1,
+                "label": "leave a local research card for family",
+                "action_type": None,
+                "selection_kind": "research_handoff_create",
+                "resolved_query": resolved_query,
+                "selected_interpretation": selected_interpretation,
+                "repair_family": repair_family,
+                "repair_event_id": repair_event_id,
+            },
+            {
+                "position": 2,
+                "label": "do not create a card",
+                "action_type": None,
+                "selection_kind": "research_handoff_skip",
+            },
+        ]
+        self._pending_choices = choices
+        self._pending_utterance = resolved_query
+        self._pending_alternates = []
+        return choices
+
+    def _answer(
+        self, utterance: str, *, allow_action_proposals: bool = True
+    ) -> dict[str, Any]:
         """The informational lane: the brain when configured, the stub otherwise.
 
         Every deterministic guard has already run by the time this is
@@ -1748,7 +2090,7 @@ class TextSession:
         speech = trim_for_speech(result.reply.speech)
         if result.medical_boundary_tripped:
             response: dict[str, Any] = {"kind": "refused", "speech": speech, "flag_for_family": True}
-        elif result.reply.proposed_actions:
+        elif result.reply.proposed_actions and allow_action_proposals:
             response = self._offer_brain_actions(utterance, speech, result.reply.proposed_actions)
         else:
             response = {
@@ -1850,8 +2192,41 @@ class TextSession:
             return counting
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
+        handoff_create = next(
+            (choice for choice in choices if choice.get("selection_kind") == "research_handoff_create"),
+            None,
+        )
+        if handoff_create is not None:
+            confirmation = _confirmation_reply_kind(normalized)
+            if confirmation == "yes":
+                return self._select_choice(handoff_create, choices)
+            if confirmation == "no":
+                handoff_skip = next(
+                    choice
+                    for choice in choices
+                    if choice.get("selection_kind") == "research_handoff_skip"
+                )
+                return self._select_choice(handoff_skip, choices)
         if normalized in DISMISS_CHOICE_PHRASES or _control_negation_response(utterance) is not None:
-            none_choice = next((c for c in choices if c.get("action_type") is None), None)
+            none_choice = next(
+                (
+                    choice
+                    for choice in choices
+                    if choice.get("selection_kind") in {"none_of_these", "research_handoff_skip"}
+                ),
+                None,
+            )
+            if none_choice is None:
+                none_choice = next(
+                    (
+                        choice
+                        for choice in choices
+                        if choice.get("action_type") is None
+                        and choice.get("selection_kind")
+                        not in {"informational_answer", "research_handoff_create"}
+                    ),
+                    None,
+                )
             if none_choice is not None:
                 return self._select_choice(none_choice, choices)
             self._dismiss_pending_choices()
@@ -1875,6 +2250,62 @@ class TextSession:
         source = self._pending_utterance or choice["label"]
         alternates = self._pending_alternates
         self._dismiss_pending_choices()
+        if choice.get("selection_kind") == "research_handoff_create":
+            from app.parker.research_handoff import create_local_research_handoff
+
+            card = create_local_research_handoff(
+                self.db,
+                call_log_id=self.call_log_id,
+                query=str(choice["resolved_query"]),
+                selected_interpretation=str(choice["selected_interpretation"]),
+                repair_family=str(choice["repair_family"]),
+                repair_event_id=choice.get("repair_event_id"),
+            )
+            return {
+                "kind": "research_handoff_created",
+                "speech": (
+                    "I left a local read-only research card for family. "
+                    "It did not fetch, send, buy, submit, or change anything."
+                ),
+                "research_handoff_id": card.id,
+            }
+        if choice.get("selection_kind") == "research_handoff_skip":
+            return {
+                "kind": "research_handoff_skipped",
+                "speech": "Okay, I won't create a research card.",
+            }
+        if choice.get("selection_kind") == "informational_answer":
+            resolved_query = str(choice["answer_text"])
+            repair_event = record_repair_event(
+                self.db,
+                call_log_id=self.call_log_id,
+                utterance=source,
+                alternates=alternates,
+                choices=choices,
+                selected_position=choice["position"],
+                selected_label=choice["label"],
+                selected_action_type=None,
+            )
+            response = self._answer(resolved_query, allow_action_proposals=False)
+            handoff_choices = self._offer_research_handoff_choices(
+                resolved_query=resolved_query,
+                selected_interpretation=str(choice["label"]),
+                repair_family=str(choice.get("repair_family") or ""),
+                repair_event_id=repair_event.id if repair_event is not None else None,
+            )
+            response.update(
+                resolved_query=resolved_query,
+                informational_repair=True,
+                informational_repair_family=choice.get("repair_family"),
+                research_handoff_offered=True,
+                research_handoff_choices=handoff_choices,
+                speech=(
+                    f"{response.get('speech', '')} Should I leave this as a local research card "
+                    "for family? Say yes or 1 to leave a local research card for family; "
+                    "say no or 2 to not create a card."
+                ).strip(),
+            )
+            return response
         if choice["action_type"] is None:
             # Save the rejected labels so the next offer can generate different alternatives.
             self._prior_offered_labels = [

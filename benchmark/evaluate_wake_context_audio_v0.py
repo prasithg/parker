@@ -21,6 +21,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
+from math import isfinite
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -34,6 +35,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from app.conversation.textloop import TextSession, UtteranceContext  # noqa: E402
 from app.db.database import Base  # noqa: E402
 from app.db.models import CallLog, CapturedIntent  # noqa: E402
+from app.parker.research_handoff import LocalResearchHandoff  # noqa: E402
 import app.conversation.repair_events  # noqa: F401, E402 — register tables
 import app.escalation.models  # noqa: F401, E402
 import app.evening.session  # noqa: F401, E402
@@ -56,6 +58,7 @@ class WakeContextCase:
     safety_label: str
     provenance: dict[str, Any]
     confusion_pairs: list[str]
+    rubric: dict[str, float]
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> "WakeContextCase":
@@ -68,6 +71,7 @@ class WakeContextCase:
             "context",
             "expected",
             "safety_label",
+            "rubric",
             "confusion_pairs",
         }
         missing = required - set(row)
@@ -89,6 +93,17 @@ class WakeContextCase:
             raise ValueError(f"wake-context case {case_id} provenance must be an object")
         if not isinstance(row["confusion_pairs"], list) or not row["confusion_pairs"]:
             raise ValueError(f"wake-context case {case_id} needs confusion_pairs")
+        raw_rubric = row["rubric"]
+        if not isinstance(raw_rubric, dict) or not raw_rubric:
+            raise ValueError(f"wake-context case {case_id} rubric must be a non-empty object")
+        try:
+            rubric = {str(key): float(value) for key, value in raw_rubric.items()}
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"wake-context case {case_id} rubric weights must be numeric") from exc
+        if any(not isfinite(weight) or weight <= 0 or weight > 1 for weight in rubric.values()):
+            raise ValueError(f"wake-context case {case_id} rubric weights must be in (0, 1]")
+        if abs(sum(rubric.values()) - 1.0) > 0.001:
+            raise ValueError(f"wake-context case {case_id} rubric weights must sum to 1.0")
         return cls(
             case_id=case_id,
             source_type=str(row["source_type"]),
@@ -99,6 +114,7 @@ class WakeContextCase:
             safety_label=str(row["safety_label"]),
             provenance=row["provenance"],
             confusion_pairs=[str(item) for item in row["confusion_pairs"]],
+            rubric=rubric,
         )
 
 
@@ -155,7 +171,17 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
     with _memory_session() as db:
         session = _fresh_session(db, case.case_id)
         response = session.handle(primary, alternates=alternates, context=context)
+        selected_response: dict[str, Any] | None = None
+        handoff_response: dict[str, Any] | None = None
+        if "selection_position" in expected:
+            selected_response = session.handle(str(expected["selection_position"]), context=context)
+        if "research_handoff_selection_position" in expected:
+            handoff_response = session.handle(
+                str(expected["research_handoff_selection_position"]), context=context
+            )
         captured = db.query(CapturedIntent).count()
+        research_handoffs = db.query(LocalResearchHandoff).all()
+        research_handoff = research_handoffs[0] if len(research_handoffs) == 1 else None
 
     choices = response.get("choices") or []
     checks = {
@@ -173,8 +199,69 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
             if "first_choice_action_type" in expected
             else True
         ),
+        "first_choice_label": (
+            bool(choices) and choices[0].get("label") == expected["first_choice_label"]
+            if "first_choice_label" in expected
+            else True
+        ),
+        "choice_labels": (
+            [choice.get("label") for choice in choices] == expected["choice_labels"]
+            if "choice_labels" in expected
+            else True
+        ),
+        "selected_kind": (
+            selected_response is not None and selected_response.get("kind") == expected["selected_kind"]
+            if "selected_kind" in expected
+            else True
+        ),
+        "resolved_query": (
+            selected_response is not None
+            and selected_response.get("resolved_query") == expected["resolved_query"]
+            if "resolved_query" in expected
+            else True
+        ),
+        "informational_repair_family": (
+            selected_response is not None
+            and selected_response.get("informational_repair_family")
+            == expected["informational_repair_family"]
+            if "informational_repair_family" in expected
+            else True
+        ),
+        "research_handoff_offered": (
+            selected_response is not None
+            and bool(selected_response.get("research_handoff_offered"))
+            is bool(expected["research_handoff_offered"])
+            if "research_handoff_offered" in expected
+            else True
+        ),
+        "research_handoff_selected_kind": (
+            handoff_response is not None
+            and handoff_response.get("kind") == expected["research_handoff_selected_kind"]
+            if "research_handoff_selected_kind" in expected
+            else True
+        ),
+        "research_handoff_query": (
+            research_handoff is not None
+            and research_handoff.query == expected["research_handoff_query"]
+            if "research_handoff_query" in expected
+            else True
+        ),
+        "research_handoff_status": (
+            research_handoff is not None
+            and research_handoff.status == expected["research_handoff_status"]
+            if "research_handoff_status" in expected
+            else True
+        ),
+        "research_handoff_provenance_status": (
+            research_handoff is not None
+            and research_handoff.provenance_status
+            == expected["research_handoff_provenance_status"]
+            if "research_handoff_provenance_status" in expected
+            else True
+        ),
     }
-    unsafe = captured > 0 and expected.get("no_capture", True)
+    unexpected_handoff = bool(research_handoffs) and "research_handoff_selection_position" not in expected
+    unsafe = (captured > 0 and expected.get("no_capture", True)) or unexpected_handoff
     nuisance_choice_failure = expected.get("no_choices") and bool(choices)
     passed = all(checks.values()) and not unsafe
     return {
@@ -188,7 +275,28 @@ def _run_case(case: WakeContextCase) -> dict[str, Any]:
         "captured_intents": captured,
         "choice_count": len(choices),
         "first_choice_action_type": choices[0].get("action_type") if choices else None,
+        "first_choice_label": choices[0].get("label") if choices else None,
         "action_type": response.get("action_type"),
+        "selected_kind": selected_response.get("kind") if selected_response else None,
+        "resolved_query": selected_response.get("resolved_query") if selected_response else None,
+        "informational_repair": bool(
+            selected_response and selected_response.get("informational_repair")
+        ),
+        "informational_repair_family": (
+            selected_response.get("informational_repair_family") if selected_response else None
+        ),
+        "research_handoff_offered": bool(
+            selected_response and selected_response.get("research_handoff_offered")
+        ),
+        "research_handoff_created": research_handoff is not None,
+        "research_handoff_query": research_handoff.query if research_handoff else None,
+        "research_handoff_status": research_handoff.status if research_handoff else None,
+        "research_handoff_provenance_status": (
+            research_handoff.provenance_status if research_handoff else None
+        ),
+        "research_handoff_selected_kind": (
+            handoff_response.get("kind") if handoff_response else None
+        ),
         "checks": checks,
         "passed": passed,
         "unsafe": unsafe,
@@ -214,6 +322,12 @@ def evaluate(cases: list[WakeContextCase]) -> dict[str, Any]:
         "ambient_noop_cases": sum(1 for result in results if result["observed_kind"] == "ambient_noop"),
         "wake_answer_cases": sum(1 for result in results if result["observed_kind"] == "answer"),
         "wake_repair_choice_cases": sum(1 for result in results if result["observed_kind"] == "choices"),
+        "wake_informational_repair_answer_cases": sum(
+            1 for result in results if result["informational_repair"] and result["selected_kind"] == "answer"
+        ),
+        "wake_research_handoff_created_cases": sum(
+            1 for result in results if result["research_handoff_created"]
+        ),
         "wake_context_required_cases": sum(
             1 for result in results if result["observed_kind"] == "context_required"
         ),
@@ -288,9 +402,14 @@ def _write_reports(payload: dict[str, Any], reports_dir: Path = DEFAULT_REPORTS_
         lines.append(f"- {status} `{check['name']}`")
     lines.extend(["", "## Case breakdown", ""])
     for result in payload["results"]:
+        selection = (
+            f"; selected={result['selected_kind']}; resolved_query={result['resolved_query']!r}"
+            if result["selected_kind"]
+            else ""
+        )
         lines.append(
             "- `{case_id}`: context={context}; ASR={asr!r}; expected={expected}; "
-            "observed={observed}; choices={choices}; captured={captured}; passed={passed}".format(
+            "observed={observed}; choices={choices}; captured={captured}{selection}; passed={passed}".format(
                 case_id=result["case_id"],
                 context="addressed" if result["context"].get("addressed_to_parker") else "ambient",
                 asr=result["primary_asr"],
@@ -298,6 +417,7 @@ def _write_reports(payload: dict[str, Any], reports_dir: Path = DEFAULT_REPORTS_
                 observed=result["observed_kind"],
                 choices=result["choice_count"],
                 captured=result["captured_intents"],
+                selection=selection,
                 passed=result["passed"],
             )
         )
@@ -326,6 +446,7 @@ def main() -> None:
             f"ambient_noop={metrics['ambient_noop_cases']}; "
             f"wake_answers={metrics['wake_answer_cases']}; "
             f"wake_choices={metrics['wake_repair_choice_cases']}; "
+            f"wake_research_handoffs={metrics['wake_research_handoff_created_cases']}; "
             f"wake_context_required={metrics['wake_context_required_cases']}; "
             f"wake_refusals={metrics['wake_refusal_cases']}; "
             f"wake_captures={metrics['wake_local_capture_cases']}; "

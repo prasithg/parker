@@ -1,0 +1,181 @@
+{
+  "cases": [
+    {
+      "case_id": "rq-001-garden-neighbor",
+      "privacy": "synthetic",
+      "required_terms_any": [
+        "garden"
+      ],
+      "utterance": "Call... the... you know... the one with the garden..."
+    },
+    {
+      "case_id": "rq-002-doctor-thing",
+      "privacy": "synthetic",
+      "required_terms_any": [
+        "doctor",
+        "appointment"
+      ],
+      "utterance": "I need to... the thing... you know... the doctor thing"
+    },
+    {
+      "case_id": "rq-003-physio-morning",
+      "privacy": "synthetic",
+      "required_terms_any": [
+        "physio",
+        "morning"
+      ],
+      "utterance": "The physio said I should... every morning..."
+    },
+    {
+      "case_id": "rq-004-daughter-visit",
+      "privacy": "synthetic",
+      "required_terms_any": [
+        "daughter",
+        "visit"
+      ],
+      "utterance": "My daughter \u2014 tell her \u2014 the visit..."
+    },
+    {
+      "case_id": "rq-005-tuesday-appointment",
+      "privacy": "synthetic",
+      "required_terms_any": [
+        "tuesday",
+        "appointment"
+      ],
+      "utterance": "That... the... uh... Tuesday appointment..."
+    }
+  ],
+  "date": "2026-07-21",
+  "eval": "repair_quality_rubric_v0",
+  "grant_posture": {
+    "next_research_step": "Use this rubric as a seed for human/caregiver repair-choice grading and realtime audio slices.",
+    "required_caveat": "Synthetic proxy rubric only; not human-graded repair quality, not real patient/audio evidence, and not a claim that Parker's fallback choices are semantically good.",
+    "safe_claim": "A deterministic synthetic rubric now checks repair-choice specificity and safety; the generic no-key fallback is explicitly flagged as non-citable quality evidence."
+  },
+  "metrics": {
+    "generic_fallback_failures": 5,
+    "generic_fallback_passing_cases": 0,
+    "quality_proof_claim_allowed": false,
+    "reference_failures": 0,
+    "reference_passing_cases": 5,
+    "rubric_detects_generic_fallback": true,
+    "total_cases": 5
+  },
+  "provenance": {
+    "fixture_policy": "public synthetic/local rubric cases only",
+    "human_grade_dependency": "none; this is a proxy rubric, not human evidence",
+    "model_or_api_dependency": "none",
+    "private_data": "none"
+  },
+  "rubric_gate": {
+    "blocking_failures": 0,
+    "passed": true
+  },
+  "systems": {
+    "generic_fallback": {
+      "case_results": [
+        {
+          "case_id": "rq-001-garden-neighbor",
+          "failures": [
+            {
+              "check": "specificity",
+              "message": "choices must include one of the case-specific terms: ['garden']"
+            },
+            {
+              "check": "specificity",
+              "message": "generic phrases are not quality evidence: ['about this']"
+            }
+          ],
+          "passed": false
+        },
+        {
+          "case_id": "rq-002-doctor-thing",
+          "failures": [
+            {
+              "check": "specificity",
+              "message": "choices must include one of the case-specific terms: ['doctor', 'appointment']"
+            },
+            {
+              "check": "specificity",
+              "message": "generic phrases are not quality evidence: ['about this']"
+            }
+          ],
+          "passed": false
+        },
+        {
+          "case_id": "rq-003-physio-morning",
+          "failures": [
+            {
+              "check": "specificity",
+              "message": "choices must include one of the case-specific terms: ['physio', 'morning']"
+            },
+            {
+              "check": "specificity",
+              "message": "generic phrases are not quality evidence: ['about this']"
+            }
+          ],
+          "passed": false
+        },
+        {
+          "case_id": "rq-004-daughter-visit",
+          "failures": [
+            {
+              "check": "specificity",
+              "message": "choices must include one of the case-specific terms: ['daughter', 'visit']"
+            },
+            {
+              "check": "specificity",
+              "message": "generic phrases are not quality evidence: ['about this']"
+            }
+          ],
+          "passed": false
+        },
+        {
+          "case_id": "rq-005-tuesday-appointment",
+          "failures": [
+            {
+              "check": "specificity",
+              "message": "choices must include one of the case-specific terms: ['tuesday', 'appointment']"
+            },
+            {
+              "check": "specificity",
+              "message": "generic phrases are not quality evidence: ['about this']"
+            }
+          ],
+          "passed": false
+        }
+      ],
+      "description": "Current no-key generic fallback; intentionally expected to fail specificity."
+    },
+    "reference": {
+      "case_results": [
+        {
+          "case_id": "rq-001-garden-neighbor",
+          "failures": [],
+          "passed": true
+        },
+        {
+          "case_id": "rq-002-doctor-thing",
+          "failures": [],
+          "passed": true
+        },
+        {
+          "case_id": "rq-003-physio-morning",
+          "failures": [],
+          "passed": true
+        },
+        {
+          "case_id": "rq-004-daughter-visit",
+          "failures": [],
+          "passed": true
+        },
+        {
+          "case_id": "rq-005-tuesday-appointment",
+          "failures": [],
+          "passed": true
+        }
+      ],
+      "description": "Curated synthetic repair choices that satisfy the proxy rubric."
+    }
+  }
+}

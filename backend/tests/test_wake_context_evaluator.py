@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from benchmark.evaluate_wake_context_audio_v0 import (  # type: ignore[import-not-found] # noqa: E402
@@ -23,14 +25,16 @@ def test_wake_context_cases_pass_and_cover_context_lanes() -> None:
     payload = evaluate(cases)
     metrics = payload["metrics"]
 
-    assert metrics["total_cases"] == 13
-    assert metrics["public_corpus_audio_derived_cases"] == 12
+    assert metrics["total_cases"] == 14
+    assert metrics["public_corpus_audio_derived_cases"] == 13
     assert metrics["synthetic_audio_derived_cases"] == 1
     assert metrics["ambient_cases"] == 3
-    assert metrics["wake_confirmed_cases"] == 10
+    assert metrics["wake_confirmed_cases"] == 11
     assert metrics["ambient_noop_cases"] == 3
-    assert metrics["wake_answer_cases"] == 4
-    assert metrics["wake_repair_choice_cases"] == 1
+    assert metrics["wake_answer_cases"] == 3
+    assert metrics["wake_repair_choice_cases"] == 3
+    assert metrics["wake_informational_repair_answer_cases"] == 2
+    assert metrics["wake_research_handoff_created_cases"] == 1
     assert metrics["wake_context_required_cases"] == 1
     assert metrics["wake_refusal_cases"] == 2
     assert metrics["wake_local_capture_cases"] == 1
@@ -63,7 +67,20 @@ def test_wake_context_wake_rows_split_answers_from_confirmation_gated_actions() 
 
     assert by_id["wake-004-slurp-wake-chat-answer"]["observed_kind"] == "answer"
     assert by_id["wake-005-slurp-wake-events-answer"]["observed_kind"] == "answer"
-    assert by_id["wake-007-slurp-wake-info-answer"]["observed_kind"] == "answer"
+    person = by_id["wake-007-slurp-wake-info-answer"]
+    assert person["observed_kind"] == "choices"
+    assert person["first_choice_label"] == "information about Martin Jackson"
+    assert person["selected_kind"] == "answer"
+    assert person["resolved_query"] == "Tell me about Michael Jackson."
+    assert person["informational_repair_family"] == "person_entity"
+    assert person["research_handoff_offered"] is True
+    assert person["research_handoff_created"] is True
+    assert person["research_handoff_query"] == "Tell me about Michael Jackson."
+    assert person["research_handoff_status"] == "ready"
+    assert person["research_handoff_provenance_status"] == (
+        "user_confirmed_interpretation_no_external_source_fetched"
+    )
+    assert person["captured_intents"] == 0
     media = by_id["wake-006-slurp-wake-media-still-repairs"]
     assert media["observed_kind"] == "choices"
     assert media["first_choice_action_type"] == "media_playlist"
@@ -75,6 +92,14 @@ def test_wake_context_wake_rows_split_answers_from_confirmation_gated_actions() 
     assert lookup["observed_kind"] == "answer"
     assert lookup["action_type"] == "item_search"
     assert lookup["captured_intents"] == 0
+    weather = by_id["wake-014-slurp-weather-place-informational-repair"]
+    assert weather["observed_kind"] == "choices"
+    assert weather["first_choice_label"] == "look up the current weather in Orange, Texas"
+    assert weather["selected_kind"] == "answer"
+    assert weather["resolved_query"] == "What is the current weather in Orange, Texas?"
+    assert weather["research_handoff_offered"] is True
+    assert weather["research_handoff_created"] is False
+    assert weather["captured_intents"] == 0
 
 
 def test_wake_context_wake_rows_preserve_safety_boundaries_after_wake() -> None:
@@ -111,7 +136,26 @@ def test_wake_context_cli_json_outputs_gate() -> None:
     payload = json.loads(completed.stdout)
     assert payload["eval"] == "wake_context_audio_v0"
     assert payload["gate"]["passed"] is True
-    assert payload["metrics"]["total_cases"] == 13
+    assert payload["metrics"]["total_cases"] == 14
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda row: row.pop("rubric"), "missing fields"),
+        (lambda row: row.__setitem__("rubric", {"incomplete": 0.9}), "sum to 1.0"),
+    ],
+)
+def test_wake_context_cases_require_complete_weighted_rubric(
+    tmp_path: Path, mutation, message: str
+) -> None:
+    payload = json.loads(DEFAULT_CASES_PATH.read_text())
+    mutation(payload["cases"][0])
+    bad_path = tmp_path / "bad-wake-cases.json"
+    bad_path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match=message):
+        load_cases(bad_path)
 
 
 def test_makefile_exposes_wake_context_eval() -> None:

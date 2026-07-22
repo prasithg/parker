@@ -1,5 +1,10 @@
 """Text-loop routing tests: the transcript-capture seam over the tool layer."""
 
+import json
+
+import pytest
+
+from app.brain.adapter import BrainContext, BrainReply, ProposedAction
 from app.conversation.textloop import TextSession, UtteranceContext
 from app.db.models import CallLog, CapturedIntent, OutboxMessage
 from app.parker.pipeline import (
@@ -10,12 +15,31 @@ from app.parker.pipeline import (
 )
 
 
-def _session(db):
+def _session(db, **kwargs):
     call = CallLog(call_sid="CA_TEXTLOOP", call_type="text_loop")
     db.add(call)
     db.commit()
     db.refresh(call)
-    return TextSession(db, call.id)
+    return TextSession(db, call.id, **kwargs)
+
+
+class _ProposingAnswerBrain:
+    def __init__(self):
+        self.utterances: list[str] = []
+
+    def respond(self, history, utterance, context):
+        self.utterances.append(utterance)
+        return BrainReply(
+            speech="I would answer the repaired query here.",
+            proposed_actions=(
+                ProposedAction(
+                    action_type="reminder",
+                    label="set a reminder about the weather",
+                    subject="weather",
+                    intent_text="remind me about the weather",
+                ),
+            ),
+        )
 
 
 def test_medication_change_is_refused_with_no_side_effects(db):
@@ -118,6 +142,48 @@ def test_ticket_boundary_preserves_nonpurchase_reminders_and_messages(db):
     assert message["kind"] == "captured"
     saved = db.query(CapturedIntent).order_by(CapturedIntent.id).all()
     assert [row.requested_action for row in saved] == ["remind", "message"]
+
+
+def test_negated_ticket_intents_do_not_become_purchase_holds(db):
+    session = _session(db)
+
+    lookup = session.handle("Don't buy tickets, just look up concert times for Saturday night.")
+    abandoned = session.handle("I don't want tickets anymore. Cancel that.")
+
+    assert lookup["kind"] == "answer"
+    assert lookup["action_type"] == "item_search"
+    assert lookup["purchase_permitted"] is False
+    assert abandoned["kind"] == "noop"
+    assert "won't" in abandoned["speech"].lower()
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_negated_ticket_clause_does_not_hide_a_later_positive_purchase_request(db):
+    session = _session(db)
+
+    response = session.handle("Don't buy these tickets; buy the Sunday tickets instead.")
+
+    assert response["kind"] == "needs_human_approval"
+    assert response["action_type"] == "purchase"
+    assert response["purchase_permitted"] is False
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_compound_family_message_can_quote_negated_ticket_intent(db):
+    session = _session(db)
+
+    want_message = session.handle("Tell Sarah I don't want tickets anymore.")
+    buy_message = session.handle("Tell Sarah don't buy tickets for me.")
+
+    assert want_message["kind"] == "captured"
+    assert buy_message["kind"] == "captured"
+    saved = db.query(CapturedIntent).order_by(CapturedIntent.id).all()
+    assert [row.requested_action for row in saved] == ["message", "message"]
+    assert [row.recipient for row in saved] == ["Sarah", "Sarah"]
+    assert [row.intent_text for row in saved] == [
+        "I don't want tickets anymore.",
+        "don't buy tickets for me.",
+    ]
 
 
 def test_ticket_phrase_matching_uses_word_boundaries(db):
@@ -253,6 +319,143 @@ def test_wake_confirmed_conversation_and_answer_cues_do_not_offer_generic_choice
     assert db.query(CapturedIntent).count() == 0
 
 
+def test_wake_confirmed_weather_nbest_disagreement_repairs_before_read_only_answer(db):
+    brain = _ProposingAnswerBrain()
+    session = _session(db, brain=brain, brain_context=BrainContext())
+    context = UtteranceContext(addressed_to_parker=True, source="wake_confirmed")
+
+    offered = session.handle(
+        "What kind of weather they have been orange? TX right now.",
+        alternates=["What kind of web are they having orange TX right now?"],
+        context=context,
+    )
+
+    assert offered["kind"] == "choices"
+    assert [choice["label"] for choice in offered["choices"]] == [
+        "look up the current weather in Orange, Texas",
+        "answer a general question about Orange, Texas",
+        "none of these",
+    ]
+    assert all(choice["action_type"] is None for choice in offered["choices"])
+    assert db.query(CapturedIntent).count() == 0
+
+    answered = session.handle("1")
+
+    assert answered["kind"] == "answer"
+    assert answered["speech"].startswith("I would answer the repaired query here.")
+    assert answered["research_handoff_offered"] is True
+    assert [choice["label"] for choice in answered["research_handoff_choices"]] == [
+        "leave a local research card for family",
+        "do not create a card",
+    ]
+    assert "choices" not in answered
+    assert answered["resolved_query"] == "What is the current weather in Orange, Texas?"
+    assert answered["informational_repair"] is True
+    assert brain.utterances == ["What is the current weather in Orange, Texas?"]
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_wake_confirmed_person_entity_nbest_disagreement_repairs_before_read_only_answer(db):
+    brain = _ProposingAnswerBrain()
+    session = _session(db, brain=brain, brain_context=BrainContext())
+    context = UtteranceContext(addressed_to_parker=True, source="wake_confirmed")
+
+    offered = session.handle(
+        "Please give me information on Martin Jackson.",
+        alternates=["Please give me information on Michael Jackson."],
+        context=context,
+    )
+
+    assert offered["kind"] == "choices"
+    assert [choice["label"] for choice in offered["choices"]] == [
+        "information about Martin Jackson",
+        "information about Michael Jackson",
+        "none of these",
+    ]
+    assert all(choice["action_type"] is None for choice in offered["choices"])
+    assert db.query(CapturedIntent).count() == 0
+
+    answered = session.handle("2")
+
+    assert answered["kind"] == "answer"
+    assert answered["speech"].startswith("I would answer the repaired query here.")
+    assert answered["research_handoff_offered"] is True
+    assert [choice["label"] for choice in answered["research_handoff_choices"]] == [
+        "leave a local research card for family",
+        "do not create a card",
+    ]
+    assert answered["resolved_query"] == "Tell me about Michael Jackson."
+    assert answered["informational_repair"] is True
+    assert answered["informational_repair_family"] == "person_entity"
+    assert brain.utterances == ["Tell me about Michael Jackson."]
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_person_entity_informational_repair_respects_ambient_and_verbal_dismissal(db):
+    primary = "Please give me information on Martin Jackson."
+    alternate = "Please give me information on Michael Jackson."
+
+    session = _session(db)
+    ambient = session.handle(
+        primary,
+        alternates=[alternate],
+        context=UtteranceContext(addressed_to_parker=False, source="ambient_audio_window"),
+    )
+    offered = session.handle(
+        primary,
+        alternates=[alternate],
+        context=UtteranceContext(addressed_to_parker=True, source="wake_confirmed"),
+    )
+    dismissed = session.handle("never mind")
+
+    assert ambient["kind"] == "ambient_noop"
+    assert ambient["speech"] == ""
+    assert offered["kind"] == "choices"
+    assert dismissed["kind"] == "retry"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_person_entity_informational_repair_requires_same_surname(db):
+    session = _session(db)
+    context = UtteranceContext(addressed_to_parker=True, source="wake_confirmed")
+
+    response = session.handle(
+        "Please give me information on Martin Jackson.",
+        alternates=["Please give me information on Michael Jordan."],
+        context=context,
+    )
+
+    assert response["kind"] == "answer"
+    assert "choices" not in response
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_weather_informational_repair_respects_ambient_and_none_of_these(db):
+    primary = "What kind of weather they have been orange? TX right now."
+    alternate = "What kind of web are they having orange TX right now?"
+
+    ambient_session = _session(db)
+    ambient = ambient_session.handle(
+        primary,
+        alternates=[alternate],
+        context=UtteranceContext(addressed_to_parker=False, source="ambient_audio_window"),
+    )
+    assert ambient["kind"] == "ambient_noop"
+    assert ambient["speech"] == ""
+
+    directed_session = ambient_session
+    offered = directed_session.handle(
+        primary,
+        alternates=[alternate],
+        context=UtteranceContext(addressed_to_parker=True, source="wake_confirmed"),
+    )
+    dismissed = directed_session.handle("3")
+
+    assert offered["kind"] == "choices"
+    assert dismissed["kind"] == "retry"
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_question_shaped_youtube_asr_gets_media_repair_choices(db):
     session = _session(db)
 
@@ -378,6 +581,100 @@ def test_text_message_cannot_bypass_confirmation_gate(db):
     assert saved.recipient == "Sarah"
     assert "coming home" in saved.intent_text
     assert db.query(CapturedIntent).count() == 1
+
+
+@pytest.mark.parametrize("mutated_field", ["recipient", "action_type", "subject"])
+def test_confirmation_restatement_mismatch_repairs_without_execution(db, mutated_field):
+    """A spoken yes is bound to the recipient/action/subject Parker read back."""
+
+    session = _session(db)
+    session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+    offer = session.offer_pending_confirmation()
+    assert offer is not None
+    assert "Sarah" in offer["speech"]
+
+    payload = json.loads(action.action_payload)
+    if mutated_field == "recipient":
+        payload["recipient"] = "Michael"
+        action.action_payload = json.dumps(payload)
+    elif mutated_field == "action_type":
+        action.action_type = "reminder"
+    else:
+        payload["subject"] = "message Michael"
+        action.action_payload = json.dumps(payload)
+    db.commit()
+
+    response = session.handle("Yes.")
+
+    db.refresh(action)
+    assert response["kind"] == "confirmation_mismatch"
+    assert response["repair_required"] is True
+    assert response["staged_action_id"] == action.id
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "confirmation_contract_mismatch"
+    assert action.confirmed_at is None
+    assert db.query(OutboxMessage).count() == 0
+
+
+def test_confirmation_contract_rechecked_after_confirmation_commit(db, monkeypatch):
+    """A mutation exposed by confirmation refresh cannot cross into execution."""
+
+    from app.parker import pipeline
+
+    session = _session(db)
+    session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+    assert session.offer_pending_confirmation() is not None
+    real_confirm = pipeline.confirm_staged_action
+
+    def confirm_then_mutate(*args, **kwargs):
+        confirmed = real_confirm(*args, **kwargs)
+        payload = json.loads(confirmed.action_payload)
+        payload["recipient"] = "Michael"
+        confirmed.action_payload = json.dumps(payload)
+        db.commit()
+        db.refresh(confirmed)
+        return confirmed
+
+    monkeypatch.setattr(pipeline, "confirm_staged_action", confirm_then_mutate)
+
+    response = session.handle("Yes.")
+
+    db.refresh(action)
+    assert response["kind"] == "confirmation_mismatch"
+    assert response["repair_required"] is True
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "confirmation_contract_mismatch"
+    assert db.query(OutboxMessage).count() == 0
+
+
+def test_none_of_these_interrupts_pending_confirmation_and_cancels_stale_action(db):
+    """A repair rejection during readback cannot leave a stale yes target alive."""
+
+    session = _session(db)
+    session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+    offer = session.offer_pending_confirmation()
+    assert offer is not None
+
+    response = session.handle("None... none of these.")
+    stale_execute = execute_staged_action(db, action.id)
+    follow_up = session.handle("Yes.")
+
+    db.refresh(action)
+    assert response["kind"] == "confirmation_repair"
+    assert response["repair_required"] is True
+    assert response["cancelled_staged_action_id"] == action.id
+    assert "again" in response["speech"].lower()
+    assert action.status == stale_execute.status == "cancelled"
+    assert action.cancelled_by == "patient_confirmation_rejected"
+    assert action.confirmed_at is None
+    assert follow_up["kind"] == "noop"
+    assert db.query(OutboxMessage).count() == 0
 
 
 def test_changed_mind_interruption_cancels_staged_draft_and_captures_revised_reminder(db):
