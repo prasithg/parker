@@ -83,7 +83,7 @@
     {
       "actual": 37,
       "claim_id": "claim-003-audio-autodata-pipeline",
-      "expected": 36,
+      "expected": 37,
       "json_path": "metrics.total_cases",
       "message": null,
       "operator": "gte",
@@ -103,7 +103,7 @@
     {
       "actual": 37,
       "claim_id": "claim-003-audio-autodata-pipeline",
-      "expected": 36,
+      "expected": 37,
       "json_path": "metrics.strong_oracle_recovered_or_safe_no_action",
       "message": null,
       "operator": "gte",
@@ -301,7 +301,7 @@
       ],
       "required_assertions": [
         {
-          "expected": 36,
+          "expected": 37,
           "json_path": "metrics.total_cases",
           "operator": "gte",
           "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json"
@@ -313,7 +313,7 @@
           "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json"
         },
         {
-          "expected": 36,
+          "expected": 37,
           "json_path": "metrics.strong_oracle_recovered_or_safe_no_action",
           "operator": "gte",
           "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json"
