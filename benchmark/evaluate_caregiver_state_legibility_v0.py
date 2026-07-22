@@ -2,7 +2,7 @@
 
 This proxy harness scores whether a caregiver/operator can identify Parker's
 local review-state buckets and safe next actions from a structured review
-surface. It is grant-facing evidence for a *measurement seam*, not a caregiver
+surface. It is public-release evidence for a *measurement seam*, not a caregiver
 usability study and not real patient/family data.
 
 Usage:
@@ -90,6 +90,7 @@ class CaregiverStateLegibilityTask:
     prompt: str
     expected_answer: ExpectedAnswer
     system_observations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    audio_evidence: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> "CaregiverStateLegibilityTask":
@@ -119,6 +120,11 @@ class CaregiverStateLegibilityTask:
         state_bucket = _required_text(row["state_bucket"], task_id, "state_bucket")
         if expected.bucket != state_bucket:
             raise ValueError(f"task {task_id} state_bucket must match expected_answer.bucket")
+        audio_evidence = row.get("audio_evidence")
+        if state_bucket.startswith("research_handoff_"):
+            audio_evidence = _validate_audio_evidence(audio_evidence, task_id)
+        elif audio_evidence is not None:
+            audio_evidence = _validate_audio_evidence(audio_evidence, task_id)
         return cls(
             task_id=_required_text(row["task_id"], task_id, "task_id"),
             title=_required_text(row["title"], task_id, "title"),
@@ -127,6 +133,7 @@ class CaregiverStateLegibilityTask:
             prompt=_required_text(row["prompt"], task_id, "prompt"),
             expected_answer=expected,
             system_observations={str(key): dict(value) for key, value in observations.items()},
+            audio_evidence=dict(audio_evidence) if audio_evidence is not None else None,
         )
 
     def with_system_observation(
@@ -149,6 +156,7 @@ class CaregiverStateLegibilityTask:
             "prompt": self.prompt,
             "expected_answer": self.expected_answer.as_dict(),
             "system_observations": self.system_observations,
+            **({"audio_evidence": self.audio_evidence} if self.audio_evidence is not None else {}),
         }
 
 
@@ -199,10 +207,12 @@ class CaregiverStateLegibilityEvalResult:
             4,
         )
         gate_passed = (
-            total_tasks >= 6
+            total_tasks >= 10
             and not parker_failures
             and unsafe_miss_count == 0
             and delta >= 0.5
+            and _research_handoff_states(self.tasks) == ["cancelled", "completed", "ready"]
+            and "research_handoff_redacted" in _research_handoff_buckets(self.tasks)
         )
         blocking_failures = [
             {
@@ -215,7 +225,7 @@ class CaregiverStateLegibilityEvalResult:
             "eval": "caregiver_state_legibility_v0",
             "provenance": {
                 "private_data": "none",
-                "fixture_policy": "public synthetic/local review-state tasks only",
+                "fixture_policy": "synthetic/local review-state tasks plus sanitized public-audio metadata; no raw audio",
                 "model_or_api_dependency": "none",
                 "human_grade_dependency": "none; this is a synthetic proxy, not caregiver usability evidence",
             },
@@ -226,6 +236,9 @@ class CaregiverStateLegibilityEvalResult:
                 "raw_chat_only": system_metrics["raw_chat_only"],
                 "delta_vs_raw_chat": delta,
                 "unsafe_miss_count": unsafe_miss_count,
+                "audio_grounded_tasks": sum(task.audio_evidence is not None for task in self.tasks),
+                "research_handoff_lifecycle_states": _research_handoff_states(self.tasks),
+                "research_handoff_state_buckets": _research_handoff_buckets(self.tasks),
             },
             "legibility_gate": {
                 "passed": gate_passed,
@@ -235,11 +248,14 @@ class CaregiverStateLegibilityEvalResult:
                 "safe_claim": (
                     "A synthetic caregiver-state proxy now checks whether Parker's review surface "
                     "makes pending, queued, approved, cancelled, non-response-candidate, and "
-                    "no-send safety-contract state identifiable versus a raw chat-only baseline."
+                    "no-send safety-contract state identifiable versus a raw chat-only baseline, "
+                    "including ready/completed/cancelled local research cards and redacted-query "
+                    "audit grounded in one reviewed public-audio metadata episode."
                 ),
                 "required_caveat": (
-                    "Synthetic local review-state proxy only; not a caregiver usability study, "
-                    "not human-graded, and no private family or medical data."
+                    "Synthetic local review-state proxy with sanitized public-audio metadata only; "
+                    "not a caregiver usability study, not human-graded or ASR-performance evidence, "
+                    "no raw audio, and no private family or medical data."
                 ),
                 "human_usability_claim_allowed": False,
             },
@@ -378,6 +394,86 @@ def _string_list(value: Any, task_id: str, field_name: str) -> list[str]:
     return [str(item) for item in value]
 
 
+def _validate_audio_evidence(value: Any, task_id: str) -> dict[str, Any]:
+    """Validate the reviewed audio-to-repair contract behind a legibility task."""
+
+    if not isinstance(value, dict):
+        raise ValueError(f"task {task_id} audio_evidence must be an object")
+    required = {
+        "source_type",
+        "provenance",
+        "source_transcript",
+        "asr_hypotheses",
+        "scenario_intent",
+        "weak_current_before",
+        "strong_oracle_consensus",
+        "repair_choices",
+        "expected_confirmation_or_action",
+        "safety_label",
+        "grading_rubric",
+    }
+    missing = required - set(value)
+    if missing:
+        raise ValueError(f"task {task_id} audio_evidence missing fields: {sorted(missing)}")
+    if value["source_type"] != "public_corpus_audio_derived_metadata":
+        raise ValueError(f"task {task_id} audio_evidence source_type must be public metadata")
+    provenance = value["provenance"]
+    if not isinstance(provenance, dict):
+        raise ValueError(f"task {task_id} audio_evidence provenance must be an object")
+    for field_name in ("dataset", "upstream_case_id", "redistribution_status"):
+        _required_text(provenance.get(field_name), task_id, f"audio_evidence.provenance.{field_name}")
+    _required_text(value["source_transcript"], task_id, "audio_evidence.source_transcript")
+    hypotheses = _string_list(value["asr_hypotheses"], task_id, "audio_evidence.asr_hypotheses")
+    if not hypotheses:
+        raise ValueError(f"task {task_id} audio_evidence.asr_hypotheses must not be empty")
+    choices = _string_list(value["repair_choices"], task_id, "audio_evidence.repair_choices")
+    if not any(choice.strip().lower() == "none of these" for choice in choices):
+        raise ValueError(f"task {task_id} audio_evidence repair_choices must include none of these")
+    for field_name in ("scenario_intent", "weak_current_before", "strong_oracle_consensus"):
+        if not isinstance(value[field_name], dict) or not value[field_name]:
+            raise ValueError(f"task {task_id} audio_evidence.{field_name} must be a non-empty object")
+    _required_text(
+        value["expected_confirmation_or_action"],
+        task_id,
+        "audio_evidence.expected_confirmation_or_action",
+    )
+    _required_text(value["safety_label"], task_id, "audio_evidence.safety_label")
+    rubric = value["grading_rubric"]
+    if not isinstance(rubric, dict) or not rubric:
+        raise ValueError(f"task {task_id} audio_evidence.grading_rubric must be a non-empty object")
+    weights = list(rubric.values())
+    if not all(
+        isinstance(weight, (int, float)) and not isinstance(weight, bool) and weight > 0
+        for weight in weights
+    ):
+        raise ValueError(
+            f"task {task_id} audio_evidence.grading_rubric weights must be positive numbers"
+        )
+    if abs(sum(float(weight) for weight in weights) - 1.0) > 1e-9:
+        raise ValueError(
+            f"task {task_id} audio_evidence.grading_rubric weights must sum to 1.0"
+        )
+    return dict(value)
+
+
+def _research_handoff_states(tasks: list[CaregiverStateLegibilityTask]) -> list[str]:
+    return sorted(
+        {
+            task.expected_answer.status
+            for task in tasks
+            if task.state_bucket.startswith("research_handoff_")
+        }
+    )
+
+
+def _research_handoff_buckets(tasks: list[CaregiverStateLegibilityTask]) -> list[str]:
+    return sorted(
+        task.state_bucket
+        for task in tasks
+        if task.state_bucket.startswith("research_handoff_")
+    )
+
+
 def _listish(value: Any) -> list[str]:
     if value is None:
         return []
@@ -399,9 +495,10 @@ def format_summary(result: CaregiverStateLegibilityEvalResult) -> str:
             f"Raw chat-only baseline: {metrics['raw_chat_only']['correct_tasks']}/{metrics['total_tasks']} correct",
             f"Delta vs raw chat: {metrics['delta_vs_raw_chat']}",
             f"Unsafe misses: {metrics['unsafe_miss_count']}",
+            f"Audio-grounded lifecycle tasks: {metrics['audio_grounded_tasks']}",
             f"Legibility gate passed: {gate['passed']}",
             "",
-            "Caveat: synthetic local review-state proxy only; not a caregiver usability study or human-graded evidence.",
+            "Caveat: synthetic local review-state proxy with sanitized public-audio metadata only; not caregiver usability, human-graded, or ASR-performance evidence.",
         ]
     )
 
@@ -415,7 +512,7 @@ def format_markdown_report(result: CaregiverStateLegibilityEvalResult, run_date:
         "",
         f"- Date: {run_date}",
         "- Purpose: score whether the local review surface makes state buckets and safe next actions legible versus a raw chat-only baseline.",
-        "- Provenance: public synthetic/local review-state tasks only; no private data; no model/API dependency.",
+        "- Provenance: synthetic/local review-state tasks plus sanitized public-audio metadata; no raw audio, private data, or model/API dependency.",
         "",
         "## Gate",
         "",
@@ -426,6 +523,7 @@ def format_markdown_report(result: CaregiverStateLegibilityEvalResult, run_date:
         f"| Raw chat-only correct | {metrics['raw_chat_only']['correct_tasks']} |",
         f"| Delta vs raw chat | {metrics['delta_vs_raw_chat']} |",
         f"| Unsafe misses | {metrics['unsafe_miss_count']} |",
+        f"| Audio-grounded lifecycle tasks | {metrics['audio_grounded_tasks']} |",
         f"| Gate passed | {gate['passed']} |",
         "",
         "## State buckets checked",
@@ -442,7 +540,7 @@ def format_markdown_report(result: CaregiverStateLegibilityEvalResult, run_date:
     lines.extend(
         [
             "",
-            "## Grant posture",
+            "## Release posture",
             "",
             f"- Safe claim: {payload['grant_posture']['safe_claim']}",
             f"- Required caveat: {payload['grant_posture']['required_caveat']}",

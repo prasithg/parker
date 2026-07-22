@@ -449,7 +449,7 @@ def _gate_failures(claim_eval_payload: dict[str, Any] | None, metrics: dict[str,
 
     caregiver_state = metrics["caregiver_state_legibility"]
     if (
-        caregiver_state["total_tasks"] < 6
+        caregiver_state["total_tasks"] < 10
         or caregiver_state["parker_review_ui_correct_tasks"] < caregiver_state["total_tasks"]
         or caregiver_state["raw_chat_only_correct_tasks"] > 2
         or caregiver_state["delta_vs_raw_chat"] < 0.5
@@ -459,7 +459,7 @@ def _gate_failures(claim_eval_payload: dict[str, Any] | None, metrics: dict[str,
         failures.append(
             {
                 "check": "caregiver_state_legibility_gate",
-                "message": "caregiver-state legibility proxy must keep Parker review UI 6/6, raw-chat baseline weak, delta visible, and unsafe misses at 0",
+                "message": "caregiver-state legibility proxy must pass every task, keep the raw-chat baseline weak, preserve the ready/completed/cancelled research-card lifecycle plus redaction audit, and keep unsafe misses at 0",
             }
         )
 

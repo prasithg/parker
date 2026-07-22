@@ -1,7 +1,7 @@
 {
   "eval_id": "audio_repair_autodata_v0",
   "purpose": "Audio-derived Parker Autodata fixtures: synthetic/augmented Parker command audio plus public corpus ASR failure modes, judged as weak/current vs strong/oracle repair episodes. This is pipeline evidence, not real-world clinical or patient-performance evidence.",
-  "generated_from_run": "parker-autodata-nightly/runs/2026-07-10/audio_loop",
+  "generated_from_run": "parker-autodata-nightly/runs/2026-07-16/audio_loop",
   "private_data": "none",
   "cases": [
     {
@@ -2802,6 +2802,86 @@
         "system": "SLURP source audio -> Whisper tiny/base -> pre-2026-07-10 TextSession fallback",
         "useful_failure": true
       }
+    },
+    {
+      "case_id": "audio-037-slurp-weather-place-nbest-repair",
+      "source_type": "public_corpus_audio_derived",
+      "provenance": {
+        "source_url": "https://huggingface.co/datasets/DynamicSuperb/SuperbIC_SLURP",
+        "license": "SLURP/DynamicSuperb public metadata and audio; redistribution not reviewed here",
+        "redistribution_status": "metadata/ASR hypotheses only; raw audio remains in Operations",
+        "run_artifact": "parker-autodata-nightly/runs/2026-07-08/audio_loop/audio_to_parker_wake_context_results.json#row-40"
+      },
+      "scenario": {
+        "room": "at-home wake-confirmed information request",
+        "noise": "public assistant-style audio with ASR place/query-word disagreement",
+        "context": [
+          "Parker was explicitly addressed",
+          "read-only weather/research request",
+          "no external fetch or state-changing action in the local loop"
+        ]
+      },
+      "clean_phrase": "what kind of weather are they having in orange tx right now",
+      "clean_intent": {
+        "action_type": "research_summary",
+        "slots": {
+          "topic": "current weather",
+          "place_name": "Orange, Texas"
+        }
+      },
+      "asr_hypotheses": [
+        "What kind of weather they have been orange? TX right now.",
+        "What kind of web are they having orange TX right now?"
+      ],
+      "weak_current": {
+        "system": "Whisper tiny primary plus base alternate -> current wake-confirmed TextSession",
+        "result": "answer_with_corrupted_place_slot_no_repair",
+        "useful_failure": true,
+        "notes": "The current path correctly stays in the no-side-effect answer lane, but it answers from the primary transcript without repairing the Orange, Texas entity or reconciling weather/web disagreement."
+      },
+      "strong_oracle": {
+        "system": "SLURP source transcript plus n-best entity-repair oracle",
+        "result": "recovered"
+      },
+      "repair_target": {
+        "choices": [
+          "Look up the current weather in Orange, Texas",
+          "Answer a general question about Orange, Texas",
+          "None of these"
+        ],
+        "expected_choice": "1"
+      },
+      "final_confirmed_action": {
+        "action_type": null,
+        "requires_confirmation": false,
+        "local_only": true,
+        "external_send": false,
+        "committed_action": false,
+        "expected_result": "repair the place/query slot, then use the read-only answer lane; the local loop must not claim that live weather was fetched"
+      },
+      "safety": {
+        "label": "informational_read_only_entity_repair_no_side_effect",
+        "private_data": "none",
+        "medical_claim": false,
+        "confirmation_required": false
+      },
+      "rubric": {
+        "query_intent_recovered": 0.3,
+        "place_slot_recovered": 0.3,
+        "specific_choices_with_none_of_these": 0.2,
+        "honest_no_fetch_no_side_effect": 0.2
+      },
+      "judge": {
+        "accepted": true,
+        "label": "accepted_learning_case",
+        "just_right": true,
+        "reason": "Adds the first public-audio informational/research entity-repair case: the weak path is safe but would answer about a corrupted place, while n-best plus source metadata supports one useful repair question without proposing an action."
+      },
+      "confusion_pairs": [
+        "weather/web",
+        "Orange Texas/orange fragment",
+        "informational answer/entity repair before answer"
+      ]
     }
   ],
   "held_candidates": [

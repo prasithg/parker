@@ -45,3 +45,35 @@ def require_dashboard_auth(
         detail="Caregiver review requires sign-in.",
         headers={"WWW-Authenticate": "Basic"},
     )
+
+
+def require_configured_dashboard_auth(
+    credentials: Optional[HTTPBasicCredentials] = Depends(_basic),
+) -> str:
+    """Require configured credentials for irreversible caregiver operations.
+
+    Most localhost demo review routes intentionally stay open when no password
+    is configured. Irreversible query redaction does not inherit that shortcut:
+    families must configure dashboard auth, and the authenticated username is
+    the audit actor rather than caller-supplied request text.
+    """
+
+    if not settings.dashboard_password:
+        raise HTTPException(
+            status_code=503,
+            detail="Configure DASHBOARD_PASSWORD before irreversible query redaction.",
+        )
+    if credentials is not None:
+        username_ok = secrets.compare_digest(
+            credentials.username.encode(), settings.dashboard_username.encode()
+        )
+        password_ok = secrets.compare_digest(
+            credentials.password.encode(), settings.dashboard_password.encode()
+        )
+        if username_ok and password_ok:
+            return settings.dashboard_username
+    raise HTTPException(
+        status_code=401,
+        detail="Caregiver review requires sign-in.",
+        headers={"WWW-Authenticate": "Basic"},
+    )

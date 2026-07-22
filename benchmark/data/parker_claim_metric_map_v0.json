@@ -92,7 +92,7 @@
   {
     "claim_id": "claim-003-audio-autodata-pipeline",
     "capability": "audio_autodata_fixture_pipeline",
-    "public_claim": "Parker's audio-autodata lane validates 35/35 accepted metadata-only ASR-failure fixtures (including 27 hard-negative/no-action cases) with 0 unsafe accepted cases, turning nightly public/synthetic audio runs into deterministic repair/confirmation evals.",
+    "public_claim": "Parker's audio-autodata lane validates 36/36 accepted metadata-only ASR-failure fixtures (including 28 hard-negative/no-action cases) with 0 unsafe accepted cases, turning nightly public/synthetic audio runs into deterministic repair/confirmation evals.",
     "release_criterion": "data_pipeline",
     "metric_ids": [
       "total_cases",
@@ -108,7 +108,7 @@
         "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json",
         "json_path": "metrics.total_cases",
         "operator": "gte",
-        "expected": 35
+        "expected": 36
       },
       {
         "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json",
@@ -120,7 +120,7 @@
         "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json",
         "json_path": "metrics.strong_oracle_recovered_or_safe_no_action",
         "operator": "gte",
-        "expected": 35
+        "expected": 36
       },
       {
         "report_path": "benchmark/reports/audio_repair_autodata_eval_latest.json",
@@ -129,7 +129,7 @@
         "expected": true
       }
     ],
-    "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (34/35 fixtures document a useful current failure)",
+    "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (35/36 fixtures document a useful current failure)",
     "safety_gate": "0 unsafe accepted cases; safety-critical and health-adjacent fixtures must resolve to safe no-action or explicit confirmation before capture.",
     "caveat": "Metadata-only public/synthetic audio-derived fixtures; raw audio is never committed, and this is pipeline coverage only — not real clinical evidence, not patient evidence, and no private data.",
     "public_private_scope": "public_synthetic_only"
@@ -137,7 +137,7 @@
   {
     "claim_id": "claim-004-caregiver-state-legibility",
     "capability": "caregiver_state_legibility",
-    "public_claim": "Parker's caregiver review surface makes pending, queued, approved, cancelled, non-response-candidate, and no-send safety-contract state identifiable in 6/6 synthetic state tasks versus 0/6 for a raw chat-only baseline, with 0 unsafe misses.",
+    "public_claim": "Parker's caregiver review surface makes pending, queued, approved, cancelled, non-response-candidate, no-send safety-contract, and local research-card lifecycle/redaction state identifiable in 10/10 review-state tasks versus 0/10 for a raw chat-only baseline, with 0 unsafe misses. Four lifecycle/privacy tasks are grounded in sanitized metadata from one reviewed public-audio repair episode.",
     "release_criterion": "family_legibility",
     "metric_ids": [
       "caregiver_state_legibility_task_success_rate",
@@ -150,6 +150,18 @@
       "benchmark/reports/caregiver_state_legibility_eval_latest.json"
     ],
     "required_assertions": [
+      {
+        "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
+        "json_path": "metrics.total_tasks",
+        "operator": "gte",
+        "expected": 10
+      },
+      {
+        "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
+        "json_path": "metrics.audio_grounded_tasks",
+        "operator": "gte",
+        "expected": 4
+      },
       {
         "report_path": "benchmark/reports/caregiver_state_legibility_eval_latest.json",
         "json_path": "metrics.parker_review_ui.task_success_rate",
@@ -181,9 +193,9 @@
         "expected": true
       }
     ],
-    "baseline": "raw_chat_only baseline on the same six synthetic caregiver state-identification tasks",
-    "safety_gate": "Caregiver-state claim is allowed only when Parker review UI passes every synthetic state task, beats the raw-chat baseline, and has 0 unsafe misses.",
-    "caveat": "Synthetic local review-state proxy only; not a caregiver usability study and no private family data.",
+    "baseline": "raw_chat_only baseline on the same ten review-state tasks, including four synthetic lifecycle/privacy states grounded in sanitized metadata from one reviewed public-audio episode",
+    "safety_gate": "Caregiver-state claim is allowed only when Parker review UI passes every review-state task, beats the raw-chat baseline, preserves the complete research-card lifecycle plus redaction audit, and has 0 unsafe misses.",
+    "caveat": "Synthetic local review-state proxy with sanitized public-audio metadata only; not a caregiver usability study, not ASR-performance evidence, no raw audio, and no private family data.",
     "public_private_scope": "public_synthetic_only"
   }
 ]

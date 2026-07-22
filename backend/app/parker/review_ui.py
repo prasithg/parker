@@ -53,6 +53,8 @@ needs a look, what stayed local</a> (a local artifact, never sent; also <code>ma
     <li>No outbound sends exist in v0; released and approved messages alike remain on this machine.</li>
     <li>No medical advice, medication changes, purchases, or emergency-service replacement.</li>
     <li>No private credentials or sensitive notes are displayed or sent.</li>
+    <li>Research handoffs are local read-only cards. No live fetch, purchase, submission, account change, or external message.</li>
+    <li>Query-bearing card and linked consented repair-event text redact within the hourly maintenance window after 30 days while Parker runs, and at next startup/review; configured dashboard sign-in plus explicit confirmation can redact sooner while keeping non-sensitive lifecycle audit.</li>
     <li>Non-response items are candidates for review only — no notifications are dispatched here.</li>
   </ul>
 </section>
@@ -75,6 +77,9 @@ needs a look, what stayed local</a> (a local artifact, never sent; also <code>ma
 
 <h2 id="h-escalations">Other open escalations</h2>
 <div id="escalations"></div>
+
+<h2 id="h-research-handoffs">Research handoffs — user-confirmed, local and read-only</h2>
+<div id="research-handoffs"></div>
 
 <h2 id="h-history">Recently done (stayed on this machine)</h2>
 <div id="history"></div>
@@ -163,6 +168,71 @@ function historyCard(a) {
       : `Reminder: <b>${a.subject ?? ''}</b>`;
   return el(`<div class="card">${what}<span class="badge executed">executed</span>
     <div class="meta">done ${a.executed_at ?? '—'} · confirmed by ${a.confirmed_by ?? '—'} · ${a.execution_result ?? ''}</div></div>`);
+}
+
+function researchHandoffCard(h, manualRedactionEnabled) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const query = document.createElement('b');
+  query.textContent = h.query;
+  if (h.query_redacted) query.textContent = 'Research query redacted';
+  card.appendChild(query);
+  const badge = document.createElement('span');
+  badge.className = `badge ${h.status}`;
+  badge.textContent = h.status;
+  card.appendChild(badge);
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = h.query_redacted
+    ? `query text removed · provenance: ${h.provenance_status} · risk: ${h.risk_label}`
+    : `interpretation: ${h.selected_interpretation} · provenance: ${h.provenance_status} · risk: ${h.risk_label} · redacts after ${h.retention_expires_at}`;
+  card.appendChild(meta);
+
+  if (h.status === 'completed') {
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'meta';
+    lifecycle.textContent = `completed ${h.completed_at ?? '—'} by ${h.completed_by ?? '—'}`;
+    card.appendChild(lifecycle);
+  } else if (h.status === 'cancelled') {
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'meta';
+    lifecycle.textContent = `cancelled ${h.cancelled_at ?? '—'} by ${h.cancelled_by ?? '—'}`;
+    card.appendChild(lifecycle);
+  }
+
+  if (h.query_redacted) {
+    const redaction = document.createElement('div');
+    redaction.className = 'meta';
+    redaction.textContent = `redacted ${h.redacted_at ?? '—'} by ${h.redacted_by ?? '—'} · reason ${h.redaction_reason ?? '—'}`;
+    card.appendChild(redaction);
+  }
+
+  if (h.status === 'ready') {
+    if (!h.query_redacted) {
+      const done = el('<button class="primary">Mark research complete</button>');
+      done.onclick = () => post(`/parker/research-handoffs/${h.id}/complete`, {completed_by: 'caregiver'});
+      card.appendChild(done);
+    }
+    const cancel = el('<button class="danger">Cancel research card</button>');
+    cancel.onclick = () => post(`/parker/research-handoffs/${h.id}/cancel`, {cancelled_by: 'caregiver'});
+    card.appendChild(cancel);
+  }
+  if (!h.query_redacted && manualRedactionEnabled) {
+    const redact = el('<button class="danger">Redact query now</button>');
+    redact.onclick = () => {
+      if (window.confirm('Redact this query and selected interpretation? This cannot be undone.')) {
+        post(`/parker/research-handoffs/${h.id}/redact`, {confirmed: true});
+      }
+    };
+    card.appendChild(redact);
+  } else if (!h.query_redacted) {
+    const authNote = document.createElement('div');
+    authNote.className = 'meta';
+    authNote.textContent = 'Configure DASHBOARD_PASSWORD to enable confirmed manual redaction.';
+    card.appendChild(authNote);
+  }
+  return card;
 }
 
 function exerciseSessionCard(s) {
@@ -282,6 +352,7 @@ async function load() {
   fill('approved', data.outbox_approved, outboxCard, 'Nothing approved yet.', 'Approved — reviewed by you, still local only');
   fill('candidates', data.escalation_candidates, escalationCard, 'No non-response candidates.', 'Non-response escalation candidates');
   fill('escalations', data.open_escalations, escalationCard, 'No open escalations.', 'Other open escalations');
+  fill('research-handoffs', data.research_handoffs, h => researchHandoffCard(h, data.research_handoff_manual_redaction_enabled), 'No research handoffs.', 'Research handoffs — user-confirmed, local and read-only');
   fill('history', data.recent_history, historyCard, 'Nothing executed yet.', 'Recently done (stayed on this machine)');
   fill('failed', data.recent_failed, failedActionCard, 'No skill failures.', 'Needs attention — skill failures (never retried automatically)');
   fill('exercise-sessions', data.recent_exercise_sessions, exerciseSessionCard, 'No exercise sessions yet.', 'Exercise sessions');

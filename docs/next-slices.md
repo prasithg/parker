@@ -764,6 +764,173 @@ plus confusion/failure overlap. Raw audio and source manifests stayed in
 Operations; no runtime action path, private data, external action, or clinical
 claim changed.
 
+## Nightly Autodata Operations-only rejection tracking — DONE (2026-07-14)
+
+Shipped a follow-up to the rejection-ledger and diversity-review slices without
+adding another accepted fixture. The latest 2026-07-13 synthetic audio run had
+two informative regression contrasts rejected for overlap, but their scalar-only
+notes appeared to the promoter as blocked rows with the unusable dedupe key
+`|None|`; their normalized failure modes were counted only by hand in the run
+report.
+
+The promoter now accepts a full metadata-only `operations_rejected_candidate`
+contract using the same provenance, transcript/ASR, scenario/intent,
+weak/current-vs-oracle, none-of-these repair, expected action/no-action, safety,
+rubric, reason, and failure-mode schema as a repo ledger row. Valid rows are
+reported as `tracked_operations_only`: they contribute to a separate failure-mode
+summary but remain `ready=false`, produce no append suggestion, and leave
+accepted/held/repo-rejected metrics unchanged. Scalar-only rejection notes stay
+blocked rather than being mistaken for reviewed evidence.
+
+The bounded replay reused the two clearly synthetic 2026-07-13 clips and their
+six already-reviewed tiny/base ASR passes; it copied no raw audio and ran no new
+ASR. The promoter tracked 2/2 Operations-only rejections with
+`overlap_existing_action_family: 1` and `overlap_existing_control_family: 1`,
+0 blocked rows, and no fixture or claim-map count delta. Tests pin full-contract
+tracking, no repo append, stable denominators, useful source dedupe keys, and
+blocking of incomplete scalar notes. This is data-flywheel bookkeeping, not ASR,
+clinical, patient, or product-performance evidence.
+
+## Nightly Autodata rejection batch dedupe — DONE (2026-07-15)
+
+Extended the Operations-only rejection lane after an independent replay of the
+2026-07-14 output. The replay confirmed its two reviewed synthetic contrasts were
+tracked once each with stable public denominators, but a repeated row in one
+promotion batch would also have been counted once per occurrence. The promoter
+now remembers validated rejection IDs and source/transcript keys while walking a
+batch. A repeated ID or the same reviewed source under a new ID is marked
+`duplicate`, contributes to `blocked_or_duplicate`, and is excluded from the
+Operations-only failure-mode summary and all append/count suggestions.
+
+A red-capable three-row test observed the pre-fix inflation (3 tracked instead of
+1), then pinned 1 tracked + 2 duplicate with one normalized failure-mode count.
+The original 2026-07-14 plan still replays as 2 tracked, 0 blocked/duplicate, and
+an empty repo metric delta. This changes metadata hygiene only: no fixture,
+runtime route, action surface, raw audio, source URL, private data, or clinical
+claim changed.
+
+## Nightly Autodata informational n-best repair path — DONE (2026-07-17)
+
+Converted the prior night's distinct public SLURP weather/entity target into a
+runtime and executable-eval seam instead of mining another clip. Tiny/base
+Whisper hypotheses disagree on `weather`/`web` and render `Orange, Texas`
+unevenly. The old wake-confirmed path safely answered the corrupted primary
+transcript; the new bounded path offers two read-only interpretations plus
+`none of these`, then resolves a selected interpretation into `_answer` without
+capturing, staging, executing, fetching live weather, or accepting a brain action
+proposal from that read-only selection.
+
+The wake-context eval now runs the selected second turn and reports one completed
+informational-repair answer. Coverage is 14 metadata-only fixtures (13 public,
+1 synthetic), with 14/14 passing, 0 captures on the new case, 0 unsafe cases,
+and 0 nuisance-choice failures. Ambient context still silent-no-ops before the
+repair seam, and choosing none-of-these still returns to retry with no capture.
+Raw SLURP audio remains in Operations; the repo contains source metadata,
+transcript/ASR hypotheses, context, choices, expected selected answer, safety
+label, and weighted rubric only. This is pipeline behavior, not live-weather,
+ASR-quality, licensing, patient, clinical, or population evidence.
+
+## Nightly Autodata person-name n-best repair + rubric contract — DONE (2026-07-18)
+
+Reused the existing public SLURP information-request row instead of adding another
+overlapping fixture. Tiny/base Whisper preserve the read-only request but disagree
+on `Martin Jackson` vs `Michael Jackson`. The prior path safely answered from the
+corrupted primary; the new bounded path offers both names plus `none of these`,
+then resolves the selected name through `_answer` with action proposals suppressed
+and zero capture/stage/execute. Ambient context still silent-no-ops, verbal
+`never mind` now reaches the actual none-of-these choice rather than accidentally
+selecting the first informational interpretation, and different-surname pairs do
+not trigger this narrow matcher.
+
+The runtime now uses an explicit `InformationalRepairCandidate` value type shared
+by separate weather/place and person-name extractors; it is not a generic entity
+resolver. The existing 14-case wake eval now completes two informational repairs
+and requires every fixture's non-empty weighted rubric to sum to 1.0. Raw audio,
+private family data, live fetches, credentials, external messages, purchases, and
+clinical claims remain outside the slice.
+
+## Nightly Autodata local research handoff from repaired audio — DONE (2026-07-19)
+
+Closed the follow-up loop on the existing public SLURP person-name episode instead
+of mining a duplicate source row. After the user selects `Michael Jackson`, Parker
+answers through the read-only lane and separately asks whether to leave the
+resolved query as a local caregiver research card. Query selection alone persists
+nothing; only explicit option 1 creates the card, while option 2 or a verbal
+dismissal creates no row.
+
+The card records only the resolved query, selected interpretation, bounded repair
+family, `local_asr_nbest_repair` source kind, honest no-external-source provenance,
+read-only risk label, and local lifecycle state. The authenticated caregiver page
+shows those fields and keyboard-operable complete/cancel buttons with identical
+terminal semantics at the API. There is no URL, credential, browser invocation,
+fetch, send, purchase, submission, or account-change field/path.
+
+The 14-case wake eval keeps the same denominator and now checks both informational
+handoff offers plus one full third-turn explicit handoff creation. It reports one
+created local research handoff, two completed informational repairs, zero unsafe
+cases, and zero nuisance-choice failures. Raw public audio remains in Operations;
+the repo contains metadata/hypotheses, deterministic behavior, tests, and generated
+reports only. This is local pipeline/follow-up evidence, not research-answer
+quality, browser-agent capability, ASR performance, patient evidence, licensing
+approval, or clinical evidence.
+
+## Nightly Autodata research-card caregiver legibility — DONE (2026-07-20)
+
+Extended the existing caregiver-state proxy from 6 to 9 tasks without adding a
+new runtime action or duplicating another source episode. Three new tasks cover
+the `ready`, `completed`, and `cancelled` states of the local research card seeded
+by the reviewed public SLURP Michael-Jackson repair. Each task retains sanitized
+source provenance, source transcript, same-clip tiny/base hypotheses, scenario and
+intent, weak-vs-strong path, both person choices plus `none of these`, expected
+confirmation/local transition, safety label, and a weighted rubric summing to 1.0.
+
+The stronger review-state oracle requires a ready card to show explicit user
+confirmation, no-external-source provenance, risk, and complete/cancel controls;
+completed/cancelled cards are terminal, show actor/time, and expose no controls.
+The raw-chat baseline cannot identify persisted lifecycle state. The gate is now
+9/9 Parker vs 0/9 raw chat, three audio-grounded lifecycle tasks, and 0 unsafe
+misses. This is metadata-grounded local-state evidence only: no raw audio, live
+fetch, browser action, send, purchase, submission, account change, private family
+data, ASR-performance claim, caregiver usability claim, or clinical claim.
+
+## Nightly Autodata research-query retention/redaction — DONE (2026-07-21)
+
+Closed the privacy gap documented by the prior public-audio handoff run without
+adding research execution or external authority. Every new local research card
+now receives a 30-day `retention_expires_at`. The normal local `/parker/tick` and
+review-feed paths redact expired rows before reporting them; startup plus an
+hourly scheduler enforce the same policy while Parker runs. A keyboard-operable
+caregiver button and matching API can redact sooner, but this irreversible path
+fails closed until `DASHBOARD_PASSWORD` is configured and then requires valid
+Basic credentials plus explicit confirmation. Its actor and timestamp come from
+authenticated identity and the server clock, never request fields. Redaction
+clears the query, selected ASR interpretation, and any linked consented
+repair-event transcript/hypothesis/choice text; it is idempotent and preserves
+status, source/provenance/risk,
+completion/cancellation audit, and redaction actor/time/reason. A ready redacted
+card cannot be marked complete as though research happened; it may only be
+cancelled locally.
+
+The caregiver-state proxy adds one synthetic redacted-query contrast grounded in
+the same reviewed public SLURP `Martin Jackson` / `Michael Jackson` metadata
+episode. The full data contract remains present: source/provenance, source
+transcript, same-clip hypotheses, scenario/intent, weak current retention versus
+the stronger bounded-retention oracle, both person choices plus `none of these`,
+expected confirmation/redaction, safety label, and weighted rubric. The gate is
+now 10/10 Parker vs 0/10 raw chat, four audio-grounded lifecycle/privacy tasks,
+and 0 unsafe misses. This is one source episode with four state contrasts, not
+four clips or ASR examples.
+
+This slice changes the v0 table shape. Parker still has no general Alembic lane,
+so a narrowly scoped additive SQLite startup migration adds/backfills the five
+privacy/link columns, preserves all existing rows, links an exact same-call and
+same-selected-label consented repair event when present, and is idempotent.
+`make reset-db` is not required. No raw audio, source clip, URL-bearing
+unreviewed manifest, private family data, live
+fetch, browser action, message, purchase, submission, credential, account,
+medical, emergency, caregiver-usability, ASR-performance, or clinical claim was
+added.
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

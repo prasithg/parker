@@ -65,6 +65,23 @@ class UtteranceContext:
     note: str | None = None
 
 
+@dataclass(frozen=True)
+class InformationalRepairCandidate:
+    """One read-only interpretation of an n-best informational disagreement.
+
+    Keeping this distinct from action repair makes the authority boundary
+    explicit: selecting it resolves a query for ``_answer`` and never supplies
+    an action type, recipient, capture payload, or executable tool request.
+    """
+
+    label: str
+    resolved_query: str
+    repair_family: str
+
+    def tool_candidate(self) -> dict[str, Any]:
+        return {"label": self.label, "action_type": None}
+
+
 ANSWER_STUB_SPEECH = (
     "I'd look that up and summarize it for you. "
     "(Research answers are stubbed in the local text loop.)"
@@ -529,6 +546,124 @@ def _looks_like_answer_or_conversation_request(lowered: str) -> bool:
             "describe ",
             "explain ",
         )
+    )
+
+
+_WEATHER_STATE_NAMES = {"tx": "Texas"}
+_WEATHER_PLACE_PATTERN = re.compile(
+    r"\b(?:in|having|been)\s+(?P<place>[a-z][a-z' -]{0,40}?)\s+"
+    r"(?P<state>tx)\b(?:\s+(?:right now|today|now))?",
+    re.IGNORECASE,
+)
+_PERSON_INFORMATION_PATTERN = re.compile(
+    r"^\s*(?:please\s+)?give\s+me\s+(?:information|info)\s+on\s+"
+    r"(?P<entity>[a-z][a-z' -]{1,60}?)\s*[.?!]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _informational_hypotheses_are_policy_safe(hypotheses: list[str]) -> bool:
+    lowered = [hypothesis.lower() for hypothesis in hypotheses]
+    if any(_looks_like_ticket_acquisition(hypothesis) for hypothesis in lowered):
+        return False
+    return not any(
+        phrase in hypothesis
+        for hypothesis in lowered
+        for group in _PROBE_BLOCKED_PHRASES
+        for phrase in group
+    )
+
+
+def _weather_informational_candidates(
+    hypotheses: list[str],
+) -> list[InformationalRepairCandidate]:
+    normalized = [
+        re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", hypothesis.lower())).strip()
+        for hypothesis in hypotheses
+    ]
+    weather_flags = [bool(re.search(r"\bweather\b", hypothesis)) for hypothesis in normalized]
+    if not any(weather_flags) or all(weather_flags):
+        return []
+
+    place_match = next(
+        (match for hypothesis in normalized if (match := _WEATHER_PLACE_PATTERN.search(hypothesis))),
+        None,
+    )
+    if place_match is None:
+        return []
+    place = " ".join(word.capitalize() for word in place_match.group("place").split())
+    state = _WEATHER_STATE_NAMES[place_match.group("state").lower()]
+    entity = f"{place}, {state}"
+    return [
+        InformationalRepairCandidate(
+            label=f"look up the current weather in {entity}",
+            resolved_query=f"What is the current weather in {entity}?",
+            repair_family="weather_place",
+        ),
+        InformationalRepairCandidate(
+            label=f"answer a general question about {entity}",
+            resolved_query=f"Tell me about {entity}.",
+            repair_family="weather_place",
+        ),
+    ]
+
+
+def _person_entity_informational_candidates(
+    hypotheses: list[str],
+) -> list[InformationalRepairCandidate]:
+    """Offer both person names when a bounded factoid n-best pair disagrees.
+
+    The reviewed SLURP row keeps the same read-only request frame while tiny and
+    base Whisper disagree on ``Martin Jackson`` vs ``Michael Jackson``. Require
+    exactly two two-part names with the same surname and the exact reviewed request
+    frame; do not guess which is right from spelling similarity. The user chooses,
+    or uses none-of-these.
+    """
+
+    entities: list[str] = []
+    for hypothesis in hypotheses:
+        match = _PERSON_INFORMATION_PATTERN.match(hypothesis)
+        if match is None:
+            continue
+        words = [word.capitalize() for word in match.group("entity").split()]
+        if len(words) != 2 or not all(
+            re.fullmatch(r"[A-Za-z][A-Za-z'-]*", word) for word in words
+        ):
+            continue
+        entity = " ".join(words)
+        if entity.lower() not in {prior.lower() for prior in entities}:
+            entities.append(entity)
+    if len(entities) != 2:
+        return []
+    left, right = (entity.split() for entity in entities)
+    if left[-1].lower() != right[-1].lower():
+        return []
+    return [
+        InformationalRepairCandidate(
+            label=f"information about {entity}",
+            resolved_query=f"Tell me about {entity}.",
+            repair_family="person_entity",
+        )
+        for entity in entities
+    ]
+
+
+def _informational_repair_candidates(
+    utterance: str, alternates: list[str]
+) -> list[InformationalRepairCandidate]:
+    """Build bounded read-only repair choices from reviewed n-best patterns.
+
+    Weather/place and person/factoid episodes share an explicit candidate type
+    and selection path, but keep separate narrow extractors. This is not generic
+    entity resolution: it requires at least two hypotheses, a reviewed query
+    frame, a bounded entity shape, and no sensitive/action-policy markers.
+    """
+
+    hypotheses = [utterance, *alternates]
+    if len(hypotheses) < 2 or not _informational_hypotheses_are_policy_safe(hypotheses):
+        return []
+    return _weather_informational_candidates(hypotheses) or _person_entity_informational_candidates(
+        hypotheses
     )
 
 
@@ -1339,6 +1474,11 @@ class TextSession:
             )
         if _looks_like_media_request_question(lowered):
             return self._offer_choices(utterance)
+        informational_candidates = _informational_repair_candidates(
+            utterance, self._current_alternates
+        )
+        if informational_candidates:
+            return self._offer_informational_choices(utterance, informational_candidates)
         if _looks_like_answer_or_conversation_request(lowered):
             return self._answer(utterance)
         if "?" in utterance or lowered.startswith(("what", "how", "who", "when", "where", "why")):
@@ -1712,7 +1852,76 @@ class TextSession:
         self._pending_alternates = list(self._current_alternates)
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
 
-    def _answer(self, utterance: str) -> dict[str, Any]:
+    def _offer_informational_choices(
+        self, utterance: str, candidates: list[InformationalRepairCandidate]
+    ) -> dict[str, Any]:
+        """Offer read-only query repairs without entering the action pipeline."""
+
+        result = execute_tool(
+            self.db,
+            self.call_log_id,
+            "offer_repair_choices",
+            {
+                "candidates": [candidate.tool_candidate() for candidate in candidates],
+                "question": "I heard two possible information requests. Did you mean:",
+            },
+        )
+        enriched_by_label = {candidate.label: candidate for candidate in candidates}
+        for choice in result.get("choices", []):
+            extra = enriched_by_label.get(choice["label"])
+            if extra is not None:
+                choice.update(
+                    selection_kind="informational_answer",
+                    answer_text=extra.resolved_query,
+                    repair_family=extra.repair_family,
+                )
+        self._pending_choices = result["choices"]
+        self._pending_utterance = utterance
+        self._pending_alternates = list(self._current_alternates)
+        return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
+
+    def _offer_research_handoff_choices(
+        self,
+        *,
+        resolved_query: str,
+        selected_interpretation: str,
+        repair_family: str,
+        repair_event_id: int | None,
+    ) -> list[dict[str, Any]]:
+        """Ask before making a repaired query visible to family review.
+
+        This is deliberately not an action-tool proposal. Both options are
+        local conversation state; only the explicit first selection creates a
+        local card, and neither option can fetch, send, purchase, submit, or
+        change an account.
+        """
+
+        choices = [
+            {
+                "position": 1,
+                "label": "leave a local research card for family",
+                "action_type": None,
+                "selection_kind": "research_handoff_create",
+                "resolved_query": resolved_query,
+                "selected_interpretation": selected_interpretation,
+                "repair_family": repair_family,
+                "repair_event_id": repair_event_id,
+            },
+            {
+                "position": 2,
+                "label": "do not create a card",
+                "action_type": None,
+                "selection_kind": "research_handoff_skip",
+            },
+        ]
+        self._pending_choices = choices
+        self._pending_utterance = resolved_query
+        self._pending_alternates = []
+        return choices
+
+    def _answer(
+        self, utterance: str, *, allow_action_proposals: bool = True
+    ) -> dict[str, Any]:
         """The informational lane: the brain when configured, the stub otherwise.
 
         Every deterministic guard has already run by the time this is
@@ -1748,7 +1957,7 @@ class TextSession:
         speech = trim_for_speech(result.reply.speech)
         if result.medical_boundary_tripped:
             response: dict[str, Any] = {"kind": "refused", "speech": speech, "flag_for_family": True}
-        elif result.reply.proposed_actions:
+        elif result.reply.proposed_actions and allow_action_proposals:
             response = self._offer_brain_actions(utterance, speech, result.reply.proposed_actions)
         else:
             response = {
@@ -1850,8 +2059,41 @@ class TextSession:
             return counting
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
+        handoff_create = next(
+            (choice for choice in choices if choice.get("selection_kind") == "research_handoff_create"),
+            None,
+        )
+        if handoff_create is not None:
+            confirmation = _confirmation_reply_kind(normalized)
+            if confirmation == "yes":
+                return self._select_choice(handoff_create, choices)
+            if confirmation == "no":
+                handoff_skip = next(
+                    choice
+                    for choice in choices
+                    if choice.get("selection_kind") == "research_handoff_skip"
+                )
+                return self._select_choice(handoff_skip, choices)
         if normalized in DISMISS_CHOICE_PHRASES or _control_negation_response(utterance) is not None:
-            none_choice = next((c for c in choices if c.get("action_type") is None), None)
+            none_choice = next(
+                (
+                    choice
+                    for choice in choices
+                    if choice.get("selection_kind") in {"none_of_these", "research_handoff_skip"}
+                ),
+                None,
+            )
+            if none_choice is None:
+                none_choice = next(
+                    (
+                        choice
+                        for choice in choices
+                        if choice.get("action_type") is None
+                        and choice.get("selection_kind")
+                        not in {"informational_answer", "research_handoff_create"}
+                    ),
+                    None,
+                )
             if none_choice is not None:
                 return self._select_choice(none_choice, choices)
             self._dismiss_pending_choices()
@@ -1875,6 +2117,62 @@ class TextSession:
         source = self._pending_utterance or choice["label"]
         alternates = self._pending_alternates
         self._dismiss_pending_choices()
+        if choice.get("selection_kind") == "research_handoff_create":
+            from app.parker.research_handoff import create_local_research_handoff
+
+            card = create_local_research_handoff(
+                self.db,
+                call_log_id=self.call_log_id,
+                query=str(choice["resolved_query"]),
+                selected_interpretation=str(choice["selected_interpretation"]),
+                repair_family=str(choice["repair_family"]),
+                repair_event_id=choice.get("repair_event_id"),
+            )
+            return {
+                "kind": "research_handoff_created",
+                "speech": (
+                    "I left a local read-only research card for family. "
+                    "It did not fetch, send, buy, submit, or change anything."
+                ),
+                "research_handoff_id": card.id,
+            }
+        if choice.get("selection_kind") == "research_handoff_skip":
+            return {
+                "kind": "research_handoff_skipped",
+                "speech": "Okay, I won't create a research card.",
+            }
+        if choice.get("selection_kind") == "informational_answer":
+            resolved_query = str(choice["answer_text"])
+            repair_event = record_repair_event(
+                self.db,
+                call_log_id=self.call_log_id,
+                utterance=source,
+                alternates=alternates,
+                choices=choices,
+                selected_position=choice["position"],
+                selected_label=choice["label"],
+                selected_action_type=None,
+            )
+            response = self._answer(resolved_query, allow_action_proposals=False)
+            handoff_choices = self._offer_research_handoff_choices(
+                resolved_query=resolved_query,
+                selected_interpretation=str(choice["label"]),
+                repair_family=str(choice.get("repair_family") or ""),
+                repair_event_id=repair_event.id if repair_event is not None else None,
+            )
+            response.update(
+                resolved_query=resolved_query,
+                informational_repair=True,
+                informational_repair_family=choice.get("repair_family"),
+                research_handoff_offered=True,
+                research_handoff_choices=handoff_choices,
+                speech=(
+                    f"{response.get('speech', '')} Should I leave this as a local research card "
+                    "for family? Say yes or 1 to leave a local research card for family; "
+                    "say no or 2 to not create a card."
+                ).strip(),
+            )
+            return response
         if choice["action_type"] is None:
             # Save the rejected labels so the next offer can generate different alternatives.
             self._prior_offered_labels = [
