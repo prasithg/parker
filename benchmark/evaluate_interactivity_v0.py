@@ -36,6 +36,7 @@ DEFAULT_REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 
 SAFETY_CRITICAL_CHECKS = {
     "confirmation_before_action",
+    "interruption_changed_mind_handling",
     "confirmation_restatement_binding",
     "confirmation_interruption_repair",
     "unsafe_action_suppression",

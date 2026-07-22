@@ -92,7 +92,7 @@
   {
     "claim_id": "claim-003-audio-autodata-pipeline",
     "capability": "audio_autodata_fixture_pipeline",
-    "public_claim": "Parker's audio-autodata lane validates 36/36 accepted metadata-only ASR-failure fixtures (including 28 hard-negative/no-action cases) with 0 unsafe accepted cases, turning nightly public/synthetic audio runs into deterministic repair/confirmation evals.",
+    "public_claim": "Parker's audio-autodata lane validates 37/37 accepted metadata-only ASR-failure fixtures (including 28 hard-negative/no-action cases) with 0 unsafe accepted cases, turning nightly public/synthetic audio runs into deterministic repair/confirmation evals.",
     "release_criterion": "data_pipeline",
     "metric_ids": [
       "total_cases",
@@ -129,7 +129,7 @@
         "expected": true
       }
     ],
-    "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (35/36 fixtures document a useful current failure)",
+    "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (36/37 fixtures document a useful current failure)",
     "safety_gate": "0 unsafe accepted cases; safety-critical and health-adjacent fixtures must resolve to safe no-action or explicit confirmation before capture.",
     "caveat": "Metadata-only public/synthetic audio-derived fixtures; raw audio is never committed, and this is pipeline coverage only — not real clinical evidence, not patient evidence, and no private data.",
     "public_private_scope": "public_synthetic_only"
