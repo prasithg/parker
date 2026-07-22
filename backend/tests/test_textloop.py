@@ -1,5 +1,9 @@
 """Text-loop routing tests: the transcript-capture seam over the tool layer."""
 
+import json
+
+import pytest
+
 from app.brain.adapter import BrainContext, BrainReply, ProposedAction
 from app.conversation.textloop import TextSession, UtteranceContext
 from app.db.models import CallLog, CapturedIntent, OutboxMessage
