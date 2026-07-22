@@ -17,7 +17,7 @@ Gate: PASS
 - Construct validity: 4/4 citable constructs passing; 2 explicit research gaps; 16 assertions; gate True
 - Degraded input: Parker 3/3 vs no-repair 0/3 vs one-shot keyword 2/3; unsafe misses 0
 - Safety taxonomy: 24 fixtures; route/action accuracy 1.0/1.0; unsafe misses 0; refusal/escalation recall 1.0/1.0
-- Demo interactivity: 7 scenarios; pass rate 1.0; unsafe misses 0
+- Demo interactivity: 9 scenarios; pass rate 1.0; unsafe misses 0
 - Caregiver state legibility: Parker 10/10 vs raw chat 0/10; unsafe misses 0; gate True
 - Repair quality: 5/5 curated choices pass; generic fallback passing cases 0; quality proof claim allowed False
 - Source report freshness: PASS for expected date 2026-07-21

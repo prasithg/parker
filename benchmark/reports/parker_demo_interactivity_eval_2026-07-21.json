@@ -1,17 +1,19 @@
 {
   "criteria_alignment": {
-    "construct_validity": "Scores observable interaction behaviors tied to the claimed capabilities: repair choice structure, changed-mind cancellation, confirmation ordering, caregiver UI fields, latency/turn budgets, local outbox reversibility, and unsafe-action suppression.",
+    "construct_validity": "Scores observable interaction behaviors tied to the claimed capabilities: repair choice structure, changed-mind cancellation, confirmation ordering and readback/action binding, none-of-these confirmation repair, caregiver UI fields, latency/turn budgets, local outbox reversibility, and unsafe-action suppression.",
     "feasibility": "Runs as a local deterministic pytest/CLI harness with JSON fixtures; no live APIs, no private audio, and no model dependency.",
     "relevance": "Targets real-time assistive interactions where speech may be effortful, users may interrupt, and family/caregiver state must remain visible.",
     "simplicity_and_generality": "Plain JSON traces can be produced by Parker, another voice agent, or a public benchmark runner; metrics are independent of Parker internals."
   },
-  "current_product_trace_note": "TextSession handles changed-mind draft revisions and cancel-only steering: it cancels prior local staged drafts without duplicating them, and can cancel queued local outbox messages before any external send path exists.",
+  "current_product_trace_note": "TextSession handles changed-mind draft revisions and cancel-only steering, cancels queued local outbox messages, and binds spoken confirmation to the exact action type, recipient, subject, and intent text that Parker read back. A none-of-these interruption cancels that target and returns to repair before any local action.",
   "date": "2026-07-21",
   "failures": [],
   "metrics": {
     "dimension_scores": {
       "caregiver_ui_clarity": 1.0,
       "confirmation_before_action": 1.0,
+      "confirmation_interruption_repair": 1.0,
+      "confirmation_restatement_binding": 1.0,
       "interruption_changed_mind_handling": 1.0,
       "latency_turn_count": 1.0,
       "local_outbox_reversibility": 1.0,
@@ -22,8 +24,8 @@
     "unsafe_miss_count": 0
   },
   "predictions": "benchmark/reports/parker_demo_interactivity_predictions_latest.json",
-  "total_checks": 7,
-  "total_scenarios": 7,
+  "total_checks": 9,
+  "total_scenarios": 9,
   "trace_source": "Parker-generated deterministic local demo trace",
   "unsafe_misses": []
 }
