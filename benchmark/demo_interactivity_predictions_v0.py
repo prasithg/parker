@@ -198,33 +198,61 @@ def _repair_prediction() -> InteractionPrediction:
 
 def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
     from app.conversation.textloop import TextSession
-    from app.db.models import CapturedIntent, StagedAction
-    from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
+    from app.db.models import CapturedIntent
+    from app.parker.pipeline import (
+        execute_staged_action,
+        resolve_captured_intents,
+        stage_resolved_actions,
+    )
+    from app.parker.router import caregiver_review
 
     with _demo_db() as db:
         call = _create_call(db, "INT-002-DEMO")
         session = TextSession(db, call.id)
         first = session.handle("Remind me to start stretches now.")
         resolve_captured_intents(db, now=now)
-        staged = stage_resolved_actions(db, now=now)
-        first_action = staged[0]
+        first_action = stage_resolved_actions(db, now=now)[0]
+        first_offer = session.offer_pending_confirmation()
+        assert first_offer is not None
+
         second = session.handle("Wait, no, after lunch instead.")
         resolve_captured_intents(db, now=now)
-        stage_resolved_actions(db, now=now)
+        revised = stage_resolved_actions(db, now=now)[0]
+        revised_offer = session.offer_pending_confirmation()
+        assert revised_offer is not None
+        confirmation_response = session.handle("Yes, go ahead.")
 
+        # Executable negative control at the real product seam: even if a stale
+        # caller tries the interrupted action after the revision runs,
+        # cancellation is terminal and the old action cannot execute.
+        execute_staged_action(db, first_action.id, now=now)
         db.refresh(first_action)
-        active = (
-            db.query(StagedAction)
-            .filter(StagedAction.status == "staged")
-            .order_by(StagedAction.id.desc())
-            .first()
-        )
-        active_subject = (
-            active.resolution_result.captured_intent.subject
-            if active is not None
-            else "start stretches after lunch"
-        )
+        db.refresh(revised)
+
+        review = caregiver_review(db=db)
+        action_aliases = {
+            first_action.id: "draft-stretch-now",
+            revised.id: "draft-stretch-after-lunch",
+        }
+        pending_action_ids = [
+            action_aliases[item["id"]]
+            for item in review["pending_actions"]
+            if item["id"] in action_aliases
+        ]
+        recent_cancelled = [
+            _compact_changed_mind_audit(item, action_aliases)
+            for item in review["recent_cancelled"]
+            if item["id"] in action_aliases
+        ]
+        recent_history = [
+            _compact_changed_mind_audit(item, action_aliases)
+            for item in review["recent_history"]
+            if item["id"] in action_aliases
+        ]
+
+        active_subject = revised.resolution_result.captured_intent.subject
         cancelled_ids = ["draft-stretch-now"] if first_action.status == "cancelled" else []
+        executed_ids = ["draft-stretch-after-lunch"] if revised.status == "executed" else []
         return InteractionPrediction(
             scenario_id="int-002-changed-mind-cancel",
             events=[
@@ -234,6 +262,7 @@ def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
                     "action_id": "draft-stretch-now",
                     "action_type": "reminder",
                     "subject": first_action.resolution_result.captured_intent.subject,
+                    "text": first_offer["speech"],
                     "latency_ms": _PLACEHOLDER_LATENCY_MS,
                 },
                 {
@@ -248,21 +277,43 @@ def _changed_mind_prediction(now: datetime) -> InteractionPrediction:
                     "action_id": "draft-stretch-after-lunch",
                     "action_type": "reminder",
                     "subject": active_subject,
-                    "text": second["speech"],
+                    "text": revised_offer["speech"],
+                    "latency_ms": _PLACEHOLDER_LATENCY_MS,
+                },
+                {
+                    "actor": "user",
+                    "type": "confirmation_received",
+                    "action_id": "draft-stretch-after-lunch",
+                },
+                {
+                    "actor": "assistant",
+                    "type": "execute_action",
+                    "action_id": "draft-stretch-after-lunch",
+                    "action_type": "reminder",
                     "latency_ms": _PLACEHOLDER_LATENCY_MS,
                 },
             ],
-            total_turns=4,
+            total_turns=6,
             final_state={
                 "cancelled_action_ids": cancelled_ids,
                 "active_action_subject": active_subject,
-                "executed_action_ids": [],
+                "executed_action_ids": executed_ids,
+                "action_statuses": {
+                    "draft-stretch-now": first_action.status,
+                    "draft-stretch-after-lunch": revised.status,
+                },
                 "captured_intents": db.query(CapturedIntent).count(),
             },
-            caregiver_ui={},
+            caregiver_ui={
+                "pending_action_ids": pending_action_ids,
+                "recent_cancelled": recent_cancelled,
+                "recent_history": recent_history,
+            },
             rationale=(
                 f"TextSession first kind={first['kind']}; changed-mind response kind={second['kind']}; "
-                "prior staged draft was cancelled locally before the revised reminder was staged."
+                f"spoken confirmation response kind={confirmation_response['kind']}; prior draft stayed "
+                "terminal after a stale execute attempt, and only the freshly confirmed revised reminder "
+                "executed locally."
             ),
         )
 
@@ -625,6 +676,34 @@ def _compact_action(item: dict) -> dict:
         "requires": "patient confirmation" if item.get("status") == "staged" else "local execution only",
     }
     return {key: value for key, value in compact.items() if value not in {None, ""}}
+
+
+def _compact_changed_mind_audit(item: dict, action_aliases: dict[int, str]) -> dict:
+    """Keep stable, public-safe lifecycle evidence from the real review feed."""
+
+    compact = {
+        "action_id": action_aliases[item["id"]],
+        "status": item.get("status"),
+        "action_type": item.get("action_type"),
+        "subject": item.get("subject"),
+    }
+    if item.get("status") == "cancelled":
+        compact.update(
+            {
+                "cancelled_by": item.get("cancelled_by"),
+                "cancelled_at_recorded": bool(item.get("cancelled_at")),
+                "terminal": True,
+            }
+        )
+    elif item.get("status") == "executed":
+        compact.update(
+            {
+                "confirmed_by": item.get("confirmed_by"),
+                "executed_at_recorded": bool(item.get("executed_at")),
+                "execution_result": item.get("execution_result"),
+            }
+        )
+    return compact
 
 
 def _compact_outbox(item: dict) -> dict:

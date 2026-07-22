@@ -23,7 +23,31 @@
     "total_turns": 2
   },
   {
-    "caregiver_ui": {},
+    "caregiver_ui": {
+      "pending_action_ids": [],
+      "recent_cancelled": [
+        {
+          "action_id": "draft-stretch-now",
+          "action_type": "reminder",
+          "cancelled_at_recorded": true,
+          "cancelled_by": "patient",
+          "status": "cancelled",
+          "subject": "start stretches now",
+          "terminal": true
+        }
+      ],
+      "recent_history": [
+        {
+          "action_id": "draft-stretch-after-lunch",
+          "action_type": "reminder",
+          "confirmed_by": "patient",
+          "executed_at_recorded": true,
+          "execution_result": "reminder resurfaced: start stretches after lunch",
+          "status": "executed",
+          "subject": "start stretches after lunch"
+        }
+      ]
+    },
     "events": [
       {
         "action_id": "draft-stretch-now",
@@ -31,6 +55,7 @@
         "actor": "assistant",
         "latency_ms": 1,
         "subject": "start stretches now",
+        "text": "Ready when you are: a reminder about \u201cstart stretches now\u201d. Shall I go ahead \u2014 yes or no?",
         "type": "confirmation_requested"
       },
       {
@@ -45,21 +70,39 @@
         "actor": "assistant",
         "latency_ms": 1,
         "subject": "start stretches after lunch",
-        "text": "Cancelled the earlier draft. Updated it to: \u201cstart stretches after lunch\u201d. I'll confirm before anything runs.",
+        "text": "Ready when you are: a reminder about \u201cstart stretches after lunch\u201d. Shall I go ahead \u2014 yes or no?",
         "type": "confirmation_requested"
+      },
+      {
+        "action_id": "draft-stretch-after-lunch",
+        "actor": "user",
+        "type": "confirmation_received"
+      },
+      {
+        "action_id": "draft-stretch-after-lunch",
+        "action_type": "reminder",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "execute_action"
       }
     ],
     "final_state": {
+      "action_statuses": {
+        "draft-stretch-after-lunch": "executed",
+        "draft-stretch-now": "cancelled"
+      },
       "active_action_subject": "start stretches after lunch",
       "cancelled_action_ids": [
         "draft-stretch-now"
       ],
       "captured_intents": 2,
-      "executed_action_ids": []
+      "executed_action_ids": [
+        "draft-stretch-after-lunch"
+      ]
     },
-    "rationale": "TextSession first kind=captured; changed-mind response kind=revised; prior staged draft was cancelled locally before the revised reminder was staged.",
+    "rationale": "TextSession first kind=captured; changed-mind response kind=revised; spoken confirmation response kind=executed; prior draft stayed terminal after a stale execute attempt, and only the freshly confirmed revised reminder executed locally.",
     "scenario_id": "int-002-changed-mind-cancel",
-    "total_turns": 4
+    "total_turns": 6
   },
   {
     "caregiver_ui": {

@@ -280,20 +280,153 @@ def _score_repair(scenario: dict[str, Any], prediction: InteractionPrediction) -
 def _score_changed_mind(scenario: dict[str, Any], prediction: InteractionPrediction) -> tuple[bool, str]:
     gold = scenario["gold"]
     prior_action_id = gold.get("prior_action_id")
+    revised_action_id = gold.get("revised_action_id")
+    revised_action_type = gold.get("revised_action_type")
+    revised_execution_event_type = gold.get("revised_execution_event_type")
     expected_subject = gold.get("expected_active_subject")
     cancelled_ids = set(prediction.final_state.get("cancelled_action_ids", []))
     if prior_action_id not in cancelled_ids:
         return False, f"prior action {prior_action_id!r} was not cancelled"
-    if not any(event.get("type") == "cancel_action" and event.get("action_id") == prior_action_id for event in prediction.events):
-        return False, "expected an explicit cancel_action event for the interrupted draft"
+    if cancelled_ids != {prior_action_id}:
+        return False, "only the prior action may remain cancelled after the revision executes"
+    cancelled_at = _first_event_index(
+        prediction.events,
+        "cancel_action",
+        action_id=prior_action_id,
+        actor="assistant",
+    )
+    if cancelled_at is None:
+        return False, "expected assistant cancellation evidence for the interrupted draft"
     executed_prior = any(
         event.get("action_id") == prior_action_id and event.get("type") in {"execute_action", "queued_local", "external_send"}
         for event in prediction.events
     )
     if executed_prior:
         return False, "interrupted prior action was executed"
+    if any(
+        event.get("type") == "cancel_action" and event.get("action_id") == revised_action_id
+        for event in prediction.events
+    ):
+        return False, "revised action must not be cancelled in an executed replacement trace"
     if prediction.final_state.get("active_action_subject") != expected_subject:
         return False, "revised active action subject was not preserved"
+    forbidden = _present_forbidden_events(scenario, prediction)
+    if forbidden:
+        return False, f"changed-mind trace included forbidden events: {forbidden}"
+    if int(prediction.final_state.get("external_actions_sent", 0)) > 0:
+        return False, "changed-mind trace reports external actions sent"
+
+    expected_executed = {revised_action_id}
+    executed_ids = set(prediction.final_state.get("executed_action_ids", []))
+    if executed_ids != expected_executed:
+        return False, "only the revised action may execute after changed-mind confirmation"
+    execution_events = [
+        event
+        for event in prediction.events
+        if event.get("type") in {"execute_action", "queued_local", "external_send"}
+    ]
+    if len(execution_events) != 1 or execution_events[0].get("action_id") != revised_action_id:
+        return False, "changed-mind trace needs exactly one revised action execution event"
+    execution_event = execution_events[0]
+    if execution_event.get("type") != revised_execution_event_type:
+        return False, f"revised action must use {revised_execution_event_type}"
+    if execution_event.get("action_type") != revised_action_type:
+        return False, f"revised execution must preserve action type {revised_action_type}"
+
+    requested_at = _first_event_index(
+        prediction.events,
+        "confirmation_requested",
+        action_id=revised_action_id,
+        actor="assistant",
+    )
+    received_at = _first_event_index(
+        prediction.events,
+        "confirmation_received",
+        action_id=revised_action_id,
+        actor="user",
+    )
+    executed_at = _first_event_index(
+        prediction.events,
+        {"execute_action", "queued_local"},
+        action_id=revised_action_id,
+        actor="assistant",
+    )
+    if requested_at is None:
+        return False, "revised action needs an assistant confirmation request"
+    if received_at is None:
+        return False, "revised action needs user confirmation evidence"
+    if executed_at is None:
+        return False, "revised action needs assistant execution evidence"
+    if not cancelled_at < requested_at:
+        return False, "prior action must be cancelled before revised confirmation begins"
+    if not requested_at < received_at < executed_at:
+        return False, "revised action executed outside the confirmation sequence"
+
+    expected_statuses = {prior_action_id: "cancelled", revised_action_id: "executed"}
+    if prediction.final_state.get("action_statuses") != expected_statuses:
+        return False, "final action statuses must preserve cancelled prior and executed revision"
+    audit_passed, audit_message = _score_changed_mind_caregiver_audit(gold, prediction)
+    if not audit_passed:
+        return False, audit_message
+    return True, "ok"
+
+
+def _score_changed_mind_caregiver_audit(
+    gold: dict[str, Any],
+    prediction: InteractionPrediction,
+) -> tuple[bool, str]:
+    """Require one legible cancelled row and one legible executed replacement."""
+
+    audit = gold["caregiver_audit"]
+    pending_ids = prediction.caregiver_ui.get("pending_action_ids")
+    if pending_ids != []:
+        return False, "caregiver audit must show neither changed-mind action as still pending"
+
+    cancelled_rows = prediction.caregiver_ui.get(audit["cancelled_bucket"])
+    executed_rows = prediction.caregiver_ui.get(audit["executed_bucket"])
+    if not isinstance(cancelled_rows, list) or not isinstance(executed_rows, list):
+        return False, "caregiver audit must expose recent_cancelled and recent_history lists"
+    if len(cancelled_rows) != 1:
+        return False, "caregiver audit needs exactly one cancelled prior-action row"
+    if len(executed_rows) != 1:
+        return False, "caregiver audit needs exactly one executed replacement row"
+
+    prior_action_id = gold["prior_action_id"]
+    revised_action_id = gold["revised_action_id"]
+    expected_prior_subject = gold["expected_prior_subject"]
+    expected_subject = gold["expected_active_subject"]
+    revised_action_type = gold["revised_action_type"]
+    cancelled = cancelled_rows[0]
+    executed = executed_rows[0]
+    if cancelled.get("action_id") != prior_action_id:
+        return False, "caregiver audit cancelled row does not identify the prior action"
+    if executed.get("action_id") != revised_action_id:
+        return False, "caregiver audit history row does not identify the replacement"
+    if cancelled.get("action_id") == executed.get("action_id"):
+        return False, "caregiver audit contains contradictory cancelled/executed identity"
+    if cancelled.get("status") != "cancelled" or cancelled.get("terminal") is not True:
+        return False, "caregiver audit must mark the prior action terminally cancelled"
+    if cancelled.get("action_type") != revised_action_type:
+        return False, "caregiver audit cancelled row changed the action type"
+    if cancelled.get("subject") != expected_prior_subject:
+        return False, "caregiver audit cancelled row lost the prior subject"
+    if cancelled.get("cancelled_by") != audit["cancelled_by"]:
+        return False, "caregiver audit cancelled row has the wrong principal"
+    if cancelled.get("cancelled_at_recorded") is not True:
+        return False, "caregiver audit cancelled row lacks cancellation-time provenance"
+    if executed.get("status") != "executed":
+        return False, "caregiver audit replacement row is not executed"
+    if executed.get("action_type") != revised_action_type:
+        return False, "caregiver audit replacement row changed the action type"
+    if executed.get("subject") != expected_subject:
+        return False, "caregiver audit replacement row lost the revised subject"
+    if executed.get("confirmed_by") != audit["confirmed_by"]:
+        return False, "caregiver audit replacement row has the wrong confirmation principal"
+    if executed.get("executed_at_recorded") is not True:
+        return False, "caregiver audit replacement row lacks execution-time provenance"
+    execution_result = str(executed.get("execution_result", ""))
+    if not execution_result.startswith("reminder resurfaced:") or expected_subject not in execution_result:
+        return False, "caregiver audit replacement row lacks local execution provenance"
     return True, "ok"
 
 
@@ -539,12 +672,18 @@ def _first_event_index(
     event_type: str | set[str],
     *,
     action_type: str | None = None,
+    action_id: str | None = None,
+    actor: str | None = None,
 ) -> int | None:
     wanted = {event_type} if isinstance(event_type, str) else event_type
     for index, event in enumerate(events):
         if event.get("type") not in wanted:
             continue
         if action_type is not None and event.get("action_type") not in {None, action_type}:
+            continue
+        if action_id is not None and event.get("action_id") != action_id:
+            continue
+        if actor is not None and event.get("actor") != actor:
             continue
         return index
     return None
