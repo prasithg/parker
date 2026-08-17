@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -319,6 +320,13 @@ CONFIRM_REPAIR_REJECTION_PHRASES = {
     "that's not it",
     "thats not it",
 }
+# Pure hesitation controls, including mixed negation-hesitation: never cancel,
+# never revise — acknowledge and leave every draft exactly as it was.
+HESITATION_CONTROL_PHRASES = {"wait", "hold on", "no wait", "wait no", "nope wait"}
+# Response kinds that end Parker's turn with a direct question but hold no
+# pending state. They open the wake layer's grace window for exactly the next
+# utterance, so an invited restatement never requires the wake name.
+_REPLY_INVITING_KINDS = {"clarify", "confirmation_repair", "retry"}
 
 # Natural confirmations compound ("Yes, go ahead", "Okay, do it") — heard
 # verbatim from the first desktop-app install, where "Yes, go ahead."
@@ -824,6 +832,24 @@ def _message_body_needs_clarification(body: str) -> bool:
     return normalized in CONTENTLESS_MESSAGE_BODIES or normalized.startswith(("not yet ", "later "))
 
 
+def _collapse_repeated_control_phrase(normalized: str) -> str:
+    """Collapse pure repetitions: "no no no" → "no", "hold on hold on" → "hold on".
+
+    Palilalia — involuntary repetition of words and phrases — is a hallmark of
+    Parkinson's speech. A repeated control word is one control, not a revision
+    payload or a new intent. Only exact whole-utterance repetition collapses;
+    anything with distinct content passes through unchanged.
+    """
+
+    tokens = normalized.split()
+    for size in (1, 2):
+        if len(tokens) >= size * 2 and len(tokens) % size == 0:
+            chunks = {" ".join(tokens[i : i + size]) for i in range(0, len(tokens), size)}
+            if len(chunks) == 1:
+                return next(iter(chunks))
+    return normalized
+
+
 def _no_context_control_response(utterance: str) -> dict[str, Any] | None:
     """Acknowledge standalone control words without inventing an action.
 
@@ -835,6 +861,7 @@ def _no_context_control_response(utterance: str) -> dict[str, Any] | None:
 
     normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
     normalized = re.sub(r"\s+", " ", normalized)
+    normalized = _collapse_repeated_control_phrase(normalized)
     speech = NO_CONTEXT_CONTROL_RESPONSES.get(normalized)
     if speech is None:
         return None
@@ -928,7 +955,7 @@ def _looks_like_medical_instruction_dictation(lowered: str) -> bool:
 def _extract_revision_fragment(utterance: str) -> str:
     fragment = utterance.strip().strip(" .!?")
     fragment = re.sub(r"^(?:wait|hold on)[\s,]+", "", fragment, flags=re.IGNORECASE)
-    fragment = re.sub(r"^(?:no|nope)[\s,]+", "", fragment, flags=re.IGNORECASE)
+    fragment = re.sub(r"^(?:no|nope)(?:[\s,]+|$)", "", fragment, flags=re.IGNORECASE)
     fragment = re.sub(r"^(?:actually|change that|make it|make that|scratch that|cancel that|cancel|stop)[\s,]*", "", fragment, flags=re.IGNORECASE)
     fragment = re.sub(r"\s+instead$", "", fragment, flags=re.IGNORECASE)
     fragment = fragment.strip(" .!?,")
@@ -1271,6 +1298,12 @@ class TextSession:
         # Brain-lane history only — guarded/refused utterances are never
         # recorded, so they can't leak into a later model call.
         self._brain_history: list[Message] = []
+        # Grace-window state for the wake layer: a one-shot flag for stateless
+        # question turns (clarify/retry/confirmation-repair), and a monotonic
+        # stamp for when Parker last asked anything — so an unanswered offer
+        # cannot hold the room's microphone open indefinitely.
+        self._invited_reply = False
+        self._grace_started_at: float | None = None
         self._pending_choices: Optional[list[dict[str, Any]]] = None
         self._pending_utterance: Optional[str] = None
         # Staged-action id awaiting the patient's spoken yes/no, and ids
@@ -1287,6 +1320,34 @@ class TextSession:
         # and for the utterance whose repair choices are pending selection.
         self._current_alternates: list[str] = []
         self._pending_alternates: list[str] = []
+
+    @property
+    def awaiting_reply(self) -> bool:
+        """True while Parker's previous turn recently asked the user something.
+
+        The wake/addressed-to-me layer (app/conversation/addressing.py) uses
+        this as its mid-exchange grace window: replies to numbered choices, a
+        pending yes/no offer, or a stateless question turn (clarify /
+        confirmation repair / retry) must never require the wake name. The
+        window is bounded by PARKER_WAKE_GRACE_SECONDS so a stale unanswered
+        offer cannot keep the room's microphone effectively open all evening
+        (a TV "Sure, do it." must not confirm an hours-old offer). Pending
+        actions outlive the grace window on the review page as always.
+        """
+
+        pending = (
+            self._invited_reply
+            or self._pending_choices is not None
+            or self._pending_confirmation is not None
+        )
+        if not pending:
+            return False
+        from app.config import settings
+
+        grace_seconds = settings.parker_wake_grace_seconds
+        if grace_seconds <= 0 or self._grace_started_at is None:
+            return True
+        return (time.monotonic() - self._grace_started_at) <= grace_seconds
 
     def handle(
         self,
@@ -1312,8 +1373,21 @@ class TextSession:
         the conversation itself.
         """
 
+        had_pending = self._pending_choices is not None or self._pending_confirmation is not None
+        self._invited_reply = False  # a stateless invite covers exactly one utterance
         response = self._route(text, alternates=alternates, context=context)
-        self._publish_screen(heard=text.strip(), response=response)
+        kind = response.get("kind")
+        if kind in _REPLY_INVITING_KINDS:
+            self._invited_reply = True
+        now_pending = self._pending_choices is not None or self._pending_confirmation is not None
+        if self._invited_reply or (now_pending and not had_pending):
+            # A fresh question or offer opens the grace clock; re-prompts of
+            # already-pending state deliberately do not renew it.
+            self._grace_started_at = time.monotonic()
+        # Ambient room speech must not surface anywhere user-visible: no
+        # screen churn, and no third-party conversation echoed onto the TV.
+        if kind != "ambient_noop":
+            self._publish_screen(heard=text.strip(), response=response)
         return response
 
     def _publish_screen(self, *, heard: str, response: dict[str, Any]) -> None:
@@ -1556,7 +1630,20 @@ class TextSession:
         if not _looks_like_changed_mind(lowered):
             return None
 
-        revision_fragment = _extract_revision_fragment(utterance)
+        normalized = re.sub(r"[,.!?]+", " ", lowered).strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        collapsed = _collapse_repeated_control_phrase(normalized)
+        if collapsed in HESITATION_CONTROL_PHRASES:
+            # Hesitation — including palilalia repeats ("wait... wait") and
+            # mixed forms ("no, wait") — is neither a cancellation nor a
+            # revision: leave any draft alone and acknowledge the pause.
+            return {"kind": "noop", "speech": NO_CONTEXT_CONTROL_RESPONSES["wait"]}
+
+        # A collapsed pure repetition ("no no no" → "no") is the control it
+        # repeats; extract the fragment from the collapsed form so a repeated
+        # negation cannot survive as a nonsense revision subject.
+        source_utterance = collapsed if collapsed != normalized else utterance
+        revision_fragment = _extract_revision_fragment(source_utterance)
         cancel_only = _is_cancel_only_revision(revision_fragment)
         draft = self._latest_active_staged_action()
 
@@ -1733,6 +1820,7 @@ class TextSession:
         }
         # Parker spoke first: the screen shows the offer with nothing heard.
         self._publish_screen(heard="", response=offer)
+        self._grace_started_at = time.monotonic()
         return offer
 
     def _handle_confirmation_reply(self, utterance: str) -> dict[str, Any] | None:

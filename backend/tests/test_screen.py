@@ -103,6 +103,26 @@ def test_capture_exchange_updates_the_screen(db):
     assert state.awaiting == AWAITING_NOTHING
 
 
+def test_ambient_speech_never_reaches_the_screen(db):
+    """Room/TV speech gated as ambient must not be echoed onto the TV screen
+    or churn the visible state (EXP-001 slice 1)."""
+    from app.conversation.textloop import UtteranceContext
+
+    session = _session(db)
+    session.handle("Remind me to water the tomato plants")
+
+    response = session.handle(
+        "The weather man said rain tomorrow",
+        context=UtteranceContext(addressed_to_parker=False, source="no_wake_signal"),
+    )
+
+    assert response["kind"] == "ambient_noop"
+    state = get_screen_state(db)
+    # The screen still shows the last directed exchange, not the TV audio.
+    assert state.heard == "Remind me to water the tomato plants"
+    assert state.kind == "captured"
+
+
 def test_choice_cards_match_the_spoken_numbers_exactly(db):
     session = _session(db)
     response = session.handle("Call... the... you know... the one with the garden...")

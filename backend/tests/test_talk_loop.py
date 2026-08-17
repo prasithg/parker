@@ -334,3 +334,103 @@ def test_please_dont_defers_rather_than_guessing(db):
     # "please" leads the yes-vocabulary but "don't" is not in it, and the
     # no-rule requires a negative lead — ambiguous, so defer (still staged).
     assert db.query(StagedAction).one().status == "staged"
+
+
+# ---------------------------------------------------------------------------
+# Addressed-to-me gating (EXP-001 slice 1): wake mode in the live loop
+# ---------------------------------------------------------------------------
+
+
+def test_wake_mode_ambient_speech_is_truly_silent(db, monkeypatch):
+    """TV/room speech without the wake name: audited as ambient_noop, but
+    never printed, never spoken, and nothing captured."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "parker_address_mode", "wake")
+
+    heard = []
+    tr = TurnRecorder([["The weather man said rain tomorrow so remind me later maybe"]])
+    exchanges = run_talk_loop(
+        db,
+        seconds=1.0,
+        recorder=tr.recorder,
+        transcriber=tr.transcriber,
+        call_sid="TEST-WAKE-AMBIENT",
+        max_turns=1,
+        on_exchange=heard.append,
+    )
+
+    assert [e["kind"] for e in exchanges] == ["ambient_noop"]
+    assert exchanges[0]["parker"] == ""
+    assert heard == []  # the exchange callback (print + TTS) never fires
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_wake_mode_tv_intent_verbs_do_not_capture(db, monkeypatch):
+    """The false-directed guard end to end: intent-shaped ambient lines in one
+    window draw zero choices and zero captures."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "parker_address_mode", "wake")
+
+    exchanges = _run(db, [[
+        "You should remind me to buy those tickets",
+        "Tell Sarah I said hi when you see her",
+    ]])
+
+    assert [e["kind"] for e in exchanges] == ["ambient_noop", "ambient_noop"]
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_wake_mode_name_starts_exchange_reply_needs_no_name(db, monkeypatch):
+    """The missed-directed guard: the name starts the exchange, and the
+    mid-exchange grace window lets a bare 'yes' confirm without it."""
+    from app.config import settings
+    from app.db.models import StagedAction
+
+    monkeypatch.setattr(settings, "parker_address_mode", "wake")
+
+    exchanges = _run(db, [
+        ["Parker, remind me to do my stretches"],
+        ["yes"],  # no wake name: pending confirmation carries the grace window
+    ])
+
+    assert [e["kind"] for e in exchanges] == ["captured", "confirm_offer", "executed"]
+    action = db.query(StagedAction).one()
+    assert action.status == "executed"
+    assert action.confirmed_by == "patient"
+
+
+def test_wake_mode_repair_selection_needs_no_name(db, monkeypatch):
+    """Numbered-choice replies are mid-exchange too — '1' selects without the
+    wake name, across a silent window."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "parker_address_mode", "wake")
+
+    exchanges = _run(db, [
+        ["Parker... call... the... you know... the one with the garden..."],
+        ["1"],
+    ])
+
+    kinds = [e["kind"] for e in exchanges]
+    assert kinds == ["choices", "captured", "confirm_offer"]
+    assert db.query(CapturedIntent).one().requested_action == "reminder"
+
+
+def test_wake_mode_retry_invite_lets_restatement_through(db, monkeypatch):
+    """Parker's stateless questions ("Tell me again in your own words") open
+    the grace window: the invited restatement must route without the name."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "parker_address_mode", "wake")
+
+    exchanges = _run(db, [
+        ["Parker... the thing... with the... you know..."],  # → choices
+        ["never mind"],                                       # → retry (asks again)
+        ["remind me to stretch"],                             # invited: no name needed
+    ])
+
+    kinds = [e["kind"] for e in exchanges]
+    assert kinds == ["choices", "retry", "captured", "confirm_offer"]
+    assert db.query(CapturedIntent).one().requested_action == "remind"

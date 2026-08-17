@@ -86,8 +86,14 @@ def run_cli_loop(seconds: float = DEFAULT_SECONDS, server_port: int = 8000) -> N
     def on_silence() -> None:
         print("  (nothing heard — try again or speak a bit louder)")
 
+    from app.config import settings
+    from app.conversation.addressing import describe_address_config
+
     print("Parker talk loop — continuous voice conversation.")
     print("Parker answers out loud (set PARKER_TTS_ENABLED=false for text-only).")
+    # Misconfigured gating must be visible at startup, never silent: a typo'd
+    # mode or unmatchable wake name would otherwise look like deafness.
+    print(describe_address_config(settings.parker_address_mode, settings.parker_wake_name))
     print(f"Open http://localhost:{server_port}/parker/review/ui as the caregiver view.\n")
 
     try:

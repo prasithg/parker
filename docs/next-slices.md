@@ -931,6 +931,67 @@ fetch, browser action, message, purchase, submission, credential, account,
 medical, emergency, caregiver-usability, ASR-performance, or clinical claim was
 added.
 
+## EXP-001 slice 1 — addressed-to-me gating + dogfood defect fixes — DONE (2026-08-17)
+
+First implementation slice of EXP-001 (docs/strategy/experiments/EXP-001-understand-and-learn.md),
+unblocking always-on living-room use. New `app/conversation/addressing.py`
+decides directed-vs-ambient per recording window, before `TextSession`
+routing, with family-configurable modes: `open` (default — historical
+behavior, every window directed) and `wake` (utterance needs the wake name,
+default "Parker", except replies to Parker's own questions — pending numbered
+choices or a yes/no offer carry a grace window via the new
+`TextSession.awaiting_reply` property). Ambient lines append an auditable
+`ambient_noop` exchange but never reach print/TTS.
+
+Two design points worth remembering: gating is **window-level** because
+`split_utterances` breaks one spoken address ("Parker, remind me…") into
+segment lines — per-line gating marked the command ambient in the very first
+loop test; and a wake name anywhere in the window directs the whole window
+(trailing "…, Parker" is a real speech pattern; the window is end-pointed by
+the speaker's own voice), with bare wake-name fragments dropped rather than
+answered mid-command.
+
+Companion live-defect fixes from the desktop dogfood notes, both regression-
+pinned: bare "No" against a stale staged draft entered the changed-mind
+*revision* path (the terminal negation survived `_extract_revision_fragment`
+and became a nonsense revision subject) — it now strips to a cancel-only
+fragment and cancels; bare "Wait"/"hold on" is treated as hesitation, leaves
+the draft staged, and gets the waiting acknowledgment instead of a fake
+revision.
+
+A fresh-context adversarial verifier reviewed the first implementation and
+confirmed five issues, all fixed and pinned in the same slice: (1) the grace
+window missed Parker's *stateless* question turns (clarify /
+confirmation-repair / retry), so his invited answer was dropped as ambient —
+`awaiting_reply` now covers a one-shot invited-reply flag; (2) palilalia
+forms ("No, no.", "Wait... wait.", "No, wait.") still minted nonsense
+revisions — repeated control phrases now collapse before matching, repeated
+negation cancels, hesitation (including mixed "no, wait") leaves drafts
+untouched; (3) the grace window was an unbounded open microphone (a TV
+"Sure, do it." could confirm an hours-old offer) — it is now bounded by
+`PARKER_WAKE_GRACE_SECONDS` (default 120s; re-prompts do not renew the
+clock, fresh questions do); (4) wake-prefix stripping choked on fillers,
+repeated names, and ASR possessives ("Uh, Parker—", "Parker Parker",
+"Parker's") — all stripped now; (5) a typo'd mode or punctuated wake name
+silently disabled or deafened wake mode — names are sanitized and the loop
+prints the resolved mode/name at startup. Ambient speech is also kept off
+the dad screen entirely (no TV text echoed to the TV).
+
+Deliberate scope cuts: the wake-context eval lane is unchanged — its contract
+(explicit context in → routing out) is unaffected; the detector's two error
+directions are pinned by unit tests plus full-loop `run_talk_loop` tests
+instead. Known residual exposure, documented not hidden: within an active
+grace window a TV yes-lead line can still confirm a just-made offer, and a
+broadcast mention of the name "Parker" directs its window — text-level
+matching can't fix these; speaker ID is the eventual answer. Detection is
+regex-only (no new deps, no measurable latency). Suite: 776 tests green.
+Rollout: `PARKER_ADDRESS_MODE=wake` is documented in the runbook's
+living-room section with a 3-step acceptance check; the default stays `open`
+so demos, `make talk`, and typed paths are byte-for-byte unchanged.
+
+Forward-looking sequencing now lives in docs/strategy/roadmap.md (this
+section below predates the capability-model strategy).
+
 ## Next open slice — product usefulness first
 
 Do these next for product value, in order, with PrasClaw's 2026-06-22 review raising the recliner/TV loop above further evidence polish:

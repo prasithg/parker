@@ -251,6 +251,32 @@ Leave it running in a terminal while the caregiver review page is open in a brow
 - Parker never listens while speaking, so it cannot transcribe itself.
 - Ctrl-C stops the loop and prints how many turns ran.
 
+**Living-room mode (addressed-to-me gating):** by default every recording
+window is treated as directed at Parker (`PARKER_ADDRESS_MODE=open`) — right
+for a desk demo or push-to-talk use. For an always-on room with a TV in mic
+range, set in `backend/.env`:
+
+```bash
+PARKER_ADDRESS_MODE=wake
+# PARKER_WAKE_NAME=parker   # default
+```
+
+In wake mode an utterance engages Parker only when it contains the wake name
+("Parker, remind me…" or trailing "…what day is it, Parker?"), with one
+deliberate exception: replies to Parker's own questions — numbered choices,
+yes/no offers, and "tell me again" clarify/retry questions — never need the
+name. That reply window is bounded (`PARKER_WAKE_GRACE_SECONDS`, default
+120s), so an offer left unanswered stops holding the microphone open and a
+TV "sure, do it" cannot confirm an hours-old offer; the action itself stays
+on the review page as always. Everything else (TV, room conversation) is
+silently ignored and recorded as ambient — it never appears on the dad
+screen. The loop prints the resolved mode and wake name at startup, so a
+typo'd mode or name is visible immediately. Quick acceptance check after
+setup: (1) with the TV on, watch a minute of ambient speech produce no
+choices on the dad screen; (2) say "Parker, remind me to water the plants" —
+expect capture and a spoken offer; (3) answer "yes" without the name —
+expect execution.
+
 ### Real-audio eval: `make eval-audio-real`
 
 Runs the Operations audio manifest (public dysarthric corpora + synthetic

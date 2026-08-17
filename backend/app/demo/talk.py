@@ -24,6 +24,8 @@ from typing import Any, Callable, Iterator, Optional
 from sqlalchemy.orm import Session
 
 from app.brain.build import build_brain_adapter
+from app.config import settings
+from app.conversation.addressing import gate_window
 from app.conversation.textloop import TextSession, _build_model_client
 from app.db.models import CallLog
 from app.demo.replay import replay_transcript
@@ -91,13 +93,16 @@ def run_talk_loop(
 
     One ``TextSession`` lives for the whole conversation so repair-choice
     state carries across recording windows. Each turn: record → transcribe
-    → feed each utterance to the session → tick → offer the newest staged
-    action for a spoken yes/no (``confirm_offer`` exchanges have an empty
-    ``you`` — Parker speaks first). A "yes" in the next window confirms and
-    executes through the normal pipeline as the patient; "no" cancels;
-    anything else defers to the review page. Runs until
-    ``KeyboardInterrupt`` (interactive use) or ``max_turns`` is reached
-    (tests). Returns all exchanges from all turns.
+    → decide addressed-vs-ambient per utterance (PARKER_ADDRESS_MODE; see
+    app/conversation/addressing.py) → feed directed utterances to the
+    session → tick → offer the newest staged action for a spoken yes/no
+    (``confirm_offer`` exchanges have an empty ``you`` — Parker speaks
+    first). A "yes" in the next window confirms and executes through the
+    normal pipeline as the patient; "no" cancels; anything else defers to
+    the review page. Ambient utterances append an ``ambient_noop`` exchange
+    for the audit trail but never reach ``on_exchange`` — Parker stays
+    silent. Runs until ``KeyboardInterrupt`` (interactive use) or
+    ``max_turns`` is reached (tests). Returns all exchanges from all turns.
     """
     from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
 
@@ -136,9 +141,15 @@ def run_talk_loop(
 
             if on_state:
                 on_state("processing")
-            for line in lines:
+            gated = gate_window(
+                lines,
+                awaiting_reply=session.awaiting_reply,
+                mode=settings.parker_address_mode,
+                wake_name=settings.parker_wake_name,
+            )
+            for line, context, routed_text in gated:
                 route_started = time.monotonic()
-                response = session.handle(line)
+                response = session.handle(routed_text, context=context)
                 route_seconds = time.monotonic() - route_started
                 exchange = {
                     "you": line,
@@ -152,7 +163,9 @@ def run_talk_loop(
                     "route_seconds": round(route_seconds, 2),
                 }
                 all_exchanges.append(exchange)
-                if on_exchange:
+                # Ambient speech stays truly silent: recorded for the audit
+                # trail above, but never printed or spoken.
+                if on_exchange and response["kind"] != "ambient_noop":
                     on_exchange(exchange)
 
             resolve_captured_intents(db)

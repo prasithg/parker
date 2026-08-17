@@ -134,6 +134,22 @@ class Settings(BaseSettings):
     # ASR initial prompt and available to repair candidate generation.
     personal_lexicon: str = ""
 
+    # Addressed-to-me gating for the live talk loop (EXP-001 slice 1;
+    # app/conversation/addressing.py). "open" (default): every transcription
+    # window is treated as directed at Parker — the historical behavior, right
+    # for push-to-talk desk use. "wake": only utterances containing
+    # PARKER_WAKE_NAME are directed, except mid-exchange replies (numbered
+    # choices / yes-no offer pending), which never need the name; everything
+    # else silently no-ops. Right for an always-on living-room deployment
+    # where TV and conversation are in mic range.
+    parker_address_mode: str = "open"
+    parker_wake_name: str = "parker"
+    # How long (seconds) after Parker asks something — choices, a yes/no
+    # offer, or a clarify/retry question — replies stay directed without the
+    # wake name. Bounds the open microphone: a TV "sure, do it" must never
+    # confirm an hours-old offer. 0 disables the bound (not recommended).
+    parker_wake_grace_seconds: int = 120
+
     # Capability administration (app/parker/contacts.py). Comma-separated
     # family/caregiver contact names the admin has enabled for messages.
     # Within this allowlist the patient's own confirmation releases a message

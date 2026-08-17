@@ -18,8 +18,8 @@ Every metric in this experiment requires real daily usage, and Parker is pre-dep
 
 Slices (dependency order):
 
-1. **Wake/addressed-to-me gating.** Ambient room/TV speech must silent-no-op; directed speech must not require ceremony. Blocks always-on use (known live defect: ambient nuisance repair choices).
-2. **Live-defect fixes.** Bare "No" with a stale draft → no-op/cancel, not changed-mind revision. Sweep the author's dogfood notes for others.
+1. **Wake/addressed-to-me gating.** Ambient room/TV speech must silent-no-op; directed speech must not require ceremony. Blocks always-on use (known live defect: ambient nuisance repair choices). *Done 2026-08-17: window-level gate (`app/conversation/addressing.py`), modes `open`/`wake`, mid-exchange grace so replies never need the name; ambient exchanges audited, never spoken.*
+2. **Live-defect fixes.** Bare "No" with a stale draft → no-op/cancel, not changed-mind revision. Sweep the author's dogfood notes for others. *Done 2026-08-17: root cause was the terminal bare negation surviving as a revision fragment — now cancels; bare "Wait"/"hold on" preserved as hesitation (draft untouched); both pinned by regression tests.*
 3. **Interaction outcome layer.** Per-interaction outcome derived from existing pipeline/repair/audit rows, one of: `understood_first_try` / `repaired_success` / `repair_abandoned` / `wrong_action` / `refused_safety` / `no_response` / `ambient_noop`. Local weekly rollup artifact (aggregates only; rollups in home-local timezone, not UTC).
 4. **Consent + learning-corpus retention design.** With dad and the family, at install: repair-event capture on, retention terms for confirmed correction pairs decided deliberately (distinct from the 30-day research-card redaction, which currently also clears linked repair-event text). Documented in the runbook and adaptation ladder.
 5. **Home deployment.** Install on the home machine (unsigned-beta path documented), room placement, family walkthrough, Google Home coexistence (both available; no forced switch).

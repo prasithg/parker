@@ -911,3 +911,151 @@ def test_questions_get_answer_stub_without_capture(db):
 
     assert response["kind"] == "answer"
     assert db.query(CapturedIntent).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Live-defect regressions from the first desktop dogfood run (EXP-001 slice 1)
+# ---------------------------------------------------------------------------
+
+
+def test_bare_no_with_stale_staged_draft_cancels_never_revises(db):
+    """Dogfood defect: bare "No" with a stale draft routed into the
+    changed-mind revision path. Correct handling is cancel (or no-op) —
+    never a revision prompt, never repair choices."""
+
+    session = _session(db)
+    session.handle("Remind me to do my stretches")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+    # No confirmation was offered — the draft is stale context.
+
+    response = session.handle("No.")
+
+    db.refresh(action)
+    assert response["kind"] == "cancelled"
+    assert action.status == "cancelled"
+    assert db.query(CapturedIntent).count() == 1  # nothing new invented
+
+
+def test_bare_no_with_nothing_pending_noops(db):
+    session = _session(db)
+
+    response = session.handle("No.")
+
+    assert response["kind"] == "noop"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_bare_wait_with_stale_draft_keeps_draft_and_noops(db):
+    """Hesitation is not cancellation: "Wait." must leave the draft staged
+    and answer with the waiting acknowledgment, not cancel or revise."""
+
+    session = _session(db)
+    session.handle("Remind me to do my stretches")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+
+    response = session.handle("Wait.")
+
+    db.refresh(action)
+    assert response["kind"] == "noop"
+    assert "waiting" in response["speech"].lower()
+    assert action.status == "staged"
+
+
+@pytest.mark.parametrize("form", ["No, no.", "No no no.", "Nope, nope."])
+def test_repeated_negation_palilalia_cancels_never_revises(db, form):
+    """Palilalia — involuntary repetition — is a hallmark of PD speech.
+    A repeated negation is one negation: cancel the draft, invent nothing."""
+
+    session = _session(db)
+    session.handle("Remind me to do my stretches")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+
+    response = session.handle(form)
+
+    db.refresh(action)
+    assert response["kind"] == "cancelled", form
+    assert action.status == "cancelled"
+    assert db.query(CapturedIntent).count() == 1  # no bogus revision captured
+
+
+@pytest.mark.parametrize(
+    "form", ["Wait... wait.", "Wait, wait, wait.", "Hold on, hold on.", "No, wait."]
+)
+def test_repeated_or_mixed_hesitation_keeps_draft(db, form):
+    session = _session(db)
+    session.handle("Remind me to do my stretches")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+
+    response = session.handle(form)
+
+    db.refresh(action)
+    assert response["kind"] == "noop", form
+    assert "waiting" in response["speech"].lower()
+    assert action.status == "staged"
+
+
+def test_repeated_negation_without_draft_noops(db):
+    session = _session(db)
+
+    response = session.handle("No no no.")
+
+    assert response["kind"] == "noop"
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_awaiting_reply_covers_stateless_question_turns(db):
+    """Parker's clarify/retry questions must open the wake grace window even
+    though they hold no pending state — otherwise his invited answer is
+    dropped as ambient."""
+
+    session = _session(db)
+    session.handle("The thing... with the... you know...")  # choices pending
+    session.handle("never mind")  # retry: "Tell me again in your own words."
+    assert session.awaiting_reply is True  # invited, though nothing is pending
+
+    response = session.handle("Remind me to stretch")  # consumes the invite
+    assert response["kind"] == "captured"
+    assert session.awaiting_reply is False
+
+
+def test_awaiting_reply_grace_window_expires(db, monkeypatch):
+    """An unanswered offer must not hold the microphone open indefinitely:
+    after the grace window the wake name is required again (the action itself
+    stays staged for the review page)."""
+    from app.config import settings
+
+    session = _session(db)
+    session.handle("Remind me to do my stretches")
+    resolve_captured_intents(db)
+    stage_resolved_actions(db)
+    assert session.offer_pending_confirmation() is not None
+    assert session.awaiting_reply is True
+
+    session._grace_started_at -= 9999  # the offer aged past any real window
+    assert session.awaiting_reply is False
+
+    monkeypatch.setattr(settings, "parker_wake_grace_seconds", 0)  # opt-out
+    assert session.awaiting_reply is True
+
+
+def test_awaiting_reply_tracks_choices_and_confirmation_lifecycle(db):
+    """The wake layer's grace window depends on this exact property."""
+
+    session = _session(db)
+    assert session.awaiting_reply is False
+
+    session.handle("Call... the... you know... the one with the garden...")
+    assert session.awaiting_reply is True  # numbered choices pending
+
+    session.handle("1")
+    resolve_captured_intents(db)
+    stage_resolved_actions(db)
+    assert session.offer_pending_confirmation() is not None
+    assert session.awaiting_reply is True  # yes/no offer pending
+
+    session.handle("Yes.")
+    assert session.awaiting_reply is False
