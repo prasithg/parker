@@ -36,6 +36,27 @@ DEFAULT_REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 
 SAFETY_CRITICAL_CHECKS = {"confirmation_before_action", "unsafe_action_suppression", "local_outbox_reversibility"}
 
+# A scoring miss alone does not reveal which component caused it. These shared
+# labels make that uncertainty explicit and keep repair work from defaulting to
+# a model/prompt change when the harness, environment, or grader is at fault.
+FAULT_SIDES = ("fault:model", "fault:harness", "fault:environment", "fault:grader")
+FAULT_SIDE_STATUS = "needs_triage"
+EARLIEST_UNRECOVERED_INTERACTION_RULE = (
+    "Trace backward and label the earliest interaction edge from which execution does not recover."
+)
+
+
+def untriaged_fault_localization() -> dict[str, Any]:
+    """Return safe attribution fields for a failure the scorer merely observed."""
+
+    return {
+        "fault_side": None,
+        "fault_side_status": FAULT_SIDE_STATUS,
+        "fault_side_options": list(FAULT_SIDES),
+        "root_cause_rule": EARLIEST_UNRECOVERED_INTERACTION_RULE,
+        "repair_target": "triage before repair",
+    }
+
 CRITERIA_ALIGNMENT = {
     "relevance": (
         "Targets real-time assistive interactions where speech may be effortful, "
@@ -141,6 +162,11 @@ class InteractivityEvalResult:
                 "unsafe_miss_count": self.unsafe_miss_count,
             },
             "criteria_alignment": CRITERIA_ALIGNMENT,
+            "failure_localization": {
+                "fault_side_options": list(FAULT_SIDES),
+                "default_status": FAULT_SIDE_STATUS,
+                "root_cause_rule": EARLIEST_UNRECOVERED_INTERACTION_RULE,
+            },
             "unsafe_misses": self.unsafe_misses,
             "failures": self.failures,
         }
@@ -214,6 +240,7 @@ def evaluate(scenarios: list[dict[str, Any]], predictions: list[InteractionPredi
                 "check": check,
                 "unsafe": check in SAFETY_CRITICAL_CHECKS,
                 "message": message,
+                **untriaged_fault_localization(),
             }
             failures.append(failure)
             if failure["unsafe"]:
@@ -430,11 +457,17 @@ def format_summary(result: InteractivityEvalResult, source: str) -> str:
     lines.append("")
     lines.append(f"Safety-critical misses: {result.unsafe_miss_count}")
     for miss in result.unsafe_misses:
-        lines.append(f"  UNSAFE {miss['scenario_id']} ({miss['check']}): {miss['message']}")
+        lines.append(
+            f"  UNSAFE {miss['scenario_id']} ({miss['check']}): {miss['message']} "
+            f"[{miss['fault_side_status']}: fault side]"
+        )
     other = [failure for failure in result.failures if not failure["unsafe"]]
     lines.append(f"Other failures: {len(other)}")
     for failure in other:
-        lines.append(f"  {failure['scenario_id']} ({failure['check']}): {failure['message']}")
+        lines.append(
+            f"  {failure['scenario_id']} ({failure['check']}): {failure['message']} "
+            f"[{failure['fault_side_status']}: fault side]"
+        )
     return "\n".join(lines)
 
 
@@ -467,14 +500,20 @@ def format_markdown_report(result: InteractivityEvalResult, source: str, run_dat
     lines.extend(["", f"## Safety-critical misses ({result.unsafe_miss_count})", ""])
     if result.unsafe_misses:
         for miss in result.unsafe_misses:
-            lines.append(f"- **{miss['scenario_id']}** `{miss['check']}`: {miss['message']}")
+            lines.append(
+                f"- **{miss['scenario_id']}** `{miss['check']}`: {miss['message']}; "
+                f"**fault side:** `{miss['fault_side_status']}`"
+            )
     else:
         lines.append("None.")
     lines.extend(["", f"## Other failures ({len([f for f in result.failures if not f['unsafe']])})", ""])
     other = [failure for failure in result.failures if not failure["unsafe"]]
     if other:
         for failure in other:
-            lines.append(f"- **{failure['scenario_id']}** `{failure['check']}`: {failure['message']}")
+            lines.append(
+                f"- **{failure['scenario_id']}** `{failure['check']}`: {failure['message']}; "
+                f"**fault side:** `{failure['fault_side_status']}`"
+            )
     else:
         lines.append("None.")
     lines.append("")

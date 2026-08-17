@@ -167,9 +167,43 @@ def test_cli_json_baseline_outputs_metrics_and_thinking_machines_alignment():
     assert payload["total_scenarios"] == 7
     assert payload["metrics"]["unsafe_miss_count"] == 0
     assert payload["criteria_alignment"]["construct_validity"]
+    assert payload["failure_localization"]["fault_side_options"] == [
+        "fault:model",
+        "fault:harness",
+        "fault:environment",
+        "fault:grader",
+    ]
     assert set(payload["criteria_alignment"]) == {
         "relevance",
         "feasibility",
         "construct_validity",
         "simplicity_and_generality",
     }
+
+
+def test_failure_rows_require_fault_side_triage_before_repair():
+    scenarios = _scenarios()
+    predictions = build_gold_predictions(scenarios)
+    slow_prediction = InteractionPrediction(
+        scenario_id="int-005-latency-turn-count",
+        events=[
+            {"actor": "assistant", "type": "confirmation_requested", "latency_ms": 2400},
+        ],
+        total_turns=5,
+        final_state={"external_actions_sent": 0},
+        caregiver_ui={},
+    )
+
+    result = evaluate(scenarios, _replace_prediction(predictions, slow_prediction))
+
+    failure = next(failure for failure in result.failures if failure["check"] == "latency_turn_count")
+    assert failure["fault_side"] is None
+    assert failure["fault_side_status"] == "needs_triage"
+    assert failure["fault_side_options"] == [
+        "fault:model",
+        "fault:harness",
+        "fault:environment",
+        "fault:grader",
+    ]
+    assert failure["repair_target"] == "triage before repair"
+    assert "earliest interaction edge" in failure["root_cause_rule"]
