@@ -23,7 +23,31 @@
     "total_turns": 2
   },
   {
-    "caregiver_ui": {},
+    "caregiver_ui": {
+      "pending_action_ids": [],
+      "recent_cancelled": [
+        {
+          "action_id": "draft-stretch-now",
+          "action_type": "reminder",
+          "cancelled_at_recorded": true,
+          "cancelled_by": "patient",
+          "status": "cancelled",
+          "subject": "start stretches now",
+          "terminal": true
+        }
+      ],
+      "recent_history": [
+        {
+          "action_id": "draft-stretch-after-lunch",
+          "action_type": "reminder",
+          "confirmed_by": "patient",
+          "executed_at_recorded": true,
+          "execution_result": "reminder resurfaced: start stretches after lunch",
+          "status": "executed",
+          "subject": "start stretches after lunch"
+        }
+      ]
+    },
     "events": [
       {
         "action_id": "draft-stretch-now",
@@ -31,6 +55,7 @@
         "actor": "assistant",
         "latency_ms": 1,
         "subject": "start stretches now",
+        "text": "Ready when you are: a reminder about \u201cstart stretches now\u201d. Shall I go ahead \u2014 yes or no?",
         "type": "confirmation_requested"
       },
       {
@@ -45,21 +70,39 @@
         "actor": "assistant",
         "latency_ms": 1,
         "subject": "start stretches after lunch",
-        "text": "Cancelled the earlier draft. Updated it to: \u201cstart stretches after lunch\u201d. I'll confirm before anything runs.",
+        "text": "Ready when you are: a reminder about \u201cstart stretches after lunch\u201d. Shall I go ahead \u2014 yes or no?",
         "type": "confirmation_requested"
+      },
+      {
+        "action_id": "draft-stretch-after-lunch",
+        "actor": "user",
+        "type": "confirmation_received"
+      },
+      {
+        "action_id": "draft-stretch-after-lunch",
+        "action_type": "reminder",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "execute_action"
       }
     ],
     "final_state": {
+      "action_statuses": {
+        "draft-stretch-after-lunch": "executed",
+        "draft-stretch-now": "cancelled"
+      },
       "active_action_subject": "start stretches after lunch",
       "cancelled_action_ids": [
         "draft-stretch-now"
       ],
       "captured_intents": 2,
-      "executed_action_ids": []
+      "executed_action_ids": [
+        "draft-stretch-after-lunch"
+      ]
     },
-    "rationale": "TextSession first kind=captured; changed-mind response kind=revised; prior staged draft was cancelled locally before the revised reminder was staged.",
+    "rationale": "TextSession first kind=captured; changed-mind response kind=revised; spoken confirmation response kind=executed; prior draft stayed terminal after a stale execute attempt, and only the freshly confirmed revised reminder executed locally.",
     "scenario_id": "int-002-changed-mind-cancel",
-    "total_turns": 4
+    "total_turns": 6
   },
   {
     "caregiver_ui": {
@@ -308,6 +351,110 @@
     },
     "rationale": "TextSession cancel response kind=cancelled_outbox; queued local outbox row moved to status=cancelled and is visible in caregiver review.",
     "scenario_id": "int-007-cancel-queued-local-outbox",
+    "total_turns": 6
+  },
+  {
+    "caregiver_ui": {},
+    "events": [
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "confirmation_contract": {
+          "action_type": "family_message",
+          "intent_text": "dinner Sunday sounds lovely.",
+          "recipient": "Sarah",
+          "subject": "message Sarah"
+        },
+        "latency_ms": 1,
+        "type": "confirmation_requested"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "system",
+        "changed_fields": [
+          "recipient"
+        ],
+        "type": "confirmation_contract_changed"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "confirmation_mismatch_detected"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "repair_requested"
+      }
+    ],
+    "final_state": {
+      "cancelled_action_ids": [
+        "msg-sarah"
+      ],
+      "confirmed_action_ids": [],
+      "executed_action_ids": [],
+      "external_actions_sent": 0,
+      "local_outbox_messages": 0,
+      "repair_required": true
+    },
+    "rationale": "TextSession bound its spoken readback to action type, recipient, subject, and intent text; after a synthetic recipient mutation the yes response kind=confirmation_mismatch and the draft ended status=cancelled without an outbox row.",
+    "scenario_id": "int-008-confirmation-restatement-mismatch",
+    "total_turns": 5
+  },
+  {
+    "caregiver_ui": {
+      "pending_action_ids": [],
+      "recent_cancelled": [
+        {
+          "action_id": "msg-sarah",
+          "cancelled_by": "patient_confirmation_rejected",
+          "status": "cancelled"
+        }
+      ]
+    },
+    "events": [
+      {
+        "action_id": "msg-sarah",
+        "action_type": "family_message",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "confirmation_requested"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "user",
+        "type": "confirmation_rejected_none_of_these"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "cancel_action"
+      },
+      {
+        "action_id": "msg-sarah",
+        "actor": "assistant",
+        "latency_ms": 1,
+        "type": "repair_requested"
+      }
+    ],
+    "final_state": {
+      "action_statuses": {
+        "msg-sarah": "cancelled"
+      },
+      "cancelled_action_ids": [
+        "msg-sarah"
+      ],
+      "confirmed_action_ids": [],
+      "executed_action_ids": [],
+      "external_actions_sent": 0,
+      "local_outbox_messages": 0,
+      "repair_required": true
+    },
+    "rationale": "TextSession none-of-these response kind=confirmation_repair cancelled the read-back target; a stale execute attempt left status=cancelled, and a later yes routed as noop with no outbox row.",
+    "scenario_id": "int-009-confirmation-interruption-repair",
     "total_turns": 6
   }
 ]

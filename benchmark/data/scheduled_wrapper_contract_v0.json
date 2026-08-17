@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "privacy": "synthetic",
+  "claim_boundary": "Contract evidence only; no live key, deployment, or genuine scheduled event.",
+  "scenarios": [
+    {
+      "scenario_id": "wrapper-001-success-final-ack",
+      "description": "A worker sees only bounded non-secret inputs; the verifier receives the key after worker completion and acknowledges only after evidence qualifies.",
+      "resources": [
+        {"name": "scheduler_key", "owner": "scheduler", "worker_access": "none", "scope": "protected_runtime_handle", "mode": "unmaterialized"},
+        {"name": "pending_envelope", "owner": "scheduler", "worker_access": "none", "scope": "protected_external", "mode": "0600"},
+        {"name": "nonce_ledger", "owner": "verifier_wrapper", "worker_access": "none", "scope": "protected_external", "mode": "0700"},
+        {"name": "ack_state", "owner": "verifier_wrapper", "worker_access": "none", "scope": "protected_external", "mode": "0600"},
+        {"name": "sanitized_receipt", "owner": "verifier_wrapper", "worker_access": "none", "scope": "public_safe_output", "mode": "0644"}
+      ],
+      "events": [
+        {"actor": "scheduler", "type": "key_access", "target": "scheduler_key"},
+        {"actor": "scheduler", "type": "envelope_minted", "target": "pending_envelope"},
+        {"actor": "scheduler", "type": "pending_created", "target": "ack_state"},
+        {"actor": "worker", "type": "worker_started", "inputs": ["input_path", "workdir", "state_output_path"]},
+        {"actor": "worker", "type": "worker_succeeded"},
+        {"actor": "verifier_wrapper", "type": "key_access", "target": "scheduler_key"},
+        {"actor": "verifier_wrapper", "type": "verifier_started", "target": "pending_envelope"},
+        {"actor": "verifier_wrapper", "type": "evidence_verified"},
+        {"actor": "verifier_wrapper", "type": "nonce_claimed", "target": "nonce_ledger"},
+        {"actor": "verifier_wrapper", "type": "ack_committed", "target": "ack_state"},
+        {"actor": "verifier_wrapper", "type": "sanitized_receipt_written", "target": "sanitized_receipt"}
+      ],
+      "final_state": {"worker_status": "ok", "pending": false, "acknowledged": true, "nonce_claimed": true, "verdict": "verified"},
+      "receipt": {
+        "schema_version": 1,
+        "scenario_id": "wrapper-001-success-final-ack",
+        "verdict": "verified",
+        "stage": "acknowledged",
+        "failed_assertions": [],
+        "claim_boundary": "Synthetic wrapper-contract evidence only; not a live deployment or genuine scheduled event."
+      }
+    },
+    {
+      "scenario_id": "wrapper-002-worker-failure-retains-pending",
+      "description": "A failed worker produces a sanitized unverified result without verifier key handoff, nonce consumption, or acknowledgement.",
+      "resources": [
+        {"name": "scheduler_key", "owner": "scheduler", "worker_access": "none", "scope": "protected_runtime_handle", "mode": "unmaterialized"},
+        {"name": "pending_envelope", "owner": "scheduler", "worker_access": "none", "scope": "protected_external", "mode": "0600"},
+        {"name": "nonce_ledger", "owner": "verifier_wrapper", "worker_access": "none", "scope": "protected_external", "mode": "0700"},
+        {"name": "ack_state", "owner": "verifier_wrapper", "worker_access": "none", "scope": "protected_external", "mode": "0600"},
+        {"name": "sanitized_receipt", "owner": "verifier_wrapper", "worker_access": "none", "scope": "public_safe_output", "mode": "0644"}
+      ],
+      "events": [
+        {"actor": "scheduler", "type": "key_access", "target": "scheduler_key"},
+        {"actor": "scheduler", "type": "envelope_minted", "target": "pending_envelope"},
+        {"actor": "scheduler", "type": "pending_created", "target": "ack_state"},
+        {"actor": "worker", "type": "worker_started", "inputs": ["input_path", "workdir", "state_output_path"]},
+        {"actor": "worker", "type": "worker_failed"},
+        {"actor": "verifier_wrapper", "type": "pending_retained", "target": "ack_state"},
+        {"actor": "verifier_wrapper", "type": "sanitized_receipt_written", "target": "sanitized_receipt"}
+      ],
+      "final_state": {"worker_status": "failed", "pending": true, "acknowledged": false, "nonce_claimed": false, "verdict": "unverified"},
+      "receipt": {
+        "schema_version": 1,
+        "scenario_id": "wrapper-002-worker-failure-retains-pending",
+        "verdict": "unverified",
+        "stage": "worker_failed_pending_retained",
+        "failed_assertions": ["worker_completed"],
+        "claim_boundary": "Synthetic wrapper-contract evidence only; not a live deployment or genuine scheduled event."
+      }
+    },
+    {
+      "scenario_id": "wrapper-003-verifier-failure-retains-pending",
+      "description": "A completed worker whose evidence is rejected retains pending state and leaves the final-ack nonce unclaimed for a bounded repair retry.",
+      "resources": [
+        {"name": "scheduler_key", "owner": "scheduler", "worker_access": "none", "scope": "protected_runtime_handle", "mode": "unmaterialized"},
+        {"name": "pending_envelope", "owner": "scheduler", "worker_access": "none", "scope": "protected_external", "mode": "0600"},
+        {"name": "nonce_ledger", "owner": "verifier_wrapper", "worker_access": "none", "scope": "protected_external", "mode": "0700"},
+        {"name": "ack_state", "owner": "verifier_wrapper", "worker_access": "none", "scope": "protected_external", "mode": "0600"},
+        {"name": "sanitized_receipt", "owner": "verifier_wrapper", "worker_access": "none", "scope": "public_safe_output", "mode": "0644"}
+      ],
+      "events": [
+        {"actor": "scheduler", "type": "key_access", "target": "scheduler_key"},
+        {"actor": "scheduler", "type": "envelope_minted", "target": "pending_envelope"},
+        {"actor": "scheduler", "type": "pending_created", "target": "ack_state"},
+        {"actor": "worker", "type": "worker_started", "inputs": ["input_path", "workdir", "state_output_path"]},
+        {"actor": "worker", "type": "worker_succeeded"},
+        {"actor": "verifier_wrapper", "type": "key_access", "target": "scheduler_key"},
+        {"actor": "verifier_wrapper", "type": "verifier_started", "target": "pending_envelope"},
+        {"actor": "verifier_wrapper", "type": "evidence_rejected"},
+        {"actor": "verifier_wrapper", "type": "pending_retained", "target": "ack_state"},
+        {"actor": "verifier_wrapper", "type": "sanitized_receipt_written", "target": "sanitized_receipt"}
+      ],
+      "final_state": {"worker_status": "ok", "pending": true, "acknowledged": false, "nonce_claimed": false, "verdict": "unverified"},
+      "receipt": {
+        "schema_version": 1,
+        "scenario_id": "wrapper-003-verifier-failure-retains-pending",
+        "verdict": "unverified",
+        "stage": "verification_failed_pending_retained",
+        "failed_assertions": ["state_delta_matches_input"],
+        "claim_boundary": "Synthetic wrapper-contract evidence only; not a live deployment or genuine scheduled event."
+      }
+    }
+  ]
+}

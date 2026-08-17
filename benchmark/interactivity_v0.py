@@ -15,6 +15,8 @@ DIMENSIONS = {
     "repair_under_uncertain_speech",
     "interruption_changed_mind_handling",
     "confirmation_before_action",
+    "confirmation_restatement_binding",
+    "confirmation_interruption_repair",
     "caregiver_ui_clarity",
     "latency_turn_count",
     "unsafe_action_suppression",
@@ -113,6 +115,79 @@ def validate_scenario(row: dict[str, Any]) -> None:
         required = gold.get("caregiver_ui_required")
         if not isinstance(required, list) or not required:
             raise ValueError(f"scenario {scenario_id} caregiver_ui_required must be a non-empty list")
+
+    if "interruption_changed_mind_handling" in checks:
+        for field_name in (
+            "prior_action_id",
+            "revised_action_id",
+            "revised_action_type",
+            "revised_execution_event_type",
+            "expected_prior_subject",
+            "expected_active_subject",
+        ):
+            value = gold.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"scenario {scenario_id} {field_name} must be a non-empty string")
+        if gold["prior_action_id"] == gold["revised_action_id"]:
+            raise ValueError(f"scenario {scenario_id} revised_action_id must differ from prior_action_id")
+        caregiver_audit = gold.get("caregiver_audit")
+        required_audit_fields = {
+            "cancelled_bucket",
+            "executed_bucket",
+            "cancelled_by",
+            "confirmed_by",
+        }
+        if not isinstance(caregiver_audit, dict) or set(caregiver_audit) != required_audit_fields:
+            raise ValueError(
+                f"scenario {scenario_id} caregiver_audit must contain exactly "
+                f"{sorted(required_audit_fields)}"
+            )
+        if caregiver_audit["cancelled_bucket"] != "recent_cancelled":
+            raise ValueError(
+                f"scenario {scenario_id} caregiver_audit cancelled_bucket must be recent_cancelled"
+            )
+        if caregiver_audit["executed_bucket"] != "recent_history":
+            raise ValueError(
+                f"scenario {scenario_id} caregiver_audit executed_bucket must be recent_history"
+            )
+        for field_name in ("cancelled_by", "confirmed_by"):
+            value = caregiver_audit[field_name]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"scenario {scenario_id} caregiver_audit {field_name} must be non-empty text"
+                )
+
+    if "confirmation_restatement_binding" in checks:
+        action_id = gold.get("action_id")
+        if not isinstance(action_id, str) or not action_id.strip():
+            raise ValueError(f"scenario {scenario_id} action_id must be a non-empty string")
+        contract = gold.get("expected_confirmation_contract")
+        contract_fields = {"action_type", "recipient", "subject", "intent_text"}
+        if not isinstance(contract, dict) or set(contract) != contract_fields:
+            raise ValueError(
+                f"scenario {scenario_id} expected_confirmation_contract must contain {sorted(contract_fields)}"
+            )
+        if any(not isinstance(contract[field], str) or not contract[field].strip() for field in contract_fields):
+            raise ValueError(
+                f"scenario {scenario_id} expected_confirmation_contract values must be non-empty strings"
+            )
+        changed_fields = gold.get("expected_changed_fields")
+        if (
+            not isinstance(changed_fields, list)
+            or not changed_fields
+            or any(field not in contract_fields for field in changed_fields)
+        ):
+            raise ValueError(
+                f"scenario {scenario_id} expected_changed_fields must name fields in the confirmation contract"
+            )
+
+    if "confirmation_interruption_repair" in checks:
+        action_id = gold.get("action_id")
+        if not isinstance(action_id, str) or not action_id.strip():
+            raise ValueError(f"scenario {scenario_id} action_id must be a non-empty string")
+        cancelled_by = gold.get("expected_cancelled_by")
+        if not isinstance(cancelled_by, str) or not cancelled_by.strip():
+            raise ValueError(f"scenario {scenario_id} expected_cancelled_by must be a non-empty string")
 
     ideal = gold["ideal_prediction"]
     if not isinstance(ideal, dict):

@@ -11,8 +11,9 @@ tick stages an action from this session, ``offer_pending_confirmation``
 asks the patient directly, and a spoken "yes" confirms AND executes it
 through the same pipeline functions (``confirmed_by="patient"``, recorded)
 — within an admin-enabled capability the patient's own confirmation is the
-only gate. "No" cancels. Anything else defers: the action stays staged for
-the review page, never silently acted on.
+only gate. "No" cancels; "none of these" cancels and requests a fresh
+restatement. Anything else defers: the action stays staged for the review page,
+never silently acted on.
 
 Safety mirrors the action policy: medication-change requests are refused,
 purchases are routed to human approval, prohibited tiers are never
@@ -195,6 +196,11 @@ TICKET_ACQUISITION_PATTERNS = (
     # runtime guard.
     r"\bby\s+me\s+tickets?\b",
 )
+TICKET_NEGATED_ACQUISITION_PATTERNS = (
+    r"\b(?:do\s+not|don't|dont)\s+(?:want|need)\s+(?:a\s+|the\s+)?tickets?\b",
+    r"\b(?:do\s+not|don't|dont)\s+(?:book|buy|purchase|order|get)\s+"
+    r"(?:me\s+)?(?:a\s+|the\s+)?(?:\w+\s+){0,3}tickets?\b",
+)
 FINANCIAL_ACCOUNT_PHRASES = (
     "account balance",
     "bank balance",
@@ -305,6 +311,14 @@ CONFIRM_NO_PHRASES = {
     "no thanks",
     "no thank you",
 }
+CONFIRM_REPAIR_REJECTION_PHRASES = {
+    "none",
+    "none of these",
+    "none of those",
+    "that is not it",
+    "that's not it",
+    "thats not it",
+}
 
 # Natural confirmations compound ("Yes, go ahead", "Okay, do it") — heard
 # verbatim from the first desktop-app install, where "Yes, go ahead."
@@ -340,6 +354,15 @@ def _confirmation_reply_kind(normalized: str) -> str | None:
     if tokens[0] in _CONFIRM_YES_LEADS and all(t in _CONFIRM_YES_TOKENS for t in tokens):
         return "yes"
     return None
+
+
+def _is_confirmation_repair_rejection(normalized: str) -> bool:
+    """Recognize a bounded none-of-these rejection, including effortful repetition."""
+
+    if normalized in CONFIRM_REPAIR_REJECTION_PHRASES:
+        return True
+    return re.fullmatch(r"none(?:\s+none){1,2}\s+of\s+(?:these|those)", normalized) is not None
+
 
 # Spoken dismissal while repair choices are pending: equivalent to picking
 # "none of these" without knowing its number. Kept small and exact-match —
@@ -430,6 +453,28 @@ def _looks_like_ticket_acquisition(normalized: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in TICKET_ACQUISITION_PATTERNS)
 
 
+def _without_negated_ticket_acquisition(normalized: str) -> tuple[str, bool]:
+    """Remove explicit ticket negations before looking for positive acquisition.
+
+    Clearly synthetic audio preserved ``don't buy tickets`` and ``don't want
+    tickets`` verbatim. Those clauses must not be reinterpreted as affirmative
+    purchase intent. Removing only the narrow verb+ticket span keeps a later
+    positive clause (``don't buy these tickets; buy the Sunday tickets``)
+    visible to the conservative human-approval gate.
+    """
+
+    remaining = normalized
+    for pattern in TICKET_NEGATED_ACQUISITION_PATTERNS:
+        remaining = re.sub(pattern, " ", remaining)
+    remaining = re.sub(r"\s+", " ", remaining).strip()
+    return remaining, remaining != normalized
+
+
+def _looks_like_purchase_after_ticket_negation(normalized: str) -> bool:
+    remaining, _ = _without_negated_ticket_acquisition(normalized)
+    return any(phrase in remaining for phrase in PURCHASE_PHRASES)
+
+
 def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
     """Separate read-only ticket lookup from ticket acquisition/purchase.
 
@@ -453,7 +498,8 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
         or REMIND_PATTERN.match(utterance)
         or EXERCISE_PATTERN.match(utterance)
     )
-    acquisition = _looks_like_ticket_acquisition(normalized)
+    positive_text, has_negated_acquisition = _without_negated_ticket_acquisition(normalized)
+    acquisition = _looks_like_ticket_acquisition(positive_text)
     if direct_local_intent and not acquisition:
         return None
     if acquisition:
@@ -466,7 +512,7 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
                 "A family member must review and approve any purchase outside Parker."
             ),
         }
-    if any(re.search(pattern, normalized) for pattern in TICKET_LOOKUP_PATTERNS):
+    if any(re.search(pattern, positive_text) for pattern in TICKET_LOOKUP_PATTERNS):
         return {
             "kind": "answer",
             "action_type": "item_search",
@@ -475,6 +521,13 @@ def _ticket_request_response(utterance: str) -> dict[str, Any] | None:
                 "I can help prepare a read-only ticket search. The local loop does not fetch live results, "
                 "and I won't book or purchase anything."
             ),
+        }
+    if has_negated_acquisition:
+        return {
+            "kind": "noop",
+            "action_type": None,
+            "purchase_permitted": False,
+            "speech": "I heard that you don't want tickets. I won't create or purchase anything.",
         }
     return None
 
@@ -1224,6 +1277,7 @@ class TextSession:
         # already offered once this session (a deferred offer is not nagged
         # again — the action stays staged for the review page instead).
         self._pending_confirmation: Optional[int] = None
+        self._pending_confirmation_contract: Optional[dict[str, str]] = None
         self._offered_confirmation_ids: set[int] = set()
         # Labels from the most recently offered (and user-rejected) repair choices.
         # Passed to suggest_repair_candidates on the next offer so the model can
@@ -1387,7 +1441,7 @@ class TextSession:
         ticket_response = _ticket_request_response(utterance)
         if ticket_response is not None:
             return ticket_response
-        if any(p in lowered for p in PURCHASE_PHRASES):
+        if _looks_like_purchase_after_ticket_negation(lowered):
             return {
                 "kind": "needs_human_approval",
                 "action_type": "purchase",
@@ -1602,7 +1656,7 @@ class TextSession:
         if ticket_response is not None:
             ticket_response["speech"] = f"Cancelled the earlier draft. {ticket_response['speech']}"
             return ticket_response
-        if any(p in safety_text for p in PURCHASE_PHRASES):
+        if _looks_like_purchase_after_ticket_negation(safety_text):
             return {
                 "kind": "needs_human_approval",
                 "speech": (
@@ -1669,11 +1723,13 @@ class TextSession:
             return None
         self._offered_confirmation_ids.add(action.id)
         self._pending_confirmation = action.id
+        self._pending_confirmation_contract = self._confirmation_contract(action)
         description = self._describe_staged_action(action)
         offer = {
             "kind": "confirm_offer",
             "speech": f"Ready when you are: {description}. Shall I go ahead — yes or no?",
             "staged_action_id": action.id,
+            "confirmation_contract": dict(self._pending_confirmation_contract),
         }
         # Parker spoke first: the screen shows the offer with nothing heard.
         self._publish_screen(heard="", response=offer)
@@ -1690,14 +1746,50 @@ class TextSession:
         assert action_id is not None
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
+        if _is_confirmation_repair_rejection(normalized):
+            self._pending_confirmation = None
+            self._pending_confirmation_contract = None
+            cancel_staged_action(
+                self.db,
+                action_id,
+                cancelled_by="patient_confirmation_rejected",
+            )
+            return {
+                "kind": "confirmation_repair",
+                "speech": (
+                    "Okay — that was not the right action. I cancelled it. "
+                    "Please tell me the action again in your own words."
+                ),
+                "cancelled_staged_action_id": action_id,
+                "repair_required": True,
+            }
         reply_kind = _confirmation_reply_kind(normalized)
         if reply_kind == "yes":
             self._pending_confirmation = None
-            confirm_staged_action(self.db, action_id, confirmed_by="patient")
+            offered_contract = self._pending_confirmation_contract
+            self._pending_confirmation_contract = None
+            from app.db.models import StagedAction
+
+            action = self.db.get(StagedAction, action_id)
+            current_contract = self._confirmation_contract(action) if action is not None else None
+            if (
+                action is None
+                or action.status != "staged"
+                or offered_contract is None
+                or current_contract != offered_contract
+            ):
+                return self._confirmation_mismatch_response(action_id, action)
+            confirmed = confirm_staged_action(self.db, action_id, confirmed_by="patient")
+            if (
+                confirmed.status != "confirmed"
+                or self._confirmation_contract(confirmed) != offered_contract
+            ):
+                return self._confirmation_mismatch_response(action_id, confirmed)
             executed = execute_staged_action(self.db, action_id)
             return self._speech_for_execution(executed)
         if reply_kind == "no":
             self._pending_confirmation = None
+            self._pending_confirmation_contract = None
             cancel_staged_action(self.db, action_id, cancelled_by="patient")
             return {
                 "kind": "cancelled",
@@ -1705,7 +1797,48 @@ class TextSession:
                 "cancelled_staged_action_id": action_id,
             }
         self._pending_confirmation = None  # deferred; route the utterance normally
+        self._pending_confirmation_contract = None
         return None
+
+    def _confirmation_mismatch_response(self, action_id: int, action) -> dict[str, Any]:
+        """Cancel a stale confirmation target and request a fresh user restatement."""
+
+        from app.parker.pipeline import cancel_staged_action
+
+        if action is not None and action.status in {"staged", "confirmed"}:
+            cancel_staged_action(
+                self.db,
+                action_id,
+                cancelled_by="confirmation_contract_mismatch",
+            )
+        return {
+            "kind": "confirmation_mismatch",
+            "speech": (
+                "What is waiting no longer matches what I just read back. "
+                "I won't run it. Please tell me the action again so I can confirm the right details."
+            ),
+            "staged_action_id": action_id,
+            "repair_required": True,
+        }
+
+    @staticmethod
+    def _confirmation_contract(action) -> dict[str, str]:
+        """Fields Parker read back and must still match before spoken execution."""
+
+        import json as _json
+
+        try:
+            payload = _json.loads(action.action_payload or "{}")
+        except ValueError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        return {
+            "action_type": str(action.action_type or "").strip(),
+            "recipient": str(payload.get("recipient") or "").strip(),
+            "subject": str(payload.get("subject") or "").strip(),
+            "intent_text": str(payload.get("intent_text") or "").strip(),
+        }
 
     def _describe_staged_action(self, action) -> str:
         import json as _json

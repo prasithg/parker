@@ -62,5 +62,11 @@ jobs:
       - name: Hands-lane eval (fake OpenClaw gateway)
         run: make eval-hands
 
+      - name: Scheduled-wrapper synthetic contract eval
+        run: make eval-scheduled-wrapper
+
+      - name: Scheduled-wrapper inactive subprocess and ownership harness
+        run: make eval-scheduled-wrapper-harness
+
       - name: Release-readiness rollup
         run: make eval-release-readiness

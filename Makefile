@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands reset-db repl demo digest voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
