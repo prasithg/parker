@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, inspect, text
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from app.conversation.repair_events import RepairEvent
 from app.db.database import Base
 
 SOURCE_KIND = "local_asr_nbest_repair"
@@ -339,8 +340,6 @@ def _redact_card(
     card.redacted_by = redacted_by
     card.redaction_reason = reason
     if card.repair_event_id is not None:
-        from app.conversation.repair_events import RepairEvent
-
         event = db.get(RepairEvent, card.repair_event_id)
         if event is not None:
             event.utterance = REDACTED_TEXT
