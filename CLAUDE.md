@@ -8,7 +8,7 @@ Parker is a personal assistant that actually understands people with Parkinson's
 
 Role split (load-bearing): the person with Parkinson's is the *user* — voice is their whole interface, zero configuration. Family members are the *administrators and skill builders* — they connect accounts, curate/approve skills, and own guardrails through the review surfaces. Think OpenClaw-style agent, family-administered.
 
-North Star metric: understood on the first try or after one repair question ≥90% of the time (stock voice assistants sit near 50% for the pilot user). Measured by the real-audio eval harness (`make eval-audio-real`), later on consented pilot voice samples.
+North Star: successful interactions without human assistance — the user prefers Parker over a stock assistant, and Parker measurably improves with use (thesis metrics: learning velocity, revealed preference). First capability target: understood on the first try or after one repair question ≥90% of the time (stock voice assistants sit near 50% for the pilot user), measured by the real-audio eval harness (`make eval-audio-real`), later on consented pilot voice samples. Strategy, capability briefs, and the active experiment live in `docs/strategy/`.
 
 Voice is the main interface and the first wedge. Parker's broader thesis is variable-speech understanding, repair under uncertainty, safe action, follow-through, family coordination, per-user learning from consented local usage data, and eval-backed usefulness. The project's trajectory is public: attract other families and developers so more deployment and more usage improve the shared harness, evals, and skills — never a central model trained on anyone's voice without consent.
 
@@ -62,7 +62,7 @@ Never implement behavior that:
 
 The repo contains a Python/FastAPI backend with modules for calls, conversation, medication tracking, memory, escalation, exercises, Parker capture/resolve/stage/resurface pipeline, and a synthetic benchmark scaffold.
 
-The next valuable work is to align repo docs, architecture, task taxonomy, and eval scaffolding around the updated system vision before expanding features.
+Strategy (2026-08-17): Parker is developed as capabilities leveling up through experiments — see `docs/strategy/` (capability model, briefs, roadmap). The active experiment is EXP-001: deploy + instrument daily home use (Phase A), then close the correction-learning loop and measure it (Phase B). Its Phase A slices are the next valuable work.
 
 ## Commands
 

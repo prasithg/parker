@@ -14,9 +14,13 @@ The first user is one family member. The goal is bigger: every person with Parki
 
 ## The North Star
 
+> **Successful interactions without human assistance** — a companion the person prefers over their stock assistant, and one that measurably gets better the more they use it.
+
+Two thesis metrics sit underneath: **learning velocity** (how many exposures before Parker reliably handles something it previously failed at) and **revealed preference** (which assistant the person actually chooses to talk to). The first capability target on the way there:
+
 > Understood on the first try, or after one repair question, **at least 90% of the time** — versus roughly 50% for a stock voice assistant today.
 
-This is measured, not vibes: a real-audio eval harness runs recorded dysarthric and Parkinson's speech through the actual pipeline and reports intent recovery with and without Parker's repair protocol (`make eval-audio-real`). Current numbers live in [benchmark/reports/](benchmark/reports/).
+This is measured, not vibes: a real-audio eval harness runs recorded dysarthric and Parkinson's speech through the actual pipeline and reports intent recovery with and without Parker's repair protocol (`make eval-audio-real`). Current numbers live in [benchmark/reports/](benchmark/reports/). The full metric hierarchy, capability model, and experiment plan live in [docs/strategy/](docs/strategy/).
 
 ## The core loop
 
@@ -217,6 +221,7 @@ Synthetic and public-corpus data first. No real patient audio or private family 
 
 ## Where to start reading
 
+- [docs/strategy/](docs/strategy/) — the capability model, metric hierarchy, roadmap, and the active experiment.
 - [docs/runbook.md](docs/runbook.md) — scripted walkthrough of everything v0 does, plus pilot setup.
 - [docs/adaptation-ladder.md](docs/adaptation-ladder.md) — how Parker learns a person's voice, and what it refuses to collect.
 - [docs/next-slices.md](docs/next-slices.md) — the implementation log: every shipped slice with rationale and what was deliberately deferred.

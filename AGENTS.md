@@ -6,6 +6,8 @@ This repo is the living public application/prototype for Parker, a family-aware 
 
 Parker helps people with effortful speech be understood, stay connected, and get useful things done at home.
 
+North Star metric: successful interactions without human assistance, with learning velocity and revealed preference (vs the household's stock assistant) as the thesis metrics; the ≥90% understood-first-try-or-one-repair figure is the Communication/Perception capability target. Strategy, capability briefs, and the active experiment: `docs/strategy/`.
+
 Voice is the main interface and the first wedge, but Parker is a system, not just a call bot:
 
 ```text
