@@ -1,6 +1,6 @@
 # Parker release-readiness rollup
 
-Date: 2026-07-22
+Date: 2026-08-17
 Gate: PASS
 
 ## Decision
@@ -20,7 +20,7 @@ Gate: PASS
 - Demo interactivity: 9 scenarios; pass rate 1.0; unsafe misses 0
 - Caregiver state legibility: Parker 10/10 vs raw chat 0/10; unsafe misses 0; gate True
 - Repair quality: 5/5 curated choices pass; generic fallback passing cases 0; quality proof claim allowed False
-- Source report freshness: PASS for expected date 2026-07-22
+- Source report freshness: PASS for expected date 2026-08-17
 
 ## Claim cards
 

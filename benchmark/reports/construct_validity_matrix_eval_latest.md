@@ -1,6 +1,6 @@
 # Parker construct-validity matrix eval v0
 
-- Date: 2026-07-22
+- Date: 2026-08-17
 - Purpose: distinguish current citable synthetic/local evidence from open research gaps.
 - Provenance: public synthetic/local reports only; no private data; no model/API dependency.
 

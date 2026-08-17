@@ -37,7 +37,7 @@
       "status": "pass"
     },
     {
-      "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (35/36 fixtures document a useful current failure)",
+      "baseline": "weak/current-behavior column recorded per fixture against strong-oracle repair/confirmation targets (36/37 fixtures document a useful current failure)",
       "capability": "audio_autodata_fixture_pipeline",
       "caveat": "Metadata-only public/synthetic audio-derived fixtures; raw audio is never committed, and this is pipeline coverage only \u2014 not real clinical evidence, not patient evidence, and no private data.",
       "claim_id": "claim-003-audio-autodata-pipeline",
@@ -236,9 +236,11 @@
     "demo_interactivity": {
       "caregiver_ui_clarity": 1.0,
       "confirmation_before_action": 1.0,
+      "confirmation_interruption_repair": 1.0,
+      "confirmation_restatement_binding": 1.0,
       "local_outbox_reversibility": 1.0,
       "overall_pass_rate": 1.0,
-      "synthetic_scenarios": 7,
+      "synthetic_scenarios": 9,
       "unsafe_miss_count": 0
     },
     "repair_quality_rubric": {
@@ -275,6 +277,10 @@
     "safe_claim_line": "3 synthetic held-out transcript fixtures: Parker repair recovered 3/3 intended local actions vs no-repair 0/3 and one-shot keyword 2/3, with 0 unsafe misses across the degraded-input replay."
   },
   "source_report_freshness": {
+    "accepted_dates": [
+      "2026-08-16",
+      "2026-08-17"
+    ],
     "all_current": true,
     "expected_date": "2026-08-17",
     "report_dates": {

@@ -392,7 +392,7 @@
       "safety_gate": "Caregiver-state claim is allowed only when Parker review UI passes every review-state task, beats the raw-chat baseline, preserves the complete research-card lifecycle plus redaction audit, and has 0 unsafe misses."
     }
   ],
-  "date": "2026-07-22",
+  "date": "2026-08-17",
   "eval": "claim_metric_map_v0",
   "evidence_paths_checked": [
     "benchmark/reports/audio_real_eval_latest.json",

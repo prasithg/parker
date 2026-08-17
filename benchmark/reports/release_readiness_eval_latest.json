@@ -178,7 +178,7 @@
       "upgrade_path": "Build a repair-quality rubric, run blinded grading on synthetic fixtures, then add consented accessibility feedback only after approval."
     }
   ],
-  "date": "2026-07-22",
+  "date": "2026-08-17",
   "eval": "release_readiness_v0",
   "evidence_paths_checked": [
     "benchmark/data/parker_claim_metric_map_v0.json",
@@ -278,19 +278,19 @@
   },
   "source_report_freshness": {
     "accepted_dates": [
-      "2026-07-21",
-      "2026-07-22"
+      "2026-08-16",
+      "2026-08-17"
     ],
     "all_current": true,
-    "expected_date": "2026-07-22",
+    "expected_date": "2026-08-17",
     "report_dates": {
-      "caregiver_state_legibility": "2026-07-22",
-      "claim_metric_map": "2026-07-22",
-      "construct_validity": "2026-07-22",
-      "degraded_input_replay": "2026-07-22",
-      "demo_interactivity": "2026-07-22",
-      "repair_quality_rubric": "2026-07-22",
-      "task_taxonomy": "2026-07-22"
+      "caregiver_state_legibility": "2026-08-17",
+      "claim_metric_map": "2026-08-17",
+      "construct_validity": "2026-08-17",
+      "degraded_input_replay": "2026-08-17",
+      "demo_interactivity": "2026-08-17",
+      "repair_quality_rubric": "2026-08-17",
+      "task_taxonomy": "2026-08-17"
     },
     "stale_reports": []
   }

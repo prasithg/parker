@@ -1,6 +1,6 @@
 # Parker claim→metric map eval v0
 
-- Date: 2026-07-22
+- Date: 2026-08-17
 - Purpose: make each public release claim traceable to emitted metric evidence, a baseline, a safety gate, and a caveat.
 - Provenance: public synthetic/local reports only; no private data; no model/API dependency.
 
