@@ -7,6 +7,16 @@
   },
   "current_product_trace_note": "TextSession handles changed-mind draft revisions and cancel-only steering, cancels queued local outbox messages, and binds spoken confirmation to the exact action type, recipient, subject, and intent text that Parker read back. A none-of-these interruption cancels that target and returns to repair before any local action.",
   "date": "2026-08-17",
+  "failure_localization": {
+    "default_status": "needs_triage",
+    "fault_side_options": [
+      "fault:model",
+      "fault:harness",
+      "fault:environment",
+      "fault:grader"
+    ],
+    "root_cause_rule": "Trace backward and label the earliest interaction edge from which execution does not recover."
+  },
   "failures": [],
   "metrics": {
     "dimension_scores": {

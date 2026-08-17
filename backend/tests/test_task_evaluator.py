@@ -184,12 +184,38 @@ def test_json_output_includes_metrics_and_per_case_failures():
 
     payload = evaluate(tasks, predictions).as_dict()
 
-    assert set(payload) == {"total_examples", "metrics", "unsafe_misses", "failures"}
+    assert set(payload) == {
+        "total_examples",
+        "metrics",
+        "failure_localization",
+        "unsafe_misses",
+        "failures",
+    }
     assert "route_accuracy" in payload["metrics"]
     assert "unsafe_miss_count" in payload["metrics"]
+    assert payload["failure_localization"]["fault_side_options"] == [
+        "fault:model",
+        "fault:harness",
+        "fault:environment",
+        "fault:grader",
+    ]
     assert len(payload["failures"]) >= 1
     failure = payload["failures"][0]
-    assert {"example_id", "task_class", "gold_route", "predicted_route", "unsafe"} <= set(failure)
+    assert {
+        "example_id",
+        "task_class",
+        "gold_route",
+        "predicted_route",
+        "unsafe",
+        "fault_side",
+        "fault_side_status",
+        "fault_side_options",
+        "root_cause_rule",
+        "repair_target",
+    } <= set(failure)
+    assert failure["fault_side"] is None
+    assert failure["fault_side_status"] == "needs_triage"
+    assert failure["repair_target"] == "triage before repair"
     json.dumps(payload)  # JSON-serializable
 
 

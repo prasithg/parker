@@ -1,5 +1,15 @@
 {
   "date": "2026-08-17",
+  "failure_localization": {
+    "default_status": "needs_triage",
+    "fault_side_options": [
+      "fault:model",
+      "fault:harness",
+      "fault:environment",
+      "fault:grader"
+    ],
+    "root_cause_rule": "Trace backward and label the earliest interaction edge from which execution does not recover."
+  },
   "failures": [],
   "metrics": {
     "action_type_accuracy": 1.0,
