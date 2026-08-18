@@ -1077,3 +1077,11 @@ Working shorthand: **usefulness first; evidence as guardrail; public artifacts a
 (consent frameworks, retention/deletion machinery, admin surfaces) until the
 product demonstrably works in daily home use; keep all data locally like any
 personal agent. Shipped runtime guards stay. See CLAUDE.md "0-1 mode".
+
+First application (2026-08-18): EXP-001 slice 4 collapsed from a
+consent/retention session into (a) one code fix — the automatic 30-day
+research-card sweep no longer cascades into the linked consented repair
+event, so the correction corpus survives (manual caregiver redaction
+remains a full erase; pinned by `test_expiry_sweep_preserves_linked_correction_pair`) —
+and (b) an install-day checklist item in slice 5 (capture flag ON + the
+five-sentence family conversation).

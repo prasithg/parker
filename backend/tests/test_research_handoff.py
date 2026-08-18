@@ -349,6 +349,33 @@ def test_expired_research_queries_redact_automatically_without_rewriting_status(
     assert db.get(LocalResearchHandoff, current_id).query != REDACTED_TEXT
 
 
+def test_expiry_sweep_preserves_linked_correction_pair(db, monkeypatch):
+    """0-1 keep-it-all (2026-08-18): the automatic retention window clears
+    the card's own text but never the linked consented repair event — the
+    correction pair is Phase B learning fuel. Manual caregiver redaction
+    remains the full erase (pinned above)."""
+
+    monkeypatch.setattr(settings, "repair_event_capture_consented", True)
+    session = _session(db, sid="CA_RESEARCH_HANDOFF_KEEP_PAIR")
+    _offer_repaired_person_query(session)
+    card_id = session.handle("1")["research_handoff_id"]
+    card = db.get(LocalResearchHandoff, card_id)
+    card.retention_expires_at = datetime(2026, 7, 1, 8, 0, 0)
+    db.commit()
+    repair_event = db.query(RepairEvent).one()
+    original_utterance = repair_event.utterance
+    assert "Jackson" in repair_event.alternates_json
+
+    redacted = redact_expired_local_research_handoffs(db, now=datetime(2026, 7, 21, 8, 0, 0))
+
+    assert [c.id for c in redacted] == [card_id]
+    assert db.get(LocalResearchHandoff, card_id).query == REDACTED_TEXT
+    db.refresh(repair_event)
+    assert repair_event.utterance == original_utterance  # correction pair intact
+    assert "Jackson" in repair_event.alternates_json
+    assert repair_event.selected_label != REDACTED_TEXT
+
+
 def test_open_tick_cannot_use_injected_future_time_to_redact_queries(db):
     session = _session(db, sid="CA_RESEARCH_HANDOFF_TICK_TIME")
     _offer_repaired_person_query(session)
