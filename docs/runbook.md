@@ -122,6 +122,7 @@ make demo
 make run    # then open http://localhost:8000/parker/review/ui  (caregiver)
             #      and http://localhost:8000/parker/screen      (the dad screen)
 make digest # the family handoff digest — printed + written to backend/digests/
+make rollup # weekly outcome rollup (EXP-001 baseline) — printed + written to backend/rollups/
 ```
 
 `make demo` runs both the family-day seed and the transcript replay, so the final review page opens populated with six actions awaiting confirmation: three seeded items (stale stretches, tomato-plants reminder, Rohan draft) plus three replay captures (tomato-plants reminder, Sarah draft, garden-utterance reminder). It also shows one Sarah message queued in the local outbox (approve it — it moves to the "still local only" section — or cancel it), one Michael message **released to family contacts** on the patient's own confirmation (the capability trust model's happy path — visible, cancellable, never sent), one non-response escalation candidate from a reminder that was resurfaced three times without an answer, three "Recently done" local actions, and one "Changed my mind" cancellation. The printed replay dialogue shows repair choices, a refused medication question, and a purchase routed to human approval — and it deliberately ends mid-repair, so `/parker/screen` opens showing live numbered choice cards.
@@ -206,6 +207,22 @@ Hard boundaries, mechanically pinned: no credentials or secrets, no
 medical advice (events like "reminder done: call the pharmacy", never
 recommendations), and the digest module imports no network/send library
 at all.
+
+## The weekly rollup: `make rollup` (EXP-001 baseline numbers)
+
+The digest's weekly sibling, aggregates only. Every directed interaction
+through the text/voice loop records one outcome (understood_first_try /
+repaired_success / repair_abandoned / wrong_action / refused_safety /
+no_response / ambient_noop); `make rollup` (optionally
+`WEEK_OF=YYYY-MM-DD` for a past week) prints and writes
+`backend/rollups/parker-rollup-week-YYYY-MM-DD.md` + `.json` with the
+week's outcome counts, unassisted-success / first-attempt /
+repair-success / nuisance-choice rates, refusal share, and repeated-error
+groups (hash-only). Week buckets run on the home machine's LOCAL clock,
+not UTC. The artifact contains zero transcript text — details stay in
+the review/repair surfaces — and, like the digest, nothing is sent
+anywhere. Metric definitions live in `backend/app/parker/rollup.py`;
+outcomes are engineering signals about Parker, never health observations.
 
 ## Voice path: `make demo-voice` (optional, local-only)
 

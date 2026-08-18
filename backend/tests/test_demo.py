@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi.testclient import TestClient
 
+from app.conversation.outcomes import InteractionOutcome
 from app.db.models import CapturedIntent, OutboxMessage
 from app.demo.replay import DEMO_SCRIPT, replay_transcript
 from app.demo.seed import seed_demo_data
@@ -88,6 +89,36 @@ def test_replay_routes_the_full_script_safely(db):
     assert by_action == ["message", "remind", "reminder"]
     message = next(i for i in intents if i.requested_action == "message")
     assert message.recipient == "Sarah"
+
+
+def test_replay_records_one_outcome_per_scripted_interaction(db):
+    """EXP-001 slice 3 DoD: the demo replay yields an outcome for every
+    scripted interaction, pinned case by case.
+
+    Eight scripted lines are seven interactions: the "1" selection is a
+    turn of the disfluent garden interaction, not its own. The trailing
+    vague media line deliberately ends mid-repair, so its row carries the
+    provisional walk-away label and stays open.
+    """
+
+    replay_transcript(db)
+
+    rows = db.query(InteractionOutcome).order_by(InteractionOutcome.id).all()
+    assert [row.outcome for row in rows] == [
+        "understood_first_try",  # tomato plants reminder
+        "understood_first_try",  # message to Sarah
+        "repaired_success",      # disfluent garden utterance + selection "1"
+        "refused_safety",        # medication change
+        "refused_safety",        # purchase routed to human approval
+        "understood_first_try",  # weather question (answer lane)
+        "repair_abandoned",      # trailing vague media line, ends mid-repair
+    ]
+    repaired = rows[2]
+    assert repaired.repair_turns == 1
+    assert repaired.closed_at is not None
+    assert repaired.captured_intent_id is not None
+    still_open = rows[-1]
+    assert still_open.closed_at is None  # walk-away default already correct
 
 
 def test_replay_is_repeatable_in_one_session_without_errors(db):
