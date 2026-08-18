@@ -1036,11 +1036,27 @@ open, 2 refused_safety → 80% unassisted success). Tests: 807 passed
 (31 new across `test_outcomes.py`, `test_rollup.py`, and the case-by-case
 demo replay outcome assertion in `test_demo.py`).
 
+A fresh-context adversarial verifier reviewed the implementation with
+live repro scripts (20 coverage scenarios, failure injection, hostile
+consent-on leak probes through both artifact build paths). One confirmed
+defect, fixed and regression-pinned in the same slice: hesitation
+("Wait") during a *clarify* closed the episode as abandoned — a pause is
+not giving up (slice-2 semantics); it now costs a turn and keeps the
+episode open on both the clarify and numbered-choices paths. Also from
+the review: a stale open-episode pointer can no longer touch a row
+another path already closed, and two rollup docstring overclaims were
+tightened (understanding-at-capture vs fulfillment; repaired_success may
+take >1 repair turn — the strict first-try-or-one-repair analog is
+computable from the stored repair_turns).
+
 Deferred: evening-session outcomes stay on their own lifecycle rows (the
 DoD scoped the text loop); execution failures after a confirmed yes do
 not relabel the interaction (follow-through quality is visible in the
-staged-action audit rows instead); Phase B replaces the hash-only
-repeated-error view with real correction tracking.
+staged-action audit rows instead); brain-proposal declines would count
+as repair_abandoned if a family enables the conversational brain —
+revisit the mapping before that ships in the home deployment; Phase B
+replaces the hash-only repeated-error view with real correction
+tracking.
 
 Forward-looking sequencing now lives in docs/strategy/roadmap.md (this
 section below predates the capability-model strategy).

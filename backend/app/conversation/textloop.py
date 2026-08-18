@@ -1655,8 +1655,14 @@ class TextSession:
         if collapsed in HESITATION_CONTROL_PHRASES:
             # Hesitation — including palilalia repeats ("wait... wait") and
             # mixed forms ("no, wait") — is neither a cancellation nor a
-            # revision: leave any draft alone and acknowledge the pause.
-            return {"kind": "noop", "speech": NO_CONTEXT_CONTROL_RESPONSES["wait"]}
+            # revision: leave any draft alone and acknowledge the pause. The
+            # marker tells the outcome layer a pause never closes an open
+            # repair episode (mirrors the drafts-stay-untouched contract).
+            return {
+                "kind": "noop",
+                "speech": NO_CONTEXT_CONTROL_RESPONSES["wait"],
+                "hesitation": True,
+            }
 
         # A collapsed pure repetition ("no no no" → "no") is the control it
         # repeats; extract the fragment from the collapsed form so a repeated

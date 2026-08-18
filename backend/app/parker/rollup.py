@@ -20,12 +20,18 @@ Metric definitions (the source of truth; docs quote these):
 - A *request* is an interaction whose outcome is one of
   understood_first_try, repaired_success, repair_abandoned, wrong_action.
 - unassisted_success_rate = (understood_first_try + repaired_success)
-  / requests. These two are the outcomes where the user got what they
-  asked for with no human helper stepping in — the North Star numerator.
-  wrong_action and repair_abandoned are the failure modes.
+  / requests. These two are the outcomes where the request was
+  UNDERSTOOD and captured/answered with no human helper stepping in —
+  the North Star numerator. This measures understanding at capture, not
+  fulfillment: an execution failure or a declined offer after a correct
+  capture stays a success here and is visible in the staged-action audit
+  rows instead. wrong_action and repair_abandoned are the failure modes.
 - first_attempt_rate = understood_first_try / requests ("understood on
-  the first try"; the ≥90% capability target adds one repair question,
-  i.e. first_attempt + repaired_success).
+  the first try"). Note repaired_success may take MORE than one repair
+  turn (repair_turns is stored per row); the strict ≥90%
+  first-try-or-one-repair capability target is measured by the
+  real-audio harness, and its strict analog here would be
+  first_try + (repaired_success with repair_turns == 1).
 - repair_success_rate = repaired_success / (repaired_success +
   repair_abandoned): of the interactions where Parker asked a repair
   question, how many resolved.

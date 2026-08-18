@@ -193,6 +193,50 @@ def test_clarify_then_restatement_closes_as_repaired_success(db):
     assert rows[0].repair_turns == 1
 
 
+def test_hesitation_mid_clarify_never_closes_the_episode(db):
+    """Verifier-confirmed defect, pinned: a pause is not giving up.
+
+    Hesitation ("Wait", "Hold on") is a hallmark of the pilot user's
+    speech. Slice 2 established it never cancels a draft; the outcome
+    layer must mirror that — it never closes an open repair episode.
+    """
+
+    session = _session(db)
+    clarify = session.handle("Tell him the show is starting")
+    pause = session.handle("Wait")
+    restatement = session.handle("Tell Sarah the show is starting")
+
+    assert clarify["kind"] == "clarify"
+    assert pause["kind"] == "noop"
+    assert restatement["kind"] == "captured"
+    rows = _rows(db)
+    assert len(rows) == 1  # one interaction: clarify → pause → restatement
+    assert rows[0].outcome == "repaired_success"
+    assert rows[0].repair_turns == 2  # the pause still cost a turn
+
+
+def test_hesitation_mid_choices_keeps_episode_open(db):
+    session = _session(db)
+    session.handle("Call... the... you know... the one with the garden...")
+    session.handle("Hold on.")
+
+    selection = session.handle("1")
+
+    assert selection["kind"] == "captured"
+    rows = _rows(db)
+    assert len(rows) == 1
+    assert rows[0].outcome == "repaired_success"
+
+
+def test_fresh_hesitation_records_no_response(db):
+    session = _session(db)
+
+    pause = session.handle("Wait")
+
+    assert pause["kind"] == "noop"
+    assert [row.outcome for row in _rows(db)] == ["no_response"]
+
+
 def test_garbled_selection_reprompt_keeps_episode_open(db):
     session = _session(db)
     session.handle("Call... the... you know... the one with the garden...")

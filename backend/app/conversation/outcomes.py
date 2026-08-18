@@ -226,8 +226,11 @@ class OutcomeRecorder:
         if self._open_id is None:
             return None
         row = self.db.get(InteractionOutcome, self._open_id)
-        if row is None:  # row vanished (test DB reset); drop the pointer
+        if row is None or row.closed_at is not None:
+            # Vanished (test DB reset) or already closed by another path: a
+            # stale pointer must never relabel a finished interaction.
             self._open_id = None
+            return None
         return row
 
     def _close(
@@ -336,7 +339,14 @@ class OutcomeRecorder:
             # instead of a number. A capture/answer is the invited
             # restatement succeeding; a refusal reveals what the request
             # really was; another question keeps the episode open; controls
-            # and cancels are the user giving up on this exchange.
+            # and cancels are the user giving up on this exchange. A pause
+            # ("wait", "hold on") is NOT giving up — hesitation is a
+            # hallmark of the pilot user's speech and never closes an
+            # episode, exactly as it never cancels a draft.
+            if response.get("hesitation"):
+                open_row.repair_turns += 1
+                self.db.commit()
+                return
             if kind in _RESTATEMENT_SUCCESS_KINDS:
                 self._close(
                     open_row,
