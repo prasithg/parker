@@ -5,10 +5,13 @@ query and then explicitly confirms that Parker may leave the selected query for
 family review. The row is local, contains no URL/credential/payment field, and
 has no browser, send, purchase, submission, or account-change capability.
 
-Query text has a bounded local retention window. Expiry or an authenticated
-caregiver redaction clears the query, selected ASR interpretation, and any linked
-consented repair-event text while preserving non-sensitive lifecycle,
-provenance, and redaction audit fields.
+Query text has a bounded local retention window. Expiry clears the CARD's
+query and selected ASR interpretation only; an authenticated caregiver's
+MANUAL redaction additionally clears the linked consented repair-event text.
+Both preserve non-sensitive lifecycle, provenance, and redaction audit
+fields. The asymmetry is deliberate (0-1 mode, 2026-08-18): correction
+pairs are the learning corpus and the automatic window must not silently
+eat them, while a human's explicit removal request stays a full erase.
 """
 
 from __future__ import annotations
@@ -269,7 +272,15 @@ def redact_expired_local_research_handoffs(
     *,
     now: datetime | str | None = None,
 ) -> list[LocalResearchHandoff]:
-    """Apply the default retention policy to any due, non-redacted cards."""
+    """Apply the default retention policy to any due, non-redacted cards.
+
+    The sweep clears only the CARD's own text. It deliberately does not
+    cascade into the linked consented repair event (0-1 mode, 2026-08-18):
+    correction pairs are the Phase B learning corpus, and the automatic
+    window must not silently eat them. A caregiver's MANUAL redact remains
+    a full erase including the linked pair — a human asking for removal is
+    the one deletion promise the family keeps.
+    """
 
     moment = _coerce_datetime(now) or datetime.utcnow()
     cards = (
@@ -286,6 +297,7 @@ def redact_expired_local_research_handoffs(
             redacted_by="retention_policy",
             reason=RETENTION_REDACTION_REASON,
             now=moment,
+            cascade_to_repair_event=False,
         )
     if cards:
         db.commit()
@@ -338,13 +350,14 @@ def _redact_card(
     redacted_by: str,
     reason: str,
     now: datetime,
+    cascade_to_repair_event: bool = True,
 ) -> None:
     card.query = REDACTED_TEXT
     card.selected_interpretation = REDACTED_TEXT
     card.redacted_at = now
     card.redacted_by = redacted_by
     card.redaction_reason = reason
-    if card.repair_event_id is not None:
+    if cascade_to_repair_event and card.repair_event_id is not None:
         event = db.get(RepairEvent, card.repair_event_id)
         if event is not None:
             event.utterance = REDACTED_TEXT
