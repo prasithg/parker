@@ -34,6 +34,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.brain.adapter import BrainAdapter, BrainContext, Message
+from app.conversation.outcomes import OutcomeRecorder
 from app.conversation.repair import suggest_repair_candidates
 from app.conversation.repair_events import record_repair_event
 from app.conversation.tools import execute_tool
@@ -1320,6 +1321,10 @@ class TextSession:
         # and for the utterance whose repair choices are pending selection.
         self._current_alternates: list[str] = []
         self._pending_alternates: list[str] = []
+        # EXP-001 outcome layer: one recorded outcome per directed
+        # interaction (app/conversation/outcomes.py). Output-only, like the
+        # screen mirror — recording must never break the conversation.
+        self._outcomes = OutcomeRecorder(db, call_log_id)
 
     @property
     def awaiting_reply(self) -> bool:
@@ -1373,7 +1378,9 @@ class TextSession:
         the conversation itself.
         """
 
-        had_pending = self._pending_choices is not None or self._pending_confirmation is not None
+        had_pending_choices = self._pending_choices is not None
+        had_pending_confirmation = self._pending_confirmation is not None
+        had_pending = had_pending_choices or had_pending_confirmation
         self._invited_reply = False  # a stateless invite covers exactly one utterance
         response = self._route(text, alternates=alternates, context=context)
         kind = response.get("kind")
@@ -1384,6 +1391,18 @@ class TextSession:
             # A fresh question or offer opens the grace clock; re-prompts of
             # already-pending state deliberately do not renew it.
             self._grace_started_at = time.monotonic()
+        try:
+            self._outcomes.observe(
+                utterance=text.strip(),
+                response=response,
+                had_pending_choices=had_pending_choices,
+                had_pending_confirmation=had_pending_confirmation,
+            )
+        except Exception:  # noqa: BLE001 — a broken meter must not kill the voice loop
+            self.db.rollback()
+            logging.getLogger("parker.outcomes").debug(
+                "interaction-outcome recording skipped", exc_info=True
+            )
         # Ambient room speech must not surface anywhere user-visible: no
         # screen churn, and no third-party conversation echoed onto the TV.
         if kind != "ambient_noop":
@@ -2273,7 +2292,7 @@ class TextSession:
 
         choices = self._pending_choices or []
         if utterance.isdigit() and 1 <= int(utterance) <= len(choices):
-            return self._select_choice(choices[int(utterance) - 1], choices)
+            return self._consumed_selection(choices[int(utterance) - 1], choices)
         counting = _counting_sequence_response(utterance)
         if counting is not None:
             self._dismiss_pending_choices()
@@ -2287,14 +2306,14 @@ class TextSession:
         if handoff_create is not None:
             confirmation = _confirmation_reply_kind(normalized)
             if confirmation == "yes":
-                return self._select_choice(handoff_create, choices)
+                return self._consumed_selection(handoff_create, choices)
             if confirmation == "no":
                 handoff_skip = next(
                     choice
                     for choice in choices
                     if choice.get("selection_kind") == "research_handoff_skip"
                 )
-                return self._select_choice(handoff_skip, choices)
+                return self._consumed_selection(handoff_skip, choices)
         if normalized in DISMISS_CHOICE_PHRASES or _control_negation_response(utterance) is not None:
             none_choice = next(
                 (
@@ -2316,16 +2335,31 @@ class TextSession:
                     None,
                 )
             if none_choice is not None:
-                return self._select_choice(none_choice, choices)
+                return self._consumed_selection(none_choice, choices)
             self._dismiss_pending_choices()
-            return {"kind": "retry", "speech": "Okay, none of those. Tell me again in your own words."}
+            return {
+                "kind": "retry",
+                "speech": "Okay, none of those. Tell me again in your own words.",
+                "via_repair_selection": True,
+            }
         if _looks_like_new_directed_utterance(utterance):
             self._dismiss_pending_choices()
             return None
         speech = "Just say the number — " + ", ".join(
             f"{c['position']}) {c['label']}" for c in choices
         )
-        return {"kind": "choices", "speech": speech, "choices": choices}
+        return {"kind": "choices", "speech": speech, "choices": choices, "repair_reprompt": True}
+
+    def _consumed_selection(
+        self, choice: dict[str, Any], choices: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """A selection turn resolved the pending choices; mark it for the
+        outcome layer so it reads as part of the open interaction, never a
+        fresh one."""
+
+        response = self._select_choice(choice, choices)
+        response["via_repair_selection"] = True
+        return response
 
     def _dismiss_pending_choices(self) -> None:
         self._pending_choices = None

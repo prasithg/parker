@@ -20,6 +20,7 @@ def create_tables(bind=None):
     private in-memory engine so a self-check never touches real state.
     """
     from app.db.models import Base  # noqa: F811 — ensure core models imported
+    import app.conversation.outcomes  # noqa: F401
     import app.conversation.repair_events  # noqa: F401
     import app.escalation.models  # noqa: F401
     import app.evening.session  # noqa: F401

@@ -92,6 +92,10 @@ def digests_dir() -> Path:
     return parker_home() / "digests"
 
 
+def rollups_dir() -> Path:
+    return parker_home() / "rollups"
+
+
 # --- Whisper model location -------------------------------------------------
 #
 # faster-whisper stores weights in Hugging Face hub layout:

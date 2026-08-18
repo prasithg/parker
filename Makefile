@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest rollup voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -143,6 +143,13 @@ demo: reset-db
 # artifact to backend/digests/ (gitignored). Never sends anything.
 digest: backend-venv
 	cd backend && ./.venv/bin/python -m app.parker.digest
+
+# Weekly interaction-outcome rollup (EXP-001): aggregates-only markdown+json
+# under backend/rollups/ (gitignored). Buckets use the HOME-LOCAL timezone —
+# a person's week runs on their clock (UTC stays the eval-report convention).
+# Pass WEEK_OF=YYYY-MM-DD for a past week. Never sends anything.
+rollup: backend-venv
+	cd backend && ./.venv/bin/python -m app.parker.rollup $(if $(WEEK_OF),--week-of $(WEEK_OF),)
 
 # Optional, local-only transcription deps (faster-whisper). Not part of the
 # core suite — tests inject a fake transcriber. First run downloads model

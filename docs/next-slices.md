@@ -989,6 +989,59 @@ Rollout: `PARKER_ADDRESS_MODE=wake` is documented in the runbook's
 living-room section with a 3-step acceptance check; the default stays `open`
 so demos, `make talk`, and typed paths are byte-for-byte unchanged.
 
+## EXP-001 slice 3 — interaction outcome layer + weekly rollup — DONE (2026-08-17)
+
+Every directed interaction through the text loop now records exactly one
+outcome (`interaction_outcomes` table; `app/conversation/outcomes.py`),
+derived deterministically from the response kind plus session state at
+the one seam every surface shares (`TextSession.handle` — repl, talk,
+talk-loop, demo replay). An *interaction* is a directed utterance
+episode: numbered selections, yes/no confirmation replies, and
+research-handoff replies are turns within the open interaction, never
+new rows. A repair episode's row is written at open with the provisional
+label `repair_abandoned` — the walk-away default is then already correct
+with no sweeper — and is updated in place when a selection, restatement,
+refusal, or dismissal closes it. A confirmation-time "none of these"
+relabels the source interaction `wrong_action` through the staged-action
+audit chain.
+
+`make rollup` (`app/parker/rollup.py`) writes an aggregates-only
+markdown+JSON pair under `PARKER_HOME/rollups/` — outcome counts,
+unassisted-success / first-attempt / repair-success / nuisance-choice
+rates, refusal share, and repeated-error v0 groups (same normalized
+failed intent on ≥2 distinct days). Buckets use the HOME-LOCAL timezone,
+deliberately unlike the UTC eval-report freshness convention: a person's
+week runs on their clock. The artifact contains zero transcript text;
+repeated-error groups appear as 8-char hashes and the matching text
+stays in the local review/repair surfaces. Normalized signatures are
+consent-gated behind `REPAIR_EVENT_CAPTURE_CONSENTED` (same flag as
+repair events), so without consent the repeated-error section is empty
+by design.
+
+Metric definitions live in the `rollup.py` module docstring (the source
+of truth): requests = uft + repaired + abandoned + wrong_action;
+unassisted success = the first two; refusals are reported separately and
+excluded from the request denominator (boundary enforcement is measured
+by the safety lanes, not this layer). Known v0 limits, documented in
+code: mic/ASR-level misses are invisible to the loop; a mid-repair topic
+change merges into the episode as a restatement; the normalization is
+token-order-sensitive. Recording is output-only and guarded like the
+screen mirror — a broken meter can never kill the voice loop.
+
+Schema note: one new table, purely additive — `create_tables()` adds it
+to existing local DBs on next startup; no `make reset-db` required.
+Demo evidence: `make demo` + `make rollup` yields the scripted week
+(3 understood_first_try, 1 repaired_success, 1 repair_abandoned still
+open, 2 refused_safety → 80% unassisted success). Tests: 807 passed
+(31 new across `test_outcomes.py`, `test_rollup.py`, and the case-by-case
+demo replay outcome assertion in `test_demo.py`).
+
+Deferred: evening-session outcomes stay on their own lifecycle rows (the
+DoD scoped the text loop); execution failures after a confirmed yes do
+not relabel the interaction (follow-through quality is visible in the
+staged-action audit rows instead); Phase B replaces the hash-only
+repeated-error view with real correction tracking.
+
 Forward-looking sequencing now lives in docs/strategy/roadmap.md (this
 section below predates the capability-model strategy).
 
