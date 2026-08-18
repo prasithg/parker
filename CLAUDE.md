@@ -102,6 +102,24 @@ directory simultaneously. Rules for every agent session:
 - Research/vision/pitch synthesis: `~/Knowledge/parker` or `~/Knowledge/research/personal-brand/parker`.
 - Run manifests/reviews/logs: `~/Operations`.
 
+## 0-1 mode (Pras, 2026-08-17)
+
+Parker is a 0-1 product. Until it demonstrably works in daily home use, build
+value-added features only: understanding, repair, actions, learning,
+deployment. Do NOT build safety/admin/compliance *infrastructure* ahead of a
+working product — no consent frameworks, retention/deletion machinery,
+revocation tooling, admin permission surfaces, auth hardening, or audit
+dashboards. A five-minute family conversation beats a consent framework.
+
+Data posture: keep everything, locally, like any personal agent keeps its
+history. Do not add new redaction/retention lanes or extend existing ones.
+
+Scope note: the runtime safety boundaries listed above (medical refusals,
+confirmation-before-action, no send paths) are shipped product *behavior*
+with pinned tests — they stay as they are. This rule defers safety
+*infrastructure*, it does not dismantle the shipped guards; don't expand
+that surface unprompted either.
+
 ## Preferred Fable 5 work style
 
 Do discovery first, then design, then small code/docs/eval changes.

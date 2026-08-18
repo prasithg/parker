@@ -1072,3 +1072,8 @@ Do these next for product value, in order, with PrasClaw's 2026-06-22 review rai
 5. **Degraded-speech / population evidence remains important, but it is now a product validation lane, not a release-blocker.** Keep the shorthand **pipeline, not population** until one licensed public/corpus-backed sample, consented non-family sample, or SLP taxonomy review exists. Do not let product copy imply Parkinson's speech performance before that.
 
 Working shorthand: **usefulness first; evidence as guardrail; public artifacts as byproduct.**
+
+0-1 mode (Pras, 2026-08-17): no safety/admin/compliance *infrastructure*
+(consent frameworks, retention/deletion machinery, admin surfaces) until the
+product demonstrably works in daily home use; keep all data locally like any
+personal agent. Shipped runtime guards stay. See CLAUDE.md "0-1 mode".
