@@ -5,7 +5,7 @@
 //! spawns the bundled engine on a free port, waits for /health, opens
 //! the onboarding wizard on first run, restarts a crashed engine with
 //! backoff, mirrors the voice-loop state in the tray icon, opens the
-//! engine's own pages (dad screen / review / digest / setup) as
+//! engine's own pages (voice practice / dad screen / review / digest / setup) as
 //! windows, and toggles the talk-loop sidecar.
 
 mod sidecar;
@@ -337,6 +337,21 @@ fn poll_thread(app: AppHandle) {
 
 fn on_menu_event(app: &AppHandle, event_id: &str) {
     match event_id {
+        "voice-practice" => {
+            let state = app.state::<AppState>();
+            if state.manager.is_running(TALK) {
+                state.manager.kill(TALK);
+                set_listen_label(app, false);
+                set_tray_state(app, "idle");
+            }
+            open_engine_window(
+                app,
+                "voice-practice",
+                "/parker/practice",
+                "Parker — Voice Practice",
+                false,
+            );
+        },
         "dad-screen" => open_engine_window(app, "dad-screen", "/parker/screen", "Parker — Dad Screen", true),
         "review" => open_engine_window(app, "review", "/parker/review/ui", "Parker — Family Review", false),
         "digest" => open_engine_window(app, "digest", "/parker/digest", "Parker — Family Digest", false),
@@ -398,6 +413,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Tray + menu.
     let status = MenuItem::with_id(app, "status", "Parker — starting…", false, None::<&str>)?;
+    let practice = MenuItem::with_id(app, "voice-practice", "Voice Practice", true, None::<&str>)?;
     let dad = MenuItem::with_id(app, "dad-screen", "Open Dad Screen", true, None::<&str>)?;
     let review = MenuItem::with_id(app, "review", "Family Review", true, None::<&str>)?;
     let digest = MenuItem::with_id(app, "digest", "Daily Digest", true, None::<&str>)?;
@@ -414,6 +430,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &status,
             &PredefinedMenuItem::separator(app)?,
             &listen,
+            &practice,
             &dad,
             &PredefinedMenuItem::separator(app)?,
             &review,

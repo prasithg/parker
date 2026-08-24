@@ -185,7 +185,7 @@ Minimal, tested, no guard weakened:
 
 The trust boundary does not move: the shell has no policy logic, no DB
 access, no send paths. It renders the engine's existing localhost pages
-(`/parker/screen`, `/parker/review/ui`, `/parker/digest`) in webviews and
+(`/parker/practice`, `/parker/screen`, `/parker/review/ui`, `/parker/digest`) in webviews and
 speaks to documented engine endpoints. Anything Parker *does* still goes
 through capture → resolve → stage → confirm → execute in the engine, with
 the same guards the test suite pins.

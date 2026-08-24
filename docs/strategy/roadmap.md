@@ -13,13 +13,23 @@ Not a feature Gantt. A rolling, evidence-gated sequence of experiments over the 
 
 The ≥90% figure was previously framed as the North Star. It is now the Communication/Perception capability target: necessary, not sufficient. A Parker that understands 90% of utterances but never becomes more useful has failed the thesis.
 
-## The strategic situation (2026-08-17)
+## The strategic situation (2026-08-23)
 
 Three facts dominate sequencing:
 
 1. **Parker is pre-deployment.** The app is built and acceptance-tested — by its author, on the author's laptop. Dad has never used it. Every relationship metric needs daily real usage first.
 2. **The learning loop is a C-shape, not a circle.** Repair events are captured (consent-gated, default off) but never read back; the lexicon is hand-typed, never mined; the with/without-lexicon delta has never been computed. Rungs 4–6 of the [adaptation ladder](../adaptation-ladder.md) are designed but unbuilt.
 3. **The evidence layer is saturated while the product layer is idle.** Nine deterministic evals sit at 100%/PASS; the last month of commits was eval/privacy polish. The correction already named in [next-slices.md](../next-slices.md) — "usefulness first; evidence as guardrail" — now has a concrete owner: EXP-001.
+
+Parker now also has an explicit [chairman + AI CEO operating model](operating-model.md). Its organizational wedge remains **repair-first everyday voice access**: one bounded clarification turns a misunderstood request into a completed task and a naturally labeled learning example.
+
+## Supporting product/data experiment — Parker Voice Practice
+
+Goal: one manual-paced sustained-voice exercise inside the existing Parker app, with device-relative feedback, structured attempt history, optional local audio retention, and no automatic progression.
+
+Why now: it can give Dad another concrete reason to open Parker and creates an acoustic/adherence data seam. It does **not** replace the wedge or EXP-001: sustained `ah` does not directly improve lexical ASR or intent recovery, and the tool must not delay living-room deployment.
+
+Exit for the first slice: the packaged Parker tray pauses the normal talk loop and opens Voice Practice; three suggested rounds work end to end; attempts attach to the existing exercise lifecycle with retry-safe provenance; optional local audio is separately scoped; focused/full tests and a live UI pass. Dad's voluntary repeat use determines whether the tool continues. If it does, the next practice slice is one personalized functional phrase bridging directly into ASR, repair, and action evidence—not a speculative catalog.
 
 ## Now — EXP-001 Phase A: get in the room, instrumented
 

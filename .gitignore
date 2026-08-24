@@ -12,6 +12,8 @@ node_modules/
 backend/digests/
 # Local weekly outcome rollups (make rollup) — aggregates stay on this machine.
 backend/rollups/
+# Optional Voice Practice recordings and local derived artifacts.
+backend/voice-practice/
 # Whisper weights when a dev checkout has no HF cache (PARKER_HOME/models).
 backend/models/
 # Python packaging metadata from `pip install -e backend`.

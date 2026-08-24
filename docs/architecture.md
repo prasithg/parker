@@ -98,7 +98,7 @@ Non-response candidates (`backend/app/escalation/candidates.py`): a staged actio
 - Real names, contacts, phone numbers, schedules (`FAMILY_CONTACTS_JSON`, settings, `.env`).
 - Conversation memories, mood entries, dose logs, escalation history (SQLite).
 - User-confirmed research handoff queries and their local complete/cancel/redaction audit state (SQLite; query-bearing card and linked consented repair-event fields redact within the hourly maintenance window after 30 days while running and at next startup/review, or sooner behind configured caregiver authentication plus explicit confirmation; an additive startup migration preserves existing local rows; no URL, credential, fetch, send, purchase, submission, or account-change fields).
-- Any real transcripts or audio. Raw call audio is not stored at all — transcripts and summaries only, and only locally.
+- Any real transcripts or audio. The general conversation/call loop stores transcripts and summaries only, never raw call audio. Voice Practice may retain one short exercise recording only when the person selects that option for the round; it stays under `PARKER_HOME/voice-practice` in a separately scoped local artifact row linked to a protocol-versioned attempt, and has no upload path.
 - Voice clones (optional, explicit consent, IDs in local config).
 
 **Public/eval-safe (can graduate to a public repo or HF space with approval):**

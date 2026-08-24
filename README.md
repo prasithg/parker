@@ -48,7 +48,7 @@ Every repair exchange is a naturally labeled example: what ASR heard, what Parke
 2. **n-best repair choices** — alternate hypotheses become concrete options, so "Tell Sarah…" survives being misheard as "There a…";
 3. few-shot exemplars from that person's history, and eventually a per-user fine-tune corpus.
 
-No raw audio is ever stored. The person's data stays in their house. Deploying Parker to more people improves the shared harness, evals, and skills — not a central model trained on anyone's voice without asking.
+The general assistant loop does not retain raw audio. Parker Voice Practice adds one explicit exception: the person may choose, round by round, to keep a short exercise recording locally alongside protocol-versioned metrics. The person's data stays in their house. Deploying Parker to more people should improve the shared harness, evals, skills, and later models only through an explicit contribution program—not silent central collection.
 
 ## Powering the voice loop
 
@@ -97,6 +97,7 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Voice out + latency line** — `make talk-loop` speaks answers aloud (macOS `say`, config-gated), end-points recording with an energy VAD, and prints a per-turn latency line (ASR + routing → when speech starts).
 - **Addressed-to-me gating** — family-configurable `PARKER_ADDRESS_MODE`: `open` (default; every window is directed — desk/demo use) or `wake` (always-on living-room use: an utterance needs the wake name, default "Parker", except replies to Parker's own questions — numbered choices, yes/no offers, and clarify/retry questions — which never do, within a bounded grace window (`PARKER_WAKE_GRACE_SECONDS`, default 120s) so a stale offer can't hold the microphone open; ambient room/TV speech silently no-ops with an auditable context record and never reaches the dad screen). Gating is window-level because ASR splits one spoken address into segments, and the wake prefix tolerates fillers and repeats ("Uh, Parker—", "Parker Parker"). Companion live-defect fixes, palilalia-aware: a repeated bare negation ("No, no.") against a stale draft cancels instead of producing a nonsense revision, and hesitation ("Wait... wait.", "No, wait.") leaves the draft untouched.
 - **Learning flywheel v0** — consent-gated repair-event capture (`REPAIR_EVENT_CAPTURE_CONSENTED`, default off), personal lexicon ASR biasing (`PERSONAL_LEXICON`), documented in [docs/adaptation-ladder.md](docs/adaptation-ladder.md).
+- **Parker Voice Practice** — `/parker/practice` is a supporting, tablet-like sustained-voice exercise with manual Start/Stop/Save/Next/Finish pacing, device-relative microphone feedback, up to three suggested rounds, optional self-rating, recent-round history, and a per-round choice to retain the short recording locally. A person may finish after any saved round. Page exit uses a beacon with keepalive fallback to request cleanup of persisted, in-flight, or response-ambiguous Saves. Compare-and-set terminal transitions keep the practice and generic parent lifecycle consistent when Finish, Save, and page exit race. Retry-idempotent attempts preserve primitive voiced-frame counts and actual browser processing settings and use a server-derived relative target fraction. Optional audio is a separately scoped local-only artifact under `PARKER_HOME/voice-practice`; unsupported or failed retention is disclosed while metrics remain saveable. It is acoustic/adherence data, not proof of everyday ASR or clinical improvement, and it does not replace EXP-001's repair-first assistant wedge.
 - **Interaction outcome layer + weekly rollup (EXP-001)** — every directed text-loop interaction records exactly one outcome (`understood_first_try` / `repaired_success` / `repair_abandoned` / `wrong_action` / `refused_safety` / `no_response` / `ambient_noop`); `make rollup` writes a local, aggregates-only markdown+JSON weekly artifact (home-local timezone, not UTC) with unassisted-success, first-attempt, repair-success, and nuisance-choice rates, plus hash-only repeated-error groups (consent-gated signatures). Zero transcript text in the artifact; nothing is sent.
 - **Local recliner/TV evening loop** — one `local_evening_sessions` row per calendar evening; optional offer/decline, unclear-response repair choices, engaged/completed/timed-out states, and caregiver review controls.
 - **Family message outbox with capability-level trust** — the family allowlists contacts once (`PARKER_FAMILY_CONTACTS`); a confirmed message to a listed contact releases on the patient's own yes (`released_local`, visible in review — awareness, not an approval queue), anyone else stays behind per-message approval (`queued_local` → `approved_local`). There is **no send path in the codebase at all**; cancel works from every live state.
@@ -129,7 +130,7 @@ Applications, no Python, no terminal. A Tauri v2 shell bundles the whole
 engine as a sidecar binary; onboarding is a guided wizard (mic
 permission, voice picker, plain-language consent, one-time local
 speech-model download), and daily use is a tray menu: Start/Pause
-Listening, the Dad Screen, Family Review, the Daily Digest. Unsigned
+Listening, Voice Practice, the Dad Screen, Family Review, the Daily Digest. Unsigned
 beta, Apple silicon; acceptance-tested end-to-end from the dmg,
 including a spoken conversation confirmed with a spoken "Yes, go
 ahead". Build it with `make sidecar && cd desktop/src-tauri && cargo
@@ -152,6 +153,7 @@ make test            # full backend suite should pass (656 tests as of 2026-07-2
 make demo            # fresh DB + seeded family day + effortful-speech replay
 make run             # uvicorn on http://localhost:8000
 # open http://localhost:8000/parker/review/ui as the caregiver
+# open http://localhost:8000/parker/practice for Voice Practice
 ```
 
 **Talk to it** (optional on-device voice):
@@ -166,6 +168,8 @@ For a real pilot — env file, model-enhanced repair choices, review-page passwo
 ## Operating cadence
 
 Parker is a living public project. The repository should move when a meaningful feature, eval, demo, or documentation milestone is ready — not while a slice is half-finished, and not only after manual prompting.
+
+The organization runs under the [chairman + acting AI CEO operating model](docs/strategy/operating-model.md): Pras owns mission and reserved decisions; Hermes owns day-to-day strategy, product/research operations, and evidence-backed release flow.
 
 Ready-to-publish work should include:
 

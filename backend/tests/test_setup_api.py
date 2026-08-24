@@ -288,7 +288,8 @@ def test_setup_wizard_page_is_self_contained_and_honest():
     assert "<link" not in html.lower()
     # Plain-language privacy posture, verbatim commitments.
     assert "no send path" in html
-    assert "deleted the moment" in html  # audio never kept
+    assert "Conversation recordings are discarded after transcription" in html
+    assert "only when you select that option for a round" in html
     # The learning flywheel is opt-IN: checkbox present, never pre-checked.
     assert 'id="repair_consent"' in html
     assert "checked" not in html.split('id="repair_consent"')[1].split(">")[0]

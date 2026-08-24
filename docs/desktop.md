@@ -57,6 +57,11 @@ The tray menu is the whole interface for the family:
 - **Start/Pause Listening** — runs Parker's ears (the talk loop). The
   tray icon mirrors the loop: outline = idle, filled = listening,
   filled + waves = speaking.
+- **Voice Practice** — opens the patient-paced practice app: manual
+  Start/Stop/Save/Next/Finish controls, device-relative microphone feedback, local
+  attempt history, and an explicit per-round audio-retention choice. If
+  Parker is listening, the shell pauses that talk loop before the practice
+  page opens so the two surfaces never contend for the microphone.
 - **Open Dad Screen** — the big-type live window for the TV/monitor by
   the chair: what Parker heard, what it said, numbered choices. Voice
   stays the only input.

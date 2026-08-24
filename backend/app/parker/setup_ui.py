@@ -142,8 +142,8 @@ SETUP_PAGE_HTML = """<!doctype html>
         <h3>What never happens</h3>
         <ul>
           <li>Nothing is sent anywhere — v0 has no send path at all.</li>
-          <li>Audio recordings are never kept; they are deleted the moment
-          they are turned into text.</li>
+          <li>Conversation recordings are discarded after transcription. Voice Practice
+          keeps a short recording only when you select that option for a round.</li>
           <li>No account, no cloud, no analytics.</li>
         </ul>
       </div>

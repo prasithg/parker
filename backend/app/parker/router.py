@@ -50,11 +50,13 @@ from app.parker.research_handoff import (
     serialize_local_research_handoff,
 )
 from app.parker.digest import render_digest_page
+from app.parker.practice_router import router as practice_router
 from app.parker.review_ui import REVIEW_PAGE_HTML
 from app.parker.screen import get_screen_state, serialize_screen_state
 from app.parker.screen_ui import SCREEN_PAGE_HTML
 
 router = APIRouter()
+router.include_router(practice_router)
 
 RECENT_HISTORY_LIMIT = 10
 
