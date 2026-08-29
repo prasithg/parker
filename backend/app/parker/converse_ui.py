@@ -501,7 +501,10 @@ function sendText(text) {
 }
 
 function speak(text, gen, doneAt, receipt) {
+  let finished = false;
   const finish = () => {
+    if (finished) return; // onend and onerror can both fire
+    finished = true;
     if (gen === clientGen) {
       if (pendingAwaiting === 'choices') setState('idle', 'Tap a choice \\u2014 or Start listening and say the number.');
       else if (pendingAwaiting === 'yes_no') setState('idle', 'Tap Yes or No \\u2014 or say it out loud.');
