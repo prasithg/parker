@@ -221,6 +221,12 @@ never hears itself.
   stay on `/parker/review/ui`.
 - "Type instead" (footer) is a quiet fallback for harder-speech days;
   same turns, same pipeline.
+- **Stop is touch (or Escape) in this harness, not voice.** The
+  microphone is deliberately closed while Parker speaks so it cannot hear
+  itself, which means a spoken "stop" cannot land mid-answer. Do not tell
+  the first user "just say stop" — show the button. A voice barge-in
+  needs the full-duplex/realtime lane, which is explicitly out of scope
+  for this slice.
 - Latency receipts (stage timings only, never words) accumulate in
   `PARKER_HOME/receipts/converse_latency.jsonl`; aggregate them with
   `backend/.venv/bin/python benchmark/curiosity_latency_report.py`.

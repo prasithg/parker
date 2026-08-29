@@ -42,12 +42,18 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-def build_utterances(sports_question: str) -> list[tuple[str, str, bool]]:
+def build_utterances(sports_question: str, followup_team: str) -> list[tuple[str, str, bool]]:
+    # Deliberately includes the paths a first user wanders into, not just
+    # the designed happy path: a subject-switching follow-up after sports,
+    # a day past the horizon, and a trailing-off question.
     return [
         ("weather-today", "What is the weather today?", False),
         ("weather-paused", "What is the [[slnc 1800]] weather today?", False),
         ("weather-tomorrow", "What about tomorrow?", False),
+        ("weather-unknown-day", "What about the day after?", False),
         ("sports-score", sports_question, False),
+        ("sports-switch", f"How about {followup_team}?", False),
+        ("vague-question", "What is the... the... you know...", True),
         ("reminder", "Remind me to water the plants this evening", True),
         ("confirm-yes", "yes", True),
     ]
@@ -99,8 +105,13 @@ def main() -> int:
         default="Did the Celtics win last night?",
         help="the spoken sports question (match it to a league that is in season)",
     )
+    parser.add_argument(
+        "--followup-team",
+        default="the Lakers",
+        help="a second team for the subject-switching follow-up ('How about X?')",
+    )
     args = parser.parse_args()
-    utterances = build_utterances(args.team_question)
+    utterances = build_utterances(args.team_question, args.followup_team)
 
     tmp = tempfile.TemporaryDirectory(prefix="parker-converse-smoke-")
     tmp_path = Path(tmp.name)
@@ -126,6 +137,14 @@ def main() -> int:
             )
             base = "http://127.0.0.1:8123"
             wait_for_server(base)
+            if server_proc.poll() is not None:
+                # Our uvicorn died (usually the port is taken) and /health is
+                # answering from some OLDER process — smoking that would
+                # silently test stale code. Refuse.
+                raise SystemExit(
+                    "port 8123 is already serving something else; stop it or "
+                    "pass --server to smoke that instance deliberately"
+                )
             print(f"server up at {base} (PARKER_HOME={home})")
 
         print("synthesizing utterances with macOS say…")
@@ -176,7 +195,7 @@ def main() -> int:
             print(f"  timings: asr={timings.get('asr')}ms route={timings.get('route')}ms "
                   f"provider={timings.get('provider')}ms total={timings.get('total_after_done')}ms")
             if result.get("state") not in {"answer", "silence"} and result.get("kind") not in {
-                "confirm_offer", "executed", "answer", "choices", "clarify",
+                "confirm_offer", "executed", "answer", "choices", "clarify", "retry",
             }:
                 problems.append(f"{key}: unexpected kind {result.get('kind')}")
             if key.startswith("weather") and "couldn't reach" in result.get("speech", ""):

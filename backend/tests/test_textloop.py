@@ -1059,3 +1059,62 @@ def test_awaiting_reply_tracks_choices_and_confirmation_lifecycle(db):
 
     session.handle("Yes.")
     assert session.awaiting_reply is False
+
+
+# ---------------------------------------------------------------------------
+# Curiosity-loop live findings (2026-08-29 UX verification)
+# ---------------------------------------------------------------------------
+
+
+def test_trailing_off_question_gets_a_retry_not_errand_choices(db):
+    """A man reaching for a question must not be offered reminders/messages."""
+
+    session = _session(db)
+    response = session.handle("What is the... um... in Ball... Ballar...")
+
+    assert response["kind"] == "retry"
+    assert "asking me something" in response["speech"]
+    assert "reminder" not in response["speech"]
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_trailing_off_statement_still_gets_repair_choices(db):
+    """The action vocabulary stays for statement-shaped trailing off."""
+
+    session = _session(db)
+    response = session.handle("Call... the... you know... the one with the garden...")
+    assert response["kind"] == "choices"
+
+
+def test_garbled_selection_releases_after_two_reprompts(db):
+    """Two strikes, then the choices release — never a 'Just say the number'
+    loop against effortful speech."""
+
+    session = _session(db)
+    offered = session.handle("Call... the... you know... the one with the garden...")
+    assert offered["kind"] == "choices"
+
+    first = session.handle("mmm the thing there")
+    assert first.get("repair_reprompt") is True
+
+    second = session.handle("mmm no the other thing")
+    assert second["kind"] == "retry"
+    assert second.get("repair_released") is True
+    assert session.has_pending_choices is False
+
+    # The next utterance routes fresh — no selection swallowing.
+    fresh = session.handle("Remind me to water the plants")
+    assert fresh["kind"] == "captured"
+
+
+def test_fresh_choice_offer_resets_the_reprompt_counter(db):
+    session = _session(db)
+    session.handle("Call... the... you know... the one with the garden...")
+    session.handle("mmm the thing there")  # strike one
+    selected = session.handle("1")  # a real selection consumes the choices
+    assert selected["kind"] == "captured"
+
+    # A brand-new offer starts with a clean two-strike budget.
+    session.handle("Tell... the... you know... about the garden thing...")
+    reprompt = session.handle("mmm hmm")
+    assert reprompt.get("repair_reprompt") is True

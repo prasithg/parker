@@ -83,12 +83,21 @@ _PLACE_PATTERN = re.compile(
     r"(?=\s*(?:$|[?.!,])|\s+(?:today|tomorrow|tonight|this|next|on)\b)",
     re.IGNORECASE,
 )
+_DAY_AFTER_TOMORROW = re.compile(r"\bday\s+after\s+tomorrow\b", re.IGNORECASE)
 _TOMORROW = re.compile(r"\btomorrow\b", re.IGNORECASE)
 _WEEKEND = re.compile(r"\bweekend\b", re.IGNORECASE)
-# Follow-up frames that keep the previous weather topic alive without the
-# word "weather": "what about tomorrow?", "and the weekend?", "how about
-# Saturday?".
-_WEATHER_FOLLOWUP = re.compile(
+# Time frames past the forecast horizon, or too vague to pin to a day.
+# These must never silently become "today" under a source chip — a wrong
+# answer wearing a credibility badge is worse than an honest question.
+_UNKNOWN_TIME_FRAME = re.compile(
+    r"\bnext\s+(?:week|month|fortnight)\b|\bthe\s+day\s+after\s*(?:$|[?.!])|"
+    r"\bin\s+(?:a\s+few|two|three|several)\s+(?:days|weeks)\b",
+    re.IGNORECASE,
+)
+# Generic follow-up frames ("what about X?", "how about X?", "and X?") keep
+# the CONVERSATION's last topic alive — weather or scores, whichever
+# answered most recently. The lane itself decides what X means.
+_GENERIC_FOLLOWUP = re.compile(
     r"^\s*(?:and|what about|how about|what's it like)\b", re.IGNORECASE
 )
 _DAY_NAMES = (
@@ -106,6 +115,7 @@ _OPPONENT_FRAME = re.compile(
     r"\bwho\b.*\b(?:play|played|against|beat)\b|\bagainst who|\bwho was it\b",
     re.IGNORECASE,
 )
+_WIN_QUESTION = re.compile(r"\bdid\b.*\bwin\b|\bdid\s+they\s+win\b", re.IGNORECASE)
 
 # WMO weather codes -> short spoken description (Open-Meteo contract).
 _WEATHER_CODES: dict[int, str] = {
@@ -199,8 +209,15 @@ def extract_place(utterance: str) -> Optional[str]:
 
 
 def requested_day(utterance: str) -> str:
-    """'today' | 'tomorrow' | 'weekend' | a weekday name."""
+    """'today' | 'tomorrow' | 'day_after_tomorrow' | 'weekend' | weekday | 'unknown'.
 
+    A bare weather question means now/today. A time frame the forecast
+    cannot cover ("next week") or too vague to pin ("the day after")
+    returns 'unknown' so the caller asks instead of guessing.
+    """
+
+    if _DAY_AFTER_TOMORROW.search(utterance):
+        return "day_after_tomorrow"
     if _TOMORROW.search(utterance):
         return "tomorrow"
     if _WEEKEND.search(utterance):
@@ -209,6 +226,8 @@ def requested_day(utterance: str) -> str:
     for day in _DAY_NAMES:
         if re.search(rf"\b{day}\b", lowered):
             return day
+    if _UNKNOWN_TIME_FRAME.search(utterance):
+        return "unknown"
     return "today"
 
 
@@ -257,6 +276,7 @@ class CuriosityBrain:
         # Per-session follow-up state. The brain instance lives exactly as
         # long as its TextSession, so this is conversation memory, not a
         # global cache.
+        self._last_lane: Optional[str] = None  # "weather" | "sports"
         self._awaiting_place = False
         self._last_place: Optional[dict[str, Any]] = None  # geocoded place
         self._last_forecast: Optional[dict[str, Any]] = None
@@ -283,13 +303,22 @@ class CuriosityBrain:
 
         self._awaiting_place = False
 
-        if looks_like_weather_question(text) or (
-            self._last_forecast is not None and _WEATHER_FOLLOWUP.match(text)
-        ):
+        if looks_like_weather_question(text):
             return self._handle_weather(text)
 
         if looks_like_sports_question(text):
             return self._handle_sports(text)
+
+        # "What about X?" / "How about X?" continues whichever lane answered
+        # last. Without this, a bare sports follow-up fell through to the
+        # inner brain — whose prompt honestly denies having live data, so it
+        # retracted the ESPN score it had just given (found live by the UX
+        # verifier). The lane itself decides what X means.
+        if _GENERIC_FOLLOWUP.match(text):
+            if self._last_lane == "sports":
+                return self._handle_sports(text)
+            if self._last_lane == "weather" and self._last_forecast is not None:
+                return self._handle_weather(text)
 
         if self._inner is not None:
             return self._inner.respond(history, utterance, context)
@@ -300,7 +329,16 @@ class CuriosityBrain:
     # ------------------------------------------------------------------
 
     def _handle_weather(self, text: str) -> BrainReply:
+        self._last_lane = "weather"
         day = requested_day(text)
+        if day == "unknown":
+            place = self._last_place["name"] if self._last_place else "there"
+            return BrainReply(
+                speech=(
+                    f"I can see about a week ahead for {place}. "
+                    "Which day should I check?"
+                )
+            )
         place_name = extract_place(text)
         if place_name is None and self._last_place is not None:
             # Follow-up: keep the conversation's place.
@@ -473,6 +511,8 @@ class CuriosityBrain:
             return 0, "Today"
         if day == "tomorrow":
             return (1, "Tomorrow") if len(dates) > 1 else (None, "Tomorrow")
+        if day == "day_after_tomorrow":
+            return (2, "The day after tomorrow") if len(dates) > 2 else (None, "That day")
         if day == "weekend":
             return 0, "Weekend"  # handled by _weekend_indices
         for index, value in enumerate(dates):
@@ -486,21 +526,30 @@ class CuriosityBrain:
 
     @staticmethod
     def _weekend_indices(dates: list[str]) -> list[tuple[int, str]]:
+        """THIS weekend's remaining days, chronological, never past Sunday.
+
+        Asked on a Sunday, "the weekend" is just today — reaching ahead to
+        next Saturday read as a reversed, confusing pair (found live).
+        """
+
         found: list[tuple[int, str]] = []
         for index, value in enumerate(dates):
             try:
                 weekday = datetime.fromisoformat(value).strftime("%A")
             except ValueError:
                 continue
-            if weekday in ("Saturday", "Sunday") and len(found) < 2:
+            if weekday in ("Saturday", "Sunday"):
                 found.append((index, weekday))
-        return found
+            if weekday == "Sunday":
+                break
+        return found[:2]
 
     # ------------------------------------------------------------------
     # Scores
     # ------------------------------------------------------------------
 
     def _handle_sports(self, text: str) -> BrainReply:
+        self._last_lane = "sports"
         if not self._leagues:
             return BrainReply(
                 speech=(
@@ -552,6 +601,7 @@ class CuriosityBrain:
                 event,
                 next_game=bool(_NEXT_GAME.search(text)),
                 opponent_question=bool(_OPPONENT_FRAME.search(text)),
+                win_question=bool(_WIN_QUESTION.search(text)),
             ),
             sources=(
                 Source(
@@ -649,11 +699,31 @@ class CuriosityBrain:
 
     @staticmethod
     def _speak_event(
-        event: dict[str, Any], *, next_game: bool, opponent_question: bool = False
+        event: dict[str, Any],
+        *,
+        next_game: bool,
+        opponent_question: bool = False,
+        win_question: bool = False,
     ) -> str:
         first, second = event["competitors"]
         state = event["state"]
         detail = event.get("status_detail") or ""
+        if win_question and state == "post" and event.get("matched_team"):
+            # "Did Collingwood win?" deserves a yes or no first, not a
+            # winner's name he has to invert in his head (found live).
+            matched = event["matched_team"]
+            mine = first if first["display"] == matched else second
+            other = second if mine is first else first
+            if mine["winner"]:
+                return (
+                    f"Yes — {mine['display']} won, {mine['score']} to "
+                    f"{other['score']} over {other['display']}."
+                )
+            if other["winner"]:
+                return (
+                    f"No — {mine['display']} lost to {other['display']}, "
+                    f"{other['score']} to {mine['score']}."
+                )
         if opponent_question and event.get("matched_team"):
             matched = event["matched_team"]
             opponent = second if first["display"] == matched else first

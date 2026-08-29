@@ -488,3 +488,99 @@ def test_provider_exception_never_kills_the_session(db):
 
     ok = session.handle("Remind me to water the plants")
     assert ok["kind"] == "captured"
+
+
+# ---------------------------------------------------------------------------
+# Live UX-verification findings (2026-08-29): lane recency, honest horizons
+# ---------------------------------------------------------------------------
+
+
+def test_sports_followup_stays_in_the_sports_lane_never_retracts():
+    """'How about <team>?' after a score must answer from the board — not
+    fall through to an inner brain whose prompt disowns live data."""
+
+    inner = EchoBrain()
+    fetcher = sports_fetcher()
+    brain = make_brain(fetcher, inner=inner, leagues="nba")
+    brain.respond([], "Did the Celtics win?", CONTEXT)
+
+    followup = brain.respond([], "How about the Lakers?", CONTEXT)
+
+    assert "Lakers" in followup.speech
+    assert followup.sources and followup.sources[0].label == "ESPN — NBA"
+    assert inner.utterances == []  # the inner brain never saw it
+
+
+def test_generic_followup_follows_the_most_recent_lane_not_a_fixed_order():
+    """Weather earlier in the session must not hijack a sports follow-up."""
+
+    fetcher = FakeFetcher(
+        payloads={
+            GEOCODE_URL: geocode_payload(),
+            FORECAST_URL: forecast_payload(),
+            ESPN_SCOREBOARD_URL.format(path="basketball/nba"): scoreboard_payload(),
+        }
+    )
+    brain = make_brain(fetcher, home_place="Fitzroy", leagues="nba")
+    brain.respond([], "What is the weather today?", CONTEXT)
+    brain.respond([], "Did the Celtics win?", CONTEXT)
+
+    followup = brain.respond([], "How about the Lakers?", CONTEXT)
+
+    assert "Lakers" in followup.speech
+    assert "weather" not in followup.speech.lower()
+    assert followup.sources[0].label == "ESPN — NBA"
+
+
+def test_unknown_day_asks_instead_of_answering_today_under_a_source_chip():
+    fetcher = weather_fetcher()
+    brain = make_brain(fetcher, home_place="Fitzroy")
+    brain.respond([], "What is the weather today?", CONTEXT)
+
+    for phrasing in ("What about the day after?", "What's the weather next week?"):
+        reply = brain.respond([], phrasing, CONTEXT)
+        assert "Which day" in reply.speech, phrasing
+        assert reply.sources == ()  # no credibility badge on a non-answer
+
+
+def test_day_after_tomorrow_resolves_to_the_third_forecast_day():
+    brain = make_brain(weather_fetcher(), home_place="Fitzroy")
+    brain.respond([], "What is the weather today?", CONTEXT)
+    reply = brain.respond([], "What about the day after tomorrow?", CONTEXT)
+    assert "21" in reply.speech  # third day's high in the fixture
+
+
+def test_win_question_leads_with_yes_or_no():
+    brain = make_brain(sports_fetcher(), leagues="nba")
+    yes = brain.respond([], "Did the Celtics win?", CONTEXT)
+    assert yes.speech.startswith("Yes — ")
+
+    brain_no = make_brain(sports_fetcher(), leagues="nba")
+    no = brain_no.respond([], "Did the Lakers win last night?", CONTEXT)
+    assert no.speech.startswith("No — ")
+    assert "Lakers lost to" in no.speech
+
+
+def test_weekend_never_reaches_past_this_sunday():
+    """Asked on a Sunday, 'the weekend' is today — not next Saturday."""
+
+    sunday_first = {
+        "current": {"time": "2026-08-30T10:00", "temperature_2m": 12.0, "weather_code": 0},
+        "daily": {
+            "time": [
+                "2026-08-30",  # Sunday
+                "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03",
+                "2026-09-04",
+                "2026-09-05",  # next Saturday
+            ],
+            "temperature_2m_max": [15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0],
+            "temperature_2m_min": [7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0],
+            "precipitation_probability_max": [0, 0, 0, 0, 0, 0, 0],
+            "weather_code": [0, 0, 0, 0, 0, 0, 0],
+        },
+    }
+    fetcher = FakeFetcher(payloads={GEOCODE_URL: geocode_payload(), FORECAST_URL: sunday_first})
+    brain = make_brain(fetcher, home_place="Fitzroy")
+    reply = brain.respond([], "What's the weather this weekend?", CONTEXT)
+    assert "Sunday" in reply.speech
+    assert "Saturday" not in reply.speech  # next weekend is out of scope

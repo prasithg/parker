@@ -148,11 +148,17 @@ CONVERSE_PAGE_HTML = """<!doctype html>
   }
 
   footer {
-    display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
-    color: #55647a; font-size: clamp(.85rem, 1.4vw, 1.05rem); padding-top: 1.5vh;
+    display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+    color: #8fa0b5; font-size: clamp(1rem, 1.8vw, 1.25rem); padding-top: 1.5vh;
     flex-wrap: wrap;
   }
-  footer a { color: #7d8ca1; }
+  footer a#type-toggle {
+    display: inline-block; color: #b9c6d8; text-decoration: none;
+    border: 2px solid #34435c; border-radius: 999px;
+    padding: .55em 1.2em; font-weight: 600;
+    font-size: clamp(1rem, 1.8vw, 1.25rem);
+  }
+  footer a#type-toggle:focus-visible { outline: 4px solid #ffd166; outline-offset: 3px; }
   details#dev { color: #7d8ca1; font-size: .95rem; max-width: 100%; }
   details#dev pre { white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
   #notice { color: #ffd166; font-size: clamp(1.05rem, 2vw, 1.4rem); min-height: 1.4em; }
@@ -225,20 +231,32 @@ const notice = $('notice');
 const STATE_TEXT = {
   starting: 'Getting Parker ready…',
   idle: 'Tap Start listening, then ask in your own way.',
+  preparing: 'Getting the microphone ready…',
   listening: 'Listening — take all the time you need. Tap Done talking when you\\u2019ve finished.',
   thinking: 'One moment…',
   speaking: 'Parker is answering. Stop any time.',
   stopped: 'Stopped. Nothing else will happen until you start again.',
-  error: 'Something went wrong on this laptop. Tap Start listening to try again.',
+  error: 'Parker hit a snag on this laptop. Tap Start listening to try again.',
 };
 
+// Controls swap identity in the same screen footprint on state change; a
+// tremor double-tap must never hit the button that just appeared there.
+const TAP_GUARD_MS = 400;
+function guardButtons() {
+  const buttons = ['btn-start', 'btn-done', 'btn-stop', 'btn-again', 'btn-yes', 'btn-no'];
+  for (const id of buttons) $(id).disabled = true;
+  setTimeout(() => { for (const id of buttons) $(id).disabled = false; }, TAP_GUARD_MS);
+}
+
 function setState(state, text) {
+  const previous = document.body.dataset.state;
   document.body.dataset.state = state;
   statusText.textContent = text || STATE_TEXT[state] || '';
   $('btn-start').hidden = !(state === 'idle' || state === 'stopped' || state === 'error');
   $('btn-done').hidden = state !== 'listening';
-  $('btn-stop').hidden = !(state === 'listening' || state === 'thinking' || state === 'speaking');
+  $('btn-stop').hidden = !(state === 'preparing' || state === 'listening' || state === 'thinking' || state === 'speaking');
   $('btn-again').hidden = !(state === 'stopped' || state === 'error');
+  if (previous !== state) guardButtons();
 }
 
 function setNotice(text) { notice.textContent = text || ''; }
@@ -348,20 +366,32 @@ function postReceipt(marks) {
 const TARGET_RATE = 16000;
 const MAX_CAPTURE_SECONDS = 180;
 
+let startingCapture = false;
+
 async function startListening() {
-  if (!sessionId) { await createSession(); if (!sessionId) return; }
+  if (startingCapture || capture) return; // one microphone, one opening at a time
+  startingCapture = true;
   const tapped = performance.now();
   window.speechSynthesis && speechSynthesis.cancel(); // tapping Start barges in
   clearResult();
+  // Honest instant feedback: the banner changes on the tap itself, before
+  // the permission/device call resolves.
+  setState('preparing');
+  if (!sessionId) { await createSession(); if (!sessionId) { startingCapture = false; return; } setState('preparing'); }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
     });
   } catch (err) {
+    startingCapture = false;
     setNotice('Parker can\\u2019t use the microphone (permission needed). You can type instead.');
     showTypeRow(true);
     setState('idle');
+    return;
+  }
+  if (!startingCapture) { // Stop was tapped while the mic was opening
+    try { stream.getTracks().forEach((track) => track.stop()); } catch (err) {}
     return;
   }
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -376,12 +406,16 @@ async function startListening() {
     const data = event.inputBuffer.getChannelData(0);
     chunks.push(new Float32Array(data));
     samples += data.length;
-    if (samples / ctx.sampleRate >= MAX_CAPTURE_SECONDS) doneTalking();
+    if (samples / ctx.sampleRate >= MAX_CAPTURE_SECONDS) {
+      setNotice('That was a long one, so I sent what I heard so far.');
+      doneTalking();
+    }
   };
   source.connect(proc);
   proc.connect(gain);
   gain.connect(ctx.destination);
   capture = {ctx, stream, proc, gain, chunks, rate: ctx.sampleRate, startedAt: performance.now()};
+  startingCapture = false;
   setState('listening');
   postReceipt({start_to_listening_ms: Math.round(performance.now() - tapped)});
 }
@@ -458,14 +492,11 @@ async function doneTalking() {
 // Turns
 // ---------------------------------------------------------------------------
 
-async function sendTurn(body, marks) {
-  if (!sessionId) return;
-  const myGen = clientGen;
-  const myTurn = ++turnCounter;
-  const doneAt = performance.now();
+const TURN_TIMEOUT_MS = 45000;
+
+async function postTurn(body, myTurn) {
   abortCtl = new AbortController();
-  setState('thinking');
-  let data;
+  const watchdog = setTimeout(() => { try { abortCtl.abort(); } catch (err) {} }, TURN_TIMEOUT_MS);
   try {
     const res = await fetch('/parker/converse/sessions/' + sessionId + '/turns', {
       method: 'POST',
@@ -473,6 +504,28 @@ async function sendTurn(body, marks) {
       body: JSON.stringify(Object.assign({turn_id: myTurn}, body)),
       signal: abortCtl.signal,
     });
+    return res;
+  } finally {
+    clearTimeout(watchdog);
+  }
+}
+
+async function sendTurn(body, marks) {
+  if (!sessionId) { await createSession(); if (!sessionId) return; }
+  const myGen = clientGen;
+  const myTurn = ++turnCounter;
+  const doneAt = performance.now();
+  setState('thinking');
+  let data;
+  try {
+    let res = await postTurn(body, myTurn);
+    if (res.status === 404) {
+      // The session idled out or was evicted; recover invisibly, once.
+      sessionId = null;
+      await createSession();
+      if (!sessionId || myGen !== clientGen) return;
+      res = await postTurn(body, myTurn);
+    }
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
       throw new Error(detail.detail || ('turn failed: ' + res.status));
@@ -480,7 +533,15 @@ async function sendTurn(body, marks) {
     data = await res.json();
   } catch (err) {
     if (myGen !== clientGen) return; // stopped: silence is the right outcome
-    setNotice(String(err.message || err));
+    // Never put a raw developer string on this screen.
+    const raw = String((err && err.message) || err);
+    if ((err && err.name) === 'AbortError') {
+      setNotice('That took too long, so I let it go. Please try again.');
+    } else if (raw.indexOf('exceeds') !== -1 || raw.indexOf('audio') !== -1) {
+      setNotice('Parker couldn\\u2019t use that recording. Please try again.');
+    } else {
+      setNotice('Parker couldn\\u2019t answer that one. Please try again.');
+    }
     setState('idle');
     return;
   }
@@ -502,6 +563,7 @@ function sendText(text) {
 
 function speak(text, gen, doneAt, receipt) {
   let finished = false;
+  let started = false;
   const finish = () => {
     if (finished) return; // onend and onerror can both fire
     finished = true;
@@ -516,13 +578,18 @@ function speak(text, gen, doneAt, receipt) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = 0.95;
   utterance.onstart = () => {
+    if (finished) { speechSynthesis.cancel(); return; }
     if (gen !== clientGen) { speechSynthesis.cancel(); return; }
+    started = true;
     receipt.response_to_first_audio_ms = Math.round(performance.now() - doneAt - (receipt.done_to_response_ms || 0));
     receipt.done_to_first_audio_ms = Math.round(performance.now() - doneAt);
     setState('speaking');
   };
   utterance.onend = finish;
   utterance.onerror = finish;
+  // Some browsers fire neither onstart nor onend; the answer is on screen
+  // either way, so the page must not stick at "One moment…".
+  setTimeout(() => { if (!started) finish(); }, 5000);
   speechSynthesis.speak(utterance);
 }
 
@@ -533,6 +600,7 @@ function speak(text, gen, doneAt, receipt) {
 function stopParker() {
   const tapped = performance.now();
   clientGen++;
+  startingCapture = false; // discard a microphone that is still opening
   try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
   if (abortCtl) { try { abortCtl.abort(); } catch (err) {} }
   teardownCapture();
@@ -541,11 +609,15 @@ function stopParker() {
       .catch(() => {});
   }
   postReceipt({stop_to_silence_ms: Math.round(performance.now() - tapped), outcome: 'stopped'});
-  clearResult();
+  // Silence the voice but keep the words: he may have stopped Parker
+  // precisely because the answer on screen is already enough.
+  $('choices').hidden = true;
+  $('yes-no').hidden = true;
+  setNotice('');
   setState('stopped');
 }
 
-function tryAgain() { clearResult(); setState('idle'); }
+function tryAgain() { clearResult(); startListening(); }
 
 // ---------------------------------------------------------------------------
 // Wiring

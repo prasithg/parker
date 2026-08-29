@@ -1318,6 +1318,11 @@ class TextSession:
         # Passed to suggest_repair_candidates on the next offer so the model can
         # generate genuinely different alternatives instead of repeating itself.
         self._prior_offered_labels: Optional[list[str]] = None
+        # Garbled-selection re-prompts for the CURRENT pending choices. Two
+        # strikes, then the choices release and Parker asks for a fresh
+        # restatement — a person with effortful speech must never be held
+        # in a "Just say the number" loop (found live).
+        self._selection_reprompts = 0
         # Alternate ASR hypotheses for the utterance currently being handled,
         # and for the utterance whose repair choices are pending selection.
         self._current_alternates: list[str] = []
@@ -1564,6 +1569,21 @@ class TextSession:
         if repeated_hallucination is not None:
             return repeated_hallucination
         if lowered.count("...") >= 2 or any(p in lowered for p in VAGUE_PHRASES):
+            # A trailing-off QUESTION is not an errand: offering "set a
+            # reminder / send a message" to someone reaching for a question
+            # is the old action vocabulary misfiring (found live in the
+            # curiosity harness). One honest re-ask respects one-repair.
+            first_word = lowered.split()[0] if lowered.split() else ""
+            if first_word in {
+                "what", "how", "who", "when", "where", "why", "did", "is", "are",
+            }:
+                return {
+                    "kind": "retry",
+                    "speech": (
+                        "I think you were asking me something, but I missed part "
+                        "of it. Could you say it again?"
+                    ),
+                }
             return self._offer_choices(utterance)
 
         match = MESSAGE_PATTERN.match(utterance) or SEND_PATTERN.match(utterance)
@@ -2107,6 +2127,7 @@ class TextSession:
                     intent_text=extra["intent_text"],
                 )
         self._pending_choices = result["choices"]
+        self._selection_reprompts = 0
         self._pending_utterance = utterance
         self._pending_alternates = list(self._current_alternates)
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
@@ -2135,6 +2156,7 @@ class TextSession:
                     repair_family=extra.repair_family,
                 )
         self._pending_choices = result["choices"]
+        self._selection_reprompts = 0
         self._pending_utterance = utterance
         self._pending_alternates = list(self._current_alternates)
         return {"kind": "choices", "speech": result["spoken_prompt"], "choices": result["choices"]}
@@ -2174,6 +2196,7 @@ class TextSession:
             },
         ]
         self._pending_choices = choices
+        self._selection_reprompts = 0
         self._pending_utterance = resolved_query
         self._pending_alternates = []
         return choices
@@ -2293,6 +2316,7 @@ class TextSession:
                     intent_text=extra["intent_text"],
                 )
         self._pending_choices = result["choices"]
+        self._selection_reprompts = 0
         self._pending_utterance = utterance
         self._pending_alternates = []
         spoken = f"{speech} {result['spoken_prompt']}".strip()
@@ -2372,6 +2396,17 @@ class TextSession:
         if _looks_like_new_directed_utterance(utterance):
             self._dismiss_pending_choices()
             return None
+        self._selection_reprompts += 1
+        if self._selection_reprompts >= 2:
+            self._dismiss_pending_choices()
+            return {
+                "kind": "retry",
+                "speech": (
+                    "Let's start fresh — those choices are gone. "
+                    "Tell me the whole thing again in your own words."
+                ),
+                "repair_released": True,
+            }
         speech = "Just say the number — " + ", ".join(
             f"{c['position']}) {c['label']}" for c in choices
         )
@@ -2392,6 +2427,7 @@ class TextSession:
         self._pending_choices = None
         self._pending_utterance = None
         self._pending_alternates = []
+        self._selection_reprompts = 0
 
     def dismiss_transient_state(self) -> None:
         """Drop pending choices/confirmation after the user stopped Parker.

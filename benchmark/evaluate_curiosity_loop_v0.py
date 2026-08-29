@@ -346,6 +346,41 @@ def run_failure_cases() -> list[dict[str, Any]]:
         purchase["kind"],
     )
 
+    # A sports follow-up must stay on the board — never fall through to an
+    # inner brain that would retract the sourced score (2026-08-29 finding).
+    store, _ = make_store(full_fetcher(), inner=InterestBrain())
+    session_id = store.create_session()["session_id"]
+    store.run_turn(session_id, turn_id=0, text="Did the Celtics win?")
+    switch = store.run_turn(session_id, turn_id=1, text="How about the Lakers?")
+    add(
+        "sports-followup-never-retracts",
+        "Lakers" in switch["speech"]
+        and bool(switch["sources"])
+        and "don't" not in switch["speech"].lower(),
+        switch["speech"][:60],
+    )
+
+    # A day past the horizon asks, instead of answering today under a chip.
+    store, _ = make_store(full_fetcher())
+    session_id = store.create_session()["session_id"]
+    store.run_turn(session_id, turn_id=0, text="What is the weather today?")
+    beyond = store.run_turn(session_id, turn_id=1, text="What about the day after?")
+    add(
+        "unknown-day-asks-not-guesses",
+        "Which day" in beyond["speech"] and not beyond["sources"],
+        beyond["speech"][:60],
+    )
+
+    # A trailing-off question gets a re-ask, never errand choices.
+    store, _ = make_store(full_fetcher())
+    session_id = store.create_session()["session_id"]
+    vague = store.run_turn(session_id, turn_id=0, text="What is the... um... in Ball... Ballar...")
+    add(
+        "vague-question-reasks",
+        vague["kind"] == "retry" and not vague["choices"],
+        f"kind={vague['kind']}",
+    )
+
     return rows
 
 
