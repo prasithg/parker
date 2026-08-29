@@ -321,7 +321,20 @@ def test_phrase_rejects_multiple_utterances_invalid_audio_and_unavailable_local_
     )
     assert bad_base64.status_code == 422
 
-    monkeypatch.setattr(practice_router, "functional_phrase_transcriber", None, raising=False)
+    # Local ASR reports itself unavailable with RuntimeError (the documented
+    # voice-deps signal from app.voice.transcribe). Simulating it with a
+    # raising transcriber keeps this deterministic on machines that DO have
+    # faster-whisper installed — leaving the seam as None would lazily load
+    # the real model inside this unit test.
+    def unavailable_transcriber(path):
+        raise RuntimeError("faster-whisper is not installed (simulated)")
+
+    monkeypatch.setattr(
+        practice_router,
+        "functional_phrase_transcriber",
+        unavailable_transcriber,
+        raising=False,
+    )
     unavailable = client.post(
         "/parker/practice/functional-phrase/attempts",
         json=_phrase_payload(client_attempt_id="phrase-no-asr"),

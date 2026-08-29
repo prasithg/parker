@@ -44,8 +44,24 @@ FUNCTIONAL_PHRASE_AUDIO_EXTENSIONS = {
 }
 
 # Tests replace this narrow seam with an injected deterministic transcriber.
-# None means use app.voice.transcribe's existing local faster-whisper loader.
+# None means the first attempt loads the local faster-whisper model once and
+# caches it here — never a per-request model reload.
 functional_phrase_transcriber: Transcriber | None = None
+
+
+def _resolve_functional_phrase_transcriber() -> Transcriber:
+    """The injected transcriber, or the local model loaded once and kept.
+
+    Raises ``RuntimeError`` when local ASR is unavailable (voice deps not
+    installed) — the caller maps that to an honest 503.
+    """
+
+    global functional_phrase_transcriber
+    if functional_phrase_transcriber is None:
+        from app.voice.transcribe import load_local_transcriber
+
+        functional_phrase_transcriber = load_local_transcriber()
+    return functional_phrase_transcriber
 
 
 class VoicePracticeAttemptRequest(BaseModel):
@@ -177,7 +193,7 @@ def create_functional_phrase_attempt(
                 handle.write(audio_content)
             lines = transcribe_audio(
                 audio_path,
-                transcriber=functional_phrase_transcriber,
+                transcriber=_resolve_functional_phrase_transcriber(),
             )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
