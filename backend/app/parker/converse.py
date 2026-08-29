@@ -406,11 +406,20 @@ class ConverseStore:
         started: float,
     ) -> dict[str, Any]:
         heard = " ".join(e["you"] for e in exchanges if e.get("you"))
-        spoken = [
-            e.get("speech", "")
-            for e in exchanges
-            if e.get("speech") and e.get("kind") != "ambient_noop"
+        speakable = [
+            e for e in exchanges if e.get("speech") and e.get("kind") != "ambient_noop"
         ]
+        # A capture immediately followed by its own confirmation offer says
+        # the subject twice ("Okay — I'll bring up X… Ready when you are:
+        # a reminder about X…"). One turn, one readback: the offer alone
+        # carries the confirmation contract.
+        if (
+            len(speakable) >= 2
+            and speakable[-1].get("kind") == "confirm_offer"
+            and speakable[-2].get("kind") in {"captured", "revised"}
+        ):
+            speakable = speakable[:-2] + [speakable[-1]]
+        spoken = [e.get("speech", "") for e in speakable]
         last = exchanges[-1] if exchanges else {}
         sources: list[dict[str, str]] = []
         for exchange in exchanges:

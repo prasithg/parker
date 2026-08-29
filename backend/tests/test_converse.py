@@ -121,6 +121,9 @@ def test_text_turn_routes_through_real_pipeline_to_confirmation_offer(db):
     assert result["awaiting"] == "yes_no"
     assert "water the plants" in result["heard"]
     assert "yes or no" in result["speech"]
+    # One turn, one readback: the capture speech is folded into the offer so
+    # the subject is not spoken twice back-to-back.
+    assert result["speech"].count("water the plants") == 1
     assert db.query(CapturedIntent).count() == 1
 
     confirmed = store.run_turn(session_id, turn_id=2, text="yes")
