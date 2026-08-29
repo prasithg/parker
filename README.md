@@ -127,16 +127,24 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 
 Parker is installable as a macOS menu-bar app — drag a dmg to
 Applications, no Python, no terminal. A Tauri v2 shell bundles the whole
-engine as a sidecar binary; onboarding is a guided wizard (mic
-permission, voice picker, plain-language consent, one-time local
-speech-model download), and daily use is a tray menu: Start/Pause
-Listening, Voice Practice, the Dad Screen, Family Review, the Daily Digest. Unsigned
-beta, Apple silicon; acceptance-tested end-to-end from the dmg,
-including a spoken conversation confirmed with a spoken "Yes, go
-ahead". Build it with `make sidecar && cd desktop/src-tauri && cargo
-tauri build`; the full lifecycle (install → onboard → update →
-uninstall) is in [docs/desktop.md](docs/desktop.md), the architecture
-in [docs/desktop-architecture.md](docs/desktop-architecture.md).
+engine as a sidecar binary; onboarding is a guided wizard (explicit Living
+room `wake` vs Desk `open` addressing, sanitized wake name, mic permission,
+voice picker, plain-language consent, and one-time local speech-model
+download). Its final **Start first session** action reuses the existing TALK
+sidecar and Dad Screen, and stays non-listening unless shell-observed model,
+microphone, process, and window startup succeeds. Daily use remains the tray
+menu: Start/Pause Listening, Voice Practice, the Dad Screen, Family Review,
+and the Daily Digest. Voice Practice pauses TALK and first-session startup
+refuses while Practice owns the microphone. The changed first-session handoff
+is deterministic-test evidence only until the documented packaged
+WKWebView/TCC smoke pass runs; it is not a home-deployment or first-user claim.
+Unsigned beta, Apple silicon; the earlier app lifecycle was acceptance-tested
+end to end from the dmg, including a spoken conversation confirmed with a
+spoken "Yes, go ahead". Build it with `make sidecar && cd desktop/src-tauri &&
+cargo tauri build`; the full lifecycle (install → onboard → update → uninstall)
+is in [docs/desktop.md](docs/desktop.md), the architecture in
+[docs/desktop-architecture.md](docs/desktop-architecture.md), and the remaining
+device gates in [the Living Room smoke checklist](docs/living-room-first-session-smoke-checklist.md).
 
 ## Setup
 

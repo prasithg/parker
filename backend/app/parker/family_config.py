@@ -36,6 +36,8 @@ CONFIG_ALLOWLIST: dict[str, type] = {
     "repair_event_capture_consented": bool,
     "parker_brain_model": str,
     "parker_brain_max_tokens": int,
+    "parker_address_mode": str,
+    "parker_wake_name": str,
 }
 
 # App-level metadata keys that live in config.json but are not Settings
@@ -62,7 +64,12 @@ def read_family_config() -> dict[str, Any]:
 
 
 def needs_onboarding() -> bool:
-    return read_family_config().get("onboarding_completed") is not True
+    config = read_family_config()
+    return not (
+        config.get("onboarding_completed") is True
+        and "parker_address_mode" in config
+        and "parker_wake_name" in config
+    )
 
 
 def _coerce(key: str, value: Any, expected: type) -> Any:
@@ -100,7 +107,23 @@ def validate_updates(updates: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(updates) - set(_WRITABLE))
     if unknown:
         raise ConfigWriteError("unknown config keys: " + ", ".join(unknown))
-    return {key: _coerce(key, value, _WRITABLE[key]) for key, value in updates.items()}
+    clean = {key: _coerce(key, value, _WRITABLE[key]) for key, value in updates.items()}
+
+    if "parker_address_mode" in clean:
+        mode = clean["parker_address_mode"].strip().lower()
+        if mode not in {"open", "wake"}:
+            raise ConfigWriteError("parker_address_mode must be open or wake")
+        clean["parker_address_mode"] = mode
+
+    if "parker_wake_name" in clean:
+        from app.conversation.addressing import resolved_wake_name
+
+        wake_name = resolved_wake_name(clean["parker_wake_name"])
+        if len(wake_name) > 40:
+            raise ConfigWriteError("parker_wake_name must be 40 characters or fewer")
+        clean["parker_wake_name"] = wake_name
+
+    return clean
 
 
 def write_family_config(updates: dict[str, Any]) -> dict[str, Any]:

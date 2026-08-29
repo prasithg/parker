@@ -279,10 +279,16 @@ Leave it running in a terminal while the caregiver review page is open in a brow
 - Parker never listens while speaking, so it cannot transcribe itself.
 - Ctrl-C stops the loop and prints how many turns ran.
 
-**Living-room mode (addressed-to-me gating):** by default every recording
-window is treated as directed at Parker (`PARKER_ADDRESS_MODE=open`) — right
-for a desk demo or push-to-talk use. For an always-on room with a TV in mic
-range, set in `backend/.env`:
+**Living-room mode (addressed-to-me gating):** the packaged setup wizard now
+requires an explicit **Living room** (`wake`) or **Desk / push-to-talk**
+(`open`) choice and persists a sanitized wake name in `config.json`. An older
+profile with no stored choice does not silently inherit `open`. The final
+**Start first session** button asks Parker.app to start the existing TALK
+sidecar and open the Dad Screen together; only shell-observed startup can make
+the page say listening.
+
+For a developer-run `make talk-loop`, the historical code default remains
+`open`; choose wake mode explicitly in `backend/.env` for a TV/room test:
 
 ```bash
 PARKER_ADDRESS_MODE=wake

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db.models import OutboxMessage, StagedAction
 from app.config import settings
+from app.conversation.addressing import normalized_address_mode, resolved_wake_name
 from app.evening.session import (
     LocalEveningSession,
     cancel_local_evening_session,
@@ -54,6 +55,7 @@ from app.parker.practice_router import router as practice_router
 from app.parker.review_ui import REVIEW_PAGE_HTML
 from app.parker.screen import get_screen_state, serialize_screen_state
 from app.parker.screen_ui import SCREEN_PAGE_HTML
+from app.parker.loop_state import get_loop_state
 
 router = APIRouter()
 router.include_router(practice_router)
@@ -455,10 +457,17 @@ def patient_screen_page() -> str:
 def patient_screen_state(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Current-exchange mirror polled by the live screen (never a transcript)."""
 
+    loop = get_loop_state(db)
+    runtime = {
+        "loop_state": loop["state"],
+        "loop_updated_at": loop["updated_at"],
+        "address_mode": normalized_address_mode(settings.parker_address_mode),
+        "wake_name": resolved_wake_name(settings.parker_wake_name),
+    }
     state = get_screen_state(db)
     if state is None:
-        return {"empty": True}
-    return {"empty": False, **serialize_screen_state(state)}
+        return {"empty": True, **runtime}
+    return {"empty": False, **serialize_screen_state(state), **runtime}
 
 
 # Open like the screen state: it leaks nothing beyond whether the talk

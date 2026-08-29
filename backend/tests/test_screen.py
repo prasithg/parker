@@ -232,7 +232,28 @@ def test_screen_state_endpoint_degrades_gracefully_when_empty(db):
     response = client.get("/parker/screen/state")
 
     assert response.status_code == 200
-    assert response.json() == {"empty": True}
+    assert response.json() == {
+        "empty": True,
+        "loop_state": "idle",
+        "loop_updated_at": None,
+        "address_mode": "open",
+        "wake_name": "parker",
+    }
+
+
+def test_empty_screen_uses_authoritative_wake_and_loop_state(db, monkeypatch):
+    from app.parker.loop_state import STATE_LISTENING, publish_loop_state
+
+    monkeypatch.setattr(settings, "parker_address_mode", "wake")
+    monkeypatch.setattr(settings, "parker_wake_name", "Parker!")
+    publish_loop_state(db, STATE_LISTENING)
+
+    payload = client.get("/parker/screen/state").json()
+    assert payload["empty"] is True
+    assert payload["loop_state"] == "listening"
+    assert payload["loop_updated_at"]
+    assert payload["address_mode"] == "wake"
+    assert payload["wake_name"] == "parker"
 
 
 def test_screen_state_endpoint_reflects_the_current_exchange(db):
@@ -256,7 +277,10 @@ def test_screen_page_serves_the_live_surface(db):
 
     assert response.status_code == 200
     html = response.text
-    assert "Parker is listening" in html  # graceful idle state
+    assert "Checking Parker" in html  # no static listening claim before state arrives
+    assert "Parker is not listening" in html
+    assert "Listening for “" in html  # wake name is inserted with textContent
+    assert "to start" in html and "wake name" in html
     assert "/parker/screen/state" in html  # polls the state mirror
     assert 'id="choices"' in html and 'id="speech"' in html
     assert "Say the number" in html  # cards carry the spoken cue

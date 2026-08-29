@@ -34,6 +34,10 @@ browser). The wizard walks the family administrator through:
 - patient first name; family contacts (the message allowlist — a spoken
   "yes" releases messages to these people; everyone else stays behind
   family review); lexicon extras (words Parker should be primed to hear);
+- an explicit address choice: **Living room** (`wake`, recommended for a TV
+  or room in microphone range) or **Desk / push-to-talk** (`open`), plus a
+  sanitized wake name. An older install with no stored choice shows neither
+  mode selected, so living-room setup cannot silently inherit `open`;
 - Parker's voice, with a spoken preview;
 - plain-language consent: what is stored (settings, pending actions,
   heard text), what never happens (nothing sent anywhere, audio never
@@ -44,7 +48,16 @@ browser). The wizard walks the family administrator through:
 - the one-time speech-model download (~150 MB to Parker's own folder;
   a machine that already has the model in a Hugging Face cache skips
   the download);
-- done → pointer to [pilot-recording-protocol.md](pilot-recording-protocol.md).
+- done → one keyboard-operable **Start first session** action. Parker.app
+  starts the existing TALK sidecar and opens the existing Dad Screen as one
+  shell-owned operation. Setup says Parker is listening only after the model
+  and microphone preflight passes, TALK remains alive in an active loop state,
+  and the Dad Screen opens. A timeout or closed setup page uses the same
+  cancellation path. If the shell has claimed startup, setup shows cleanup as
+  pending until the shell revokes the request-owned TALK/Dad Screen lease; it
+  never labels cancellation "not listening" before that acknowledgement. A TALK
+  process that was already running—or replaced the request-owned process—is not
+  killed by cancelling this setup request.
 
 Settings land in `config.json` (below) — never secrets; there is no
 API-key field anywhere in the app. After onboarding, **Start at Login**
@@ -62,6 +75,9 @@ The tray menu is the whole interface for the family:
   attempt history, and an explicit per-round audio-retention choice. If
   Parker is listening, the shell pauses that talk loop before the practice
   page opens so the two surfaces never contend for the microphone.
+  First-session startup also refuses while the Practice window exists. Closing
+  Practice does not invent background auto-resume; **Try again** / **Start
+  Listening** is the explicit one-click handoff.
 - **Open Dad Screen** — the big-type live window for the TV/monitor by
   the chair: what Parker heard, what it said, numbered choices. Voice
   stays the only input.
@@ -140,6 +156,11 @@ Known quirks, honestly held:
   self-talk demos, not a person in the room.
 - The engine's port is dynamic; find it with
   `lsof -nP -iTCP -sTCP:LISTEN | grep parker` when curling by hand.
+- The Living Room First Session code path has deterministic Python/Rust/JS
+  coverage, but the changed setup-to-TALK handoff has not yet received a new
+  packaged WKWebView/TCC/device run. Follow
+  [the packaged smoke checklist](living-room-first-session-smoke-checklist.md);
+  do not describe this candidate as home-deployed or first-user-tested.
 
 ## Signing & notarization checklist (when the Developer ID arrives)
 

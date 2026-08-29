@@ -66,6 +66,15 @@ SETUP_PAGE_HTML = """<!doctype html>
   .consent li { margin: 4px 0; }
   .optin { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; }
   .optin input { width: 20px; height: 20px; margin-top: 3px; }
+  fieldset { border: 0; padding: 0; margin: 12px 0; }
+  .choice {
+    display: flex; gap: 12px; align-items: flex-start; font-weight: 500;
+    border: 1.5px solid var(--line); border-radius: 12px; padding: 14px 16px;
+    margin: 10px 0; cursor: pointer;
+  }
+  .choice input { width: 20px; height: 20px; margin: 3px 0 0; flex: 0 0 auto; }
+  .choice span { display: block; }
+  .choice small { display: block; color: var(--muted); margin-top: 3px; }
   .meter { height: 18px; border-radius: 9px; background: var(--line); overflow: hidden; margin: 14px 0 6px; }
   .meter > div { height: 100%; width: 0%; background: var(--ok); transition: width .15s; }
   .status { min-height: 24px; font-size: 15px; }
@@ -115,6 +124,28 @@ SETUP_PAGE_HTML = """<!doctype html>
       automatically.</p>
       <label for="lexicon">Extra words, separated by commas</label>
       <input type="text" id="lexicon" placeholder="physio, bridge night, Priya" autocomplete="off">
+    </div>
+
+    <div id="step-addressing" class="hidden">
+      <h2>Where will Parker listen?</h2>
+      <p class="muted">Choose deliberately. Living-room listening must use a
+      wake name so television and room conversation stay silent.</p>
+      <fieldset aria-label="Address mode">
+        <label class="choice">
+          <input type="radio" name="address_mode" value="wake">
+          <span><b>Living room</b>
+          <small>Only speech that starts with Parker's wake name begins an interaction. Replies to Parker's own question do not need it.</small></span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="address_mode" value="open">
+          <span><b>Desk / push-to-talk</b>
+          <small>Every microphone window is treated as directed. Do not use this for an always-listening room.</small></span>
+        </label>
+      </fieldset>
+      <label for="wake_name">Wake name</label>
+      <input type="text" id="wake_name" value="Parker" maxlength="40" autocomplete="off">
+      <p class="muted">For example: “Parker, remind me to water the plants.” Parker sanitizes punctuation before saving.</p>
+      <div id="address-status" class="status" aria-live="polite"></div>
     </div>
 
     <div id="step-voice" class="hidden">
@@ -181,14 +212,17 @@ SETUP_PAGE_HTML = """<!doctype html>
 
     <div id="step-done" class="hidden">
       <div class="big">✅</div>
-      <h1>Parker is ready</h1>
-      <p>Parker lives in the menu bar: open the <b>Dad Screen</b> on the TV
-      or a spare monitor, start listening, and speak naturally.</p>
+      <h1>Setup is saved</h1>
+      <p id="address-summary">Your address choice is stored on this computer.</p>
+      <p>Use the button below to start Parker's existing local listening loop
+      and open the <b>Dad Screen</b> together. Parker will not say it is
+      listening unless the desktop shell confirms startup.</p>
+      <div id="first-session-status" class="status" aria-live="polite">Parker is not listening yet.</div>
       <p class="muted">The family review page shows everything waiting for a
       look, and the daily digest sums up what happened — all local.</p>
-      <p class="muted">Recording a few real phrases helps tune understanding:
-      see <code>docs/pilot-recording-protocol.md</code> in the Parker
-      project for the two-minute protocol.</p>
+      <p class="muted">After the local candidate is reviewed and installed,
+      the optional <code>docs/pilot-recording-protocol.md</code> describes a
+      separate consented measurement session. Setup does not start it.</p>
     </div>
 
     <div class="nav">
@@ -200,9 +234,14 @@ SETUP_PAGE_HTML = """<!doctype html>
 <script>
 (function () {
   "use strict";
-  var steps = ["welcome","name","contacts","lexicon","voice","consent","mic","model","done"];
+  var steps = ["welcome","name","contacts","lexicon","addressing","voice","consent","mic","model","done"];
   var i = 0;
   var micChecked = false, modelReady = false, saved = false;
+  var addressingLoaded = false, addressChoiceMade = false;
+  var firstSessionComplete = false, firstSessionBusy = false;
+  var currentFirstSessionRequest = 0;
+  var nextFirstSessionRequestId = Date.now() * 1000;
+  var firstSessionRecovery = "retry";
 
   var dots = document.getElementById("stepdots");
   steps.forEach(function(){ dots.appendChild(document.createElement("span")); });
@@ -216,8 +255,10 @@ SETUP_PAGE_HTML = """<!doctype html>
     var back = document.getElementById("back");
     back.style.visibility = (i === 0 || i === steps.length - 1) ? "hidden" : "visible";
     next.textContent = i === 0 ? "Get started"
-      : (steps[i] === "model" ? "Finish" : (steps[i] === "done" ? "Close this window" : "Continue"));
-    next.disabled = (steps[i] === "mic" && !micChecked) || (steps[i] === "model" && !modelReady);
+      : (steps[i] === "model" ? "Finish setup" : (steps[i] === "done" ? "Start first session" : "Continue"));
+    next.disabled = (steps[i] === "addressing" && (!addressingLoaded || !addressChoiceMade))
+      || (steps[i] === "mic" && !micChecked) || (steps[i] === "model" && !modelReady)
+      || (steps[i] === "done" && firstSessionBusy);
   }
 
   function post(url, body) {
@@ -226,6 +267,43 @@ SETUP_PAGE_HTML = """<!doctype html>
         return r.json().then(function (j) { if (!r.ok) throw j; return j; });
       });
   }
+
+  function selectedAddressMode() {
+    var selected = document.querySelector('input[name="address_mode"]:checked');
+    return selected ? selected.value : "";
+  }
+
+  function updateAddressChoice() {
+    addressChoiceMade = Boolean(selectedAddressMode());
+    var mode = selectedAddressMode();
+    var status = document.getElementById("address-status");
+    status.textContent = mode === "wake" ? "Living-room mode selected. The wake name starts each new interaction."
+      : (mode === "open" ? "Desk mode selected. Every microphone window will be directed." : "Choose one mode to continue.");
+    status.className = mode ? "status ok" : "status warn";
+    show();
+  }
+
+  document.querySelectorAll('input[name="address_mode"]').forEach(function (radio) {
+    radio.addEventListener("change", updateAddressChoice);
+  });
+
+  // Historical defaults are shown but never silently selected. An old install
+  // must explicitly choose the room behavior once before it can continue.
+  fetch("/setup/status", {cache: "no-store"}).then(function(r){ return r.json(); }).then(function (data) {
+    document.getElementById("wake_name").value = data.wake_name || "Parker";
+    if (data.addressing_configured) {
+      var existing = document.querySelector('input[name="address_mode"][value="' + data.address_mode + '"]');
+      if (existing) existing.checked = true;
+    }
+    addressingLoaded = true;
+    updateAddressChoice();
+  }).catch(function () {
+    addressingLoaded = true;
+    var status = document.getElementById("address-status");
+    status.textContent = "Could not read existing address settings. Choose a mode before continuing.";
+    status.className = "status warn";
+    show();
+  });
 
   // Voice picker
   fetch("/setup/tts-voices").then(function(r){ return r.json(); }).then(function (data) {
@@ -300,6 +378,12 @@ SETUP_PAGE_HTML = """<!doctype html>
         status.textContent = "Download failed: " + s.error + " — check the internet connection and try again.";
         status.className = "status warn";
         document.getElementById("modelbtn").disabled = false;
+      } else {
+        bar.value = 0; modelReady = false;
+        status.textContent = "The local speech model is not on this computer yet.";
+        status.className = "status warn";
+        document.getElementById("modelbtn").classList.remove("hidden");
+        document.getElementById("modelbtn").disabled = false;
       }
       show();
     }).catch(function(){});
@@ -312,23 +396,150 @@ SETUP_PAGE_HTML = """<!doctype html>
   });
 
   function saveConfig() {
+    var addressMode = selectedAddressMode();
+    if (!addressMode) return Promise.reject({detail: "choose Living room or Desk / push-to-talk"});
     return post("/setup/config", { settings: {
       patient_name: document.getElementById("patient_name").value.trim() || "Dad",
       parker_family_contacts: document.getElementById("contacts").value.trim(),
       personal_lexicon: document.getElementById("lexicon").value.trim(),
       parker_tts_voice: document.getElementById("voice").value,
       repair_event_capture_consented: document.getElementById("repair_consent").checked,
+      parker_address_mode: addressMode,
+      parker_wake_name: document.getElementById("wake_name").value,
       onboarding_completed: true
     }});
   }
 
+  function renderFirstSessionFailure(message, recovery) {
+    firstSessionBusy = false;
+    currentFirstSessionRequest = 0;
+    firstSessionRecovery = recovery || "retry";
+    var status = document.getElementById("first-session-status");
+    status.textContent = message;
+    status.className = "status warn";
+    var next = document.getElementById("next");
+    next.textContent = firstSessionRecovery === "model" ? "Check speech model"
+      : (firstSessionRecovery === "readiness" ? "Review microphone and model" : "Try again");
+    next.disabled = false;
+  }
+
+  function renderFirstSessionCleanupPending(message) {
+    firstSessionBusy = true;
+    var status = document.getElementById("first-session-status");
+    status.textContent = message;
+    status.className = "status warn";
+    var next = document.getElementById("next");
+    next.textContent = "Waiting for cleanup";
+    next.disabled = true;
+  }
+
+  function requestFirstSessionCancellation(requestId, keepalive) {
+    return fetch("/setup/first-session/cancel", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({request_id: requestId}),
+      keepalive: Boolean(keepalive)
+    }).then(function (response) {
+      return response.json().then(function (body) {
+        if (!response.ok) throw body;
+        return body;
+      });
+    });
+  }
+
+  function pollFirstSession(requestId, attemptsLeft, cleanupAttemptsLeft) {
+    fetch("/setup/first-session/status", {cache: "no-store"}).then(function(r){ return r.json(); }).then(function (state) {
+      if (state.request_id !== requestId) throw new Error("The desktop shell returned a mismatched start request.");
+      var status = document.getElementById("first-session-status");
+      if (state.state === "listening" && state.listening) {
+        firstSessionBusy = false; firstSessionComplete = true;
+        currentFirstSessionRequest = 0;
+        status.textContent = state.message;
+        status.className = "status ok";
+        document.getElementById("next").textContent = "Close setup";
+        document.getElementById("next").disabled = false;
+        return;
+      }
+      if (state.state === "error") {
+        var recovery = state.message.indexOf("model or microphone") >= 0 ? "readiness" : "retry";
+        renderFirstSessionFailure(state.message, recovery); return;
+      }
+      if (state.state === "cancel_requested") {
+        if (cleanupAttemptsLeft <= 0) {
+          renderFirstSessionCleanupPending("Cleanup is not confirmed. Quit Parker.app before retrying.");
+          return;
+        }
+        renderFirstSessionCleanupPending(state.message || "Waiting for Parker.app to confirm cleanup.");
+        setTimeout(function(){ pollFirstSession(requestId, 0, cleanupAttemptsLeft - 1); }, 250);
+        return;
+      }
+      if (attemptsLeft <= 0) {
+        requestFirstSessionCancellation(requestId, false).then(function (cancelled) {
+          if (cancelled.state === "error") {
+            renderFirstSessionFailure(cancelled.message);
+          } else {
+            renderFirstSessionCleanupPending(cancelled.message || "Waiting for Parker.app to confirm cleanup.");
+            setTimeout(function(){ pollFirstSession(requestId, 0, 20); }, 250);
+          }
+        }).catch(function () {
+          renderFirstSessionCleanupPending("Cleanup is not confirmed. Quit Parker.app before retrying.");
+        });
+        return;
+      }
+      status.textContent = state.state === "starting" ? "Starting Parker locally…" : "Waiting for Parker.app…";
+      status.className = "status";
+      setTimeout(function(){ pollFirstSession(requestId, attemptsLeft - 1, cleanupAttemptsLeft); }, 500);
+    }).catch(function () {
+      renderFirstSessionCleanupPending("Could not verify startup. Cleanup is not confirmed. Quit Parker.app before retrying.");
+    });
+  }
+
+  function startFirstSession() {
+    if (firstSessionComplete) { window.close(); return; }
+    if (firstSessionRecovery === "model") {
+      firstSessionRecovery = "retry"; modelReady = false;
+      i = steps.indexOf("model"); show(); pollModel(); return;
+    }
+    if (firstSessionRecovery === "readiness") {
+      firstSessionRecovery = "retry"; micChecked = false; modelReady = false;
+      i = steps.indexOf("mic"); show(); return;
+    }
+    firstSessionBusy = true;
+    document.getElementById("next").disabled = true;
+    document.getElementById("first-session-status").textContent = "Asking Parker.app to start locally…";
+    document.getElementById("first-session-status").className = "status";
+    var requestId = ++nextFirstSessionRequestId;
+    currentFirstSessionRequest = requestId;
+    post("/setup/first-session/start", {request_id: requestId}).then(function (state) {
+      if (state.request_id !== requestId) throw {detail: "The desktop shell returned a mismatched start request."};
+      if (state.state === "error") { renderFirstSessionFailure(state.message); return; }
+      pollFirstSession(requestId, 50, 20);
+    }).catch(function (error) {
+      var message = error.detail || "Could not request the first session.";
+      renderFirstSessionFailure(message, message.indexOf("speech model") >= 0 ? "model" : "retry");
+    });
+  }
+
+  window.addEventListener("pagehide", function () {
+    if (!firstSessionBusy || !currentFirstSessionRequest) return;
+    requestFirstSessionCancellation(currentFirstSessionRequest, true).catch(function(){});
+  });
+
   document.getElementById("next").addEventListener("click", function () {
     if (steps[i] === "model" && !saved) {
-      saveConfig().then(function () { saved = true; i += 1; show(); })
-        .catch(function (err) { alert("Could not save settings: " + (err.detail || "unknown")); });
+      saveConfig().then(function (result) {
+        saved = true;
+        if (result.written && result.written.parker_wake_name) {
+          document.getElementById("wake_name").value = result.written.parker_wake_name;
+        }
+        document.getElementById("address-summary").textContent = selectedAddressMode() === "wake"
+          ? "Living-room wake mode is saved. Say “" + document.getElementById("wake_name").value + "” to begin a new interaction."
+          : "Desk / push-to-talk mode is saved. Every microphone window is treated as directed.";
+        i += 1; show();
+      }).catch(function (err) { alert("Could not save settings: " + (err.detail || "unknown")); });
       return;
     }
-    if (steps[i] === "done") { window.close(); return; }
+    if (steps[i] === "done") { startFirstSession(); return; }
     i = Math.min(i + 1, steps.length - 1); show();
     if (steps[i] === "model") pollModel();  // pre-check: maybe already cached
   });

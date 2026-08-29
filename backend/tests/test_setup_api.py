@@ -56,7 +56,12 @@ def test_status_on_a_fresh_home(home, monkeypatch):
 def test_config_write_flips_status_and_live_settings(home, restore_settings):
     response = client.post(
         "/setup/config",
-        json={"settings": {"patient_name": "Ravi", "onboarding_completed": True}},
+        json={"settings": {
+            "patient_name": "Ravi",
+            "parker_address_mode": "wake",
+            "parker_wake_name": "Parker!",
+            "onboarding_completed": True,
+        }},
     )
     assert response.status_code == 200
     assert response.json()["written"]["patient_name"] == "Ravi"
@@ -309,6 +314,8 @@ def test_setup_wizard_writes_config_the_engine_accepts(home, restore_settings):
             "personal_lexicon": "physio, bridge night",
             "parker_tts_voice": "Samantha",
             "repair_event_capture_consented": False,
+            "parker_address_mode": "wake",
+            "parker_wake_name": "Parker!",
             "onboarding_completed": True,
         }
     }

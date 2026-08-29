@@ -31,11 +31,12 @@ logger = logging.getLogger("parker.loop_state")
 LOOP_STATE_ROW_ID = 1
 
 STATE_IDLE = "idle"
+STATE_STARTING = "starting"
 STATE_LISTENING = "listening"
 STATE_PROCESSING = "processing"
 STATE_SPEAKING = "speaking"
 
-LOOP_STATES = (STATE_IDLE, STATE_LISTENING, STATE_PROCESSING, STATE_SPEAKING)
+LOOP_STATES = (STATE_IDLE, STATE_STARTING, STATE_LISTENING, STATE_PROCESSING, STATE_SPEAKING)
 
 # A row older than this is treated as left over from a dead talk process.
 STALE_AFTER_SECONDS = 120

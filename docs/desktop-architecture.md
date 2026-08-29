@@ -165,6 +165,21 @@ Minimal, tested, no guard weakened:
   `POST /setup/model/download` + `GET /setup/model/status` (progress),
   `GET /parker/loop/state` (idle/listening/speaking for the tray icon,
   published by the talk process).
+- The Living Room First Session uses a narrow ephemeral shell handoff:
+  `POST /setup/first-session/start`, shell-polled status, and shell result/cancel
+  acknowledgement. FastAPI never spawns TALK. Tauri remains the sole process
+  owner, refuses startup while the Voice Practice window exists, waits for a
+  fresh active loop state after local model/microphone preflight, opens the
+  existing Dad Screen, and only then acknowledges listening. Cancellation while
+  the shell owns startup becomes a pending cleanup request: Tauri revalidates the
+  exact request before spawn, during readiness, around Dad Screen opening, and
+  before listening acknowledgement; it carries the PID returned for a
+  request-spawned TALK and atomically kills only that matching registered
+  child, closes a request-opened Dad Screen, then terminally acknowledges
+  cleanup. Setup assigns
+  the request ID before its start POST, so pagehide can cancel an in-flight start;
+  a cancel-before-start tombstone makes the later POST no-op. A reused TALK
+  process stays running.
 - Make targets stay thin wrappers; `make demo`, `make talk-loop`, tests,
   and evals unchanged in behavior.
 

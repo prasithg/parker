@@ -86,6 +86,28 @@ impl SidecarManager {
         }
     }
 
+    /// Kill `key` only when the registered live child still has `pid`.
+    ///
+    /// Identity comparison and removal happen under the same manager lock so a
+    /// stale request cannot kill a replacement child registered under the key.
+    pub fn kill_if_pid(&self, key: &'static str, pid: u32) -> bool {
+        let mut children = self.children.lock().unwrap();
+        let Some(child) = children.get_mut(key) else {
+            return false;
+        };
+        if child.id() != pid {
+            return false;
+        }
+        if !matches!(child.try_wait(), Ok(None)) {
+            children.remove(key);
+            return false;
+        }
+        let mut child = children.remove(key).expect("matching child disappeared");
+        let _ = child.kill();
+        let _ = child.wait();
+        true
+    }
+
     pub fn kill(&self, key: &'static str) {
         let mut children = self.children.lock().unwrap();
         if let Some(mut child) = children.remove(key) {
@@ -124,5 +146,93 @@ impl SidecarManager {
 impl Drop for SidecarManager {
     fn drop(&mut self) {
         self.kill_all();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{Duration, Instant};
+
+    use super::{SidecarManager, SidecarSpec};
+
+    const TALK: &str = "talk-test";
+    static NEXT_HOME: AtomicU32 = AtomicU32::new(1);
+
+    fn manager() -> SidecarManager {
+        let serial = NEXT_HOME.fetch_add(1, Ordering::Relaxed);
+        SidecarManager::new(std::env::temp_dir().join(format!(
+            "parker-sidecar-pid-test-{}-{serial}",
+            std::process::id()
+        )))
+    }
+
+    fn sleep_spec(seconds: u32) -> SidecarSpec {
+        SidecarSpec {
+            key: TALK,
+            program: PathBuf::from("/bin/sleep"),
+            args: vec![seconds.to_string()],
+            log_name: TALK,
+        }
+    }
+
+    #[test]
+    fn kill_if_pid_kills_the_request_owned_process() {
+        let manager = manager();
+        let owned_pid = manager.spawn(&sleep_spec(60)).unwrap();
+
+        assert!(manager.kill_if_pid(TALK, owned_pid));
+        assert!(!manager.is_running(TALK));
+    }
+
+    #[test]
+    fn kill_if_pid_preserves_a_replacement_process() {
+        let manager = manager();
+        let owned_pid = manager.spawn(&sleep_spec(60)).unwrap();
+        manager.kill(TALK);
+        let replacement_pid = manager.spawn(&sleep_spec(60)).unwrap();
+        assert_ne!(owned_pid, replacement_pid);
+
+        assert!(!manager.kill_if_pid(TALK, owned_pid));
+        assert!(manager.is_running(TALK));
+    }
+
+    #[test]
+    fn reused_preexisting_process_has_no_owned_pid_and_survives_cleanup() {
+        let manager = manager();
+        manager.spawn(&sleep_spec(60)).unwrap();
+        let owned_pid = if manager.is_running(TALK) {
+            None
+        } else {
+            Some(manager.spawn(&sleep_spec(60)).unwrap())
+        };
+
+        if let Some(pid) = owned_pid {
+            manager.kill_if_pid(TALK, pid);
+        }
+        assert_eq!(owned_pid, None);
+        assert!(manager.is_running(TALK));
+    }
+
+    #[test]
+    fn kill_if_pid_is_a_safe_noop_for_missing_process() {
+        let manager = manager();
+
+        assert!(!manager.kill_if_pid(TALK, u32::MAX));
+        assert!(!manager.is_running(TALK));
+    }
+
+    #[test]
+    fn kill_if_pid_is_a_safe_noop_after_owned_process_exits() {
+        let manager = manager();
+        let owned_pid = manager.spawn(&sleep_spec(0)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while manager.is_running(TALK) && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(!manager.is_running(TALK));
+
+        assert!(!manager.kill_if_pid(TALK, owned_pid));
     }
 }

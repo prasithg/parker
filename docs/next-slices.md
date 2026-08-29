@@ -1085,3 +1085,34 @@ event, so the correction corpus survives (manual caregiver redaction
 remains a full erase; pinned by `test_expiry_sweep_preserves_linked_correction_pair`) —
 and (b) an install-day checklist item in slice 5 (capture flag ON + the
 five-sentence family conversation).
+
+## 2026-08-28 candidate — Voice Practice + Functional Phrase + Living Room First Session
+
+Local candidate stack:
+
+- commit `beca6ff` is the reviewed rollback boundary for the voluntary Voice
+  Practice → Functional Phrase bridge: temporary phrase audio, existing repair
+  and confirmation policy, and no execution from the phrase POST;
+- phase 2 adds an explicit packaged `open`/`wake` setup choice, persisted
+  sanitized wake name, and one **Start first session** action that asks the
+  Tauri shell to start the existing TALK sidecar and open the existing Dad
+  Screen;
+- setup remains non-listening through request/start/error states. The shell
+  acknowledges listening only after local model/microphone preflight, a live
+  active TALK state, and Dad Screen open success;
+- Voice Practice remains the exclusive microphone owner while its window is
+  open. First-session start fails closed during Practice and offers explicit
+  one-click retry after close rather than inventing background auto-resume;
+- deterministic injected coverage proves TV-shaped ambient silence, an
+  addressed `Parker, remind me to water the plants`, invited bare `yes`, one
+  executed local reminder, one directed outcome, and no retained conversation
+  audio.
+
+Evidence boundary: this is a local, synthetic/injected, **tested-not-deployed**
+candidate. A new packaged Tauri/WKWebView microphone/TCC pass, real input-device
+startup, TV/room acoustics, Dad's speech, beneficiary comfort/preference, and
+home installation are still unverified. The exact allow/deny/contention/
+failure/relaunch checks are in
+[`living-room-first-session-smoke-checklist.md`](living-room-first-session-smoke-checklist.md).
+Do not call the candidate home-deployed, first-user-tested, or clinically
+validated until those human/device gates actually run.
