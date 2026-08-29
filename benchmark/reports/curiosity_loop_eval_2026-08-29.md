@@ -11,7 +11,7 @@ continuity, honest failure, and Stop that never leaks a stale result.
 |---|---|---|
 | weather-today-tomorrow.0 | ok | It's 14 and partly cloudy in Fitzroy right now. Today looks partly cloudy with a |
 | weather-today-tomorrow.1 | ok | Tomorrow looks lightly rainy with a top of 19, down to 9 overnight and a 65 perc |
-| score-then-followup.0 | ok | Celtics won — 112 to 104 over Lakers. |
+| score-then-followup.0 | ok | Yes — Celtics won, 112 to 104 over Lakers. |
 | score-then-followup.1 | ok | Celtics played Lakers. Celtics won — 112 to 104 over Lakers. |
 | interest-then-followup.0 | ok | Uri Levine is an entrepreneur best known for co-founding Waze. |
 | interest-then-followup.1 | ok | He co-founded Waze and urges founders to fall in love with the problem. |
@@ -20,6 +20,9 @@ continuity, honest failure, and Stop that never leaks a stale result.
 | unknown-place-honest | ok | I couldn't find a town called Zzyzxq. Could you say the town |
 | refusal-before-provider | ok | kind=refused provider_calls=0 |
 | purchase-held-at-human-gate | ok | needs_human_approval |
+| sports-followup-never-retracts | ok | Celtics won — 112 to 104 over Lakers. |
+| unknown-day-asks-not-guesses | ok | I can see about a week ahead for Fitzroy. Which day should I |
+| vague-question-reasks | ok | kind=retry |
 | stop-races | ok | 20 races, 0 stale |
 
 Note: Deterministic harness-path eval with fake providers; the live probe is reachability evidence only. Real-latency receipts come from the laptop smoke (PARKER_HOME/receipts/converse_latency.jsonl).

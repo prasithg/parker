@@ -2,7 +2,7 @@
   "summary": {
     "date": "2026-08-29",
     "scripted_turns": 6,
-    "failure_cases": 5,
+    "failure_cases": 8,
     "stop_races": {
       "rounds": 20,
       "stale_results": 0,
@@ -12,11 +12,11 @@
     "live_probe": {
       "open_meteo_geocode": {
         "reachable": true,
-        "detail": "200 in 0.62s"
+        "detail": "200 in 0.56s"
       },
       "espn_nba_scoreboard": {
         "reachable": true,
-        "detail": "200 in 0.15s"
+        "detail": "200 in 0.12s"
       }
     },
     "gate": "PASS",
@@ -43,9 +43,9 @@
       "timings_ms": {
         "decode": 0,
         "asr": 0,
-        "route": 52,
+        "route": 50,
         "provider": 0,
-        "total_after_done": 53
+        "total_after_done": 50
       },
       "ok": true
     },
@@ -79,7 +79,7 @@
       "id": "score-then-followup.0",
       "utterance": "Did the Celtics win last night?",
       "kind": "answer",
-      "speech": "Celtics won \u2014 112 to 104 over Lakers.",
+      "speech": "Yes \u2014 Celtics won, 112 to 104 over Lakers.",
       "sources": [
         {
           "label": "ESPN \u2014 NBA",
@@ -193,6 +193,21 @@
       "id": "purchase-held-at-human-gate",
       "ok": true,
       "detail": "needs_human_approval"
+    },
+    {
+      "id": "sports-followup-never-retracts",
+      "ok": true,
+      "detail": "Celtics won \u2014 112 to 104 over Lakers."
+    },
+    {
+      "id": "unknown-day-asks-not-guesses",
+      "ok": true,
+      "detail": "I can see about a week ahead for Fitzroy. Which day should I"
+    },
+    {
+      "id": "vague-question-reasks",
+      "ok": true,
+      "detail": "kind=retry"
     }
   ]
 }
