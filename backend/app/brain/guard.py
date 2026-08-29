@@ -139,7 +139,9 @@ def screen_reply(reply: BrainReply, *, proposable: frozenset[str] | None = None)
     if dropped == 0:
         return ScreenResult(reply=reply, medical_boundary_tripped=False, dropped_action_count=0)
     return ScreenResult(
-        reply=BrainReply(speech=reply.speech, proposed_actions=tuple(kept)),
+        reply=BrainReply(
+            speech=reply.speech, proposed_actions=tuple(kept), sources=reply.sources
+        ),
         medical_boundary_tripped=False,
         dropped_action_count=dropped,
     )

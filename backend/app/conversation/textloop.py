@@ -2211,6 +2211,14 @@ class TextSession:
                 "kind": "answer",
                 "speech": speech or "I don't have a good answer for that right now.",
             }
+        # Answer evidence for the screen: label/url/freshness only, never
+        # spoken and never a raw provider payload. A medical trip already
+        # replaced the reply, sources included.
+        if result.reply.sources:
+            response["sources"] = [
+                {"label": s.label, "url": s.url, "fresh_as_of": s.fresh_as_of}
+                for s in result.reply.sources
+            ]
         self._remember_brain_exchange(utterance, response["speech"])
         return response
 

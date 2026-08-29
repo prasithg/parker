@@ -82,11 +82,32 @@ class ProposedAction:
 
 
 @dataclass(frozen=True)
+class Source:
+    """Where a current-information answer came from, and how fresh it is.
+
+    Shown on screen next to the answer (label + freshness); never spoken —
+    a URL read aloud is noise to a listener. ``fresh_as_of`` is a short
+    human-readable cue ("today 3pm", "final score"), not a timestamp format
+    contract.
+    """
+
+    label: str
+    url: str = ""
+    fresh_as_of: str = ""
+
+
+@dataclass(frozen=True)
 class BrainReply:
-    """What a brain returns: speech to say aloud, plus proposals."""
+    """What a brain returns: speech to say aloud, plus proposals.
+
+    ``sources`` carries answer evidence for current-information replies
+    (docs/brain-adapters.md). Purely informational: sources grant no action
+    authority and are dropped with the rest of the reply on a medical trip.
+    """
 
     speech: str
     proposed_actions: tuple[ProposedAction, ...] = field(default_factory=tuple)
+    sources: tuple[Source, ...] = field(default_factory=tuple)
 
 
 class BrainAdapter(Protocol):

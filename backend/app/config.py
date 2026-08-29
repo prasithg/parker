@@ -139,6 +139,15 @@ class Settings(BaseSettings):
     # normal TextSession repair/confirmation policy before any local action.
     parker_functional_phrase: str = "Remind me to water the plants this evening."
 
+    # Patient Curiosity Loop (app/brain/curiosity.py). Home place answers bare
+    # "what's the weather?" questions; empty means Parker asks one bounded
+    # question instead of guessing. Leagues are comma-separated keys from the
+    # supported map (nba, nfl, mlb, nhl, epl, mls, afl, wnba); empty means the
+    # scores lane says honestly that the family hasn't picked leagues yet.
+    parker_home_place: str = ""
+    parker_sports_leagues: str = ""
+    parker_weather_units: str = "celsius"
+
     # Addressed-to-me gating for the live talk loop (EXP-001 slice 1;
     # app/conversation/addressing.py). "open" (default): every transcription
     # window is treated as directed at Parker — the historical behavior, right
