@@ -1,6 +1,6 @@
 # Parker local v0 — demo runbook
 
-A scripted walkthrough of everything Parker v0 can do locally, end to end, with no real sends. Written 2026-06-09; updated through 2026-06-10 (voice, auth, repair choices, continuous loop).
+A scripted walkthrough of everything Parker v0 can do locally, end to end, with no real sends. Written 2026-06-09; updated through 2026-08-28 (voice, auth, repair choices, continuous loop, Voice Practice, and the Functional Phrase bridge).
 
 ## Pilot setup: what to configure
 
@@ -43,7 +43,18 @@ The browser prompts once; buttons on the page reuse the credentials automaticall
 make voice-deps    # installs faster-whisper + sounddevice (local, no cloud)
 ```
 
-Required for `make demo-voice`, `make talk`, and `make talk-loop`. macOS prompts for microphone permission on first use of `make talk` / `make talk-loop`.
+Required for `make demo-voice`, `make talk`, `make talk-loop`, and the Functional Phrase step in Voice Practice. macOS prompts for microphone permission on first use.
+
+**5. Choose one everyday Functional Phrase (optional):**
+
+```bash
+# in backend/.env; keep this short, useful, reversible, and non-clinical
+PARKER_FUNCTIONAL_PHRASE=Remind me to water the plants this evening.
+```
+
+After the person saves a sustained-voice round at `/parker/practice`, they may finish, start another round, or voluntarily try this phrase. The phrase uses manual Start/Stop, local transcription, the ordinary `TextSession` repair choices, and the same restated confirmation gate as the talk loop. The phrase request itself never executes an action. An explicit later Yes can run only the existing local reversible action; No cancels; **That's not right** invokes the existing confirmation-repair cancellation. Medical/emergency/finance/purchase boundaries and message behavior are unchanged.
+
+Functional Phrase audio is always temporary and deleted after local transcription. The sustained-round retention checkbox remains the only optional local-audio path. For the bounded first-user check, follow [Functional Phrase Bridge — first-user three-session protocol](functional-phrase-first-user-protocol.md); it is a local one-person product protocol, not therapy or population evidence.
 
 ## Capability administration: what the family sets up once
 

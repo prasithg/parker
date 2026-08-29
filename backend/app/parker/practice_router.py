@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import os
+import tempfile
+from pathlib import Path as FilePath
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Response
@@ -12,6 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
+from app.db.models import CallLog
+from app.config import settings
+from app.conversation.textloop import TextSession
 from app.exercises.voice_practice import (
     VoicePracticeAttempt,
     abandon_voice_practice_session,
@@ -20,10 +27,25 @@ from app.exercises.voice_practice import (
     record_voice_practice_attempt,
 )
 from app.parker.practice_ui import PRACTICE_PAGE_HTML
+from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
+from app.voice.transcribe import Transcriber, transcribe_audio
 
 
 router = APIRouter()
 MAX_PRACTICE_AUDIO_BYTES = 2 * 1024 * 1024
+FUNCTIONAL_PHRASE_DEFAULT = "Remind me to water the plants this evening."
+FUNCTIONAL_PHRASE_AUDIO_EXTENSIONS = {
+    "audio/aac": ".aac",
+    "audio/mp4": ".m4a",
+    "audio/ogg": ".ogg",
+    "audio/wav": ".wav",
+    "audio/webm": ".webm",
+    "audio/x-wav": ".wav",
+}
+
+# Tests replace this narrow seam with an injected deterministic transcriber.
+# None means use app.voice.transcribe's existing local faster-whisper loader.
+functional_phrase_transcriber: Transcriber | None = None
 
 
 class VoicePracticeAttemptRequest(BaseModel):
@@ -71,9 +93,152 @@ class VoicePracticeAttemptRequest(BaseModel):
         return self
 
 
+class FunctionalPhraseAttemptRequest(BaseModel):
+    client_attempt_id: str = Field(min_length=1, max_length=64)
+    practice_session_key: str = Field(min_length=1, max_length=64)
+    audio_mime: Literal[
+        "audio/aac", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm", "audio/x-wav"
+    ]
+    audio_base64: str = Field(min_length=1, max_length=2_900_000)
+
+
+class FunctionalPhraseDecisionRequest(BaseModel):
+    client_attempt_id: str = Field(min_length=1, max_length=64)
+    practice_session_key: str = Field(min_length=1, max_length=64)
+    decision: Literal["yes", "no", "none_of_these"]
+
+
+def _functional_phrase_call_sid(practice_session_key: str, client_attempt_id: str) -> str:
+    fingerprint = hashlib.sha256(
+        f"{practice_session_key}\0{client_attempt_id}".encode("utf-8")
+    ).hexdigest()[:40]
+    return f"FUNCTIONAL-PHRASE-{fingerprint}"
+
+
+def _decode_functional_phrase_audio(encoded: str) -> bytes:
+    try:
+        content = base64.b64decode(encoded.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, ValueError, binascii.Error):
+        raise HTTPException(status_code=422, detail="audio_base64 is not valid base64")
+    if not content:
+        raise HTTPException(status_code=422, detail="Functional Phrase audio must not be empty")
+    if len(content) > MAX_PRACTICE_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Functional Phrase audio exceeds {MAX_PRACTICE_AUDIO_BYTES} bytes",
+        )
+    return content
+
+
 @router.get("/practice", response_class=HTMLResponse, include_in_schema=False)
 def voice_practice_page() -> str:
     return PRACTICE_PAGE_HTML
+
+
+@router.get("/practice/functional-phrase")
+def functional_phrase_config() -> dict[str, str]:
+    phrase = settings.parker_functional_phrase.strip() or FUNCTIONAL_PHRASE_DEFAULT
+    return {
+        "phrase": phrase,
+        "audio_handling": "ephemeral_local_transcription",
+    }
+
+
+@router.post("/practice/functional-phrase/attempts")
+def create_functional_phrase_attempt(
+    payload: FunctionalPhraseAttemptRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    saved_round = (
+        db.query(VoicePracticeAttempt)
+        .filter(VoicePracticeAttempt.practice_session_key == payload.practice_session_key)
+        .first()
+    )
+    if saved_round is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Save a sustained-voice round before trying the everyday phrase",
+        )
+
+    call_sid = _functional_phrase_call_sid(
+        payload.practice_session_key,
+        payload.client_attempt_id,
+    )
+    if db.query(CallLog).filter(CallLog.call_sid == call_sid).first() is not None:
+        raise HTTPException(status_code=409, detail="Functional phrase attempt already processed")
+
+    audio_content = _decode_functional_phrase_audio(payload.audio_base64)
+    suffix = FUNCTIONAL_PHRASE_AUDIO_EXTENSIONS[payload.audio_mime]
+    try:
+        with tempfile.TemporaryDirectory(prefix="parker-functional-phrase-") as tmpdir:
+            audio_path = FilePath(tmpdir) / f"utterance{suffix}"
+            descriptor = os.open(audio_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(audio_content)
+            lines = transcribe_audio(
+                audio_path,
+                transcriber=functional_phrase_transcriber,
+            )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Parker could not transcribe this phrase locally") from exc
+
+    if len(lines) != 1:
+        detail = "No phrase was recognized" if not lines else "Say one everyday phrase at a time"
+        raise HTTPException(status_code=422, detail=detail)
+
+    call = CallLog(call_sid=call_sid, call_type="functional_phrase")
+    db.add(call)
+    db.commit()
+    db.refresh(call)
+    session = TextSession(db, call.id, outcome_source="functional_phrase_practice")
+    response = session.handle(lines[0])
+    resolve_captured_intents(db, call_log_id=call.id)
+    stage_resolved_actions(db, call_log_id=call.id)
+    offer = session.offer_pending_confirmation()
+    displayed = offer or response
+    return {
+        "heard": lines[0],
+        "kind": displayed.get("kind", ""),
+        "speech": displayed.get("speech", ""),
+        "choices": [
+            {"position": choice["position"], "label": choice["label"]}
+            for choice in response.get("choices", [])
+        ],
+        "awaiting_confirmation": offer is not None,
+        "staged_action_id": offer.get("staged_action_id") if offer else None,
+    }
+
+
+@router.post("/practice/functional-phrase/decision")
+def decide_functional_phrase_action(
+    payload: FunctionalPhraseDecisionRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    call_sid = _functional_phrase_call_sid(
+        payload.practice_session_key,
+        payload.client_attempt_id,
+    )
+    call = db.query(CallLog).filter(CallLog.call_sid == call_sid).one_or_none()
+    if call is None:
+        raise HTTPException(status_code=404, detail="Functional phrase attempt not found")
+
+    session = TextSession(db, call.id, outcome_source="functional_phrase_practice")
+    offer = session.offer_pending_confirmation()
+    if offer is None:
+        raise HTTPException(status_code=409, detail="No Functional Phrase action is waiting")
+    spoken = "none of these" if payload.decision == "none_of_these" else payload.decision
+    result = session.handle(spoken)
+    return {
+        "kind": result.get("kind", ""),
+        "speech": result.get("speech", ""),
+        "staged_action_id": (
+            result.get("staged_action_id")
+            or result.get("cancelled_staged_action_id")
+            or offer["staged_action_id"]
+        ),
+    }
 
 
 @router.get("/practice/attempts")

@@ -122,6 +122,9 @@ PRACTICE_PAGE_HTML = r"""<!doctype html>
   .fine { font-size: 14px; color: var(--muted); line-height: 1.48; margin-top: 18px; }
   .status { min-height: 1.5em; color: var(--muted); margin: 16px 0 0; font-weight: 620; }
   .status.error { color: var(--danger); }
+  .phrase-heard { padding: 18px; border-radius: 16px; background: var(--paper); font-size: 18px; line-height: 1.45; }
+  .phrase-heard b { display: block; margin-bottom: 5px; }
+  .choice-list { margin: 18px 0 0; padding-left: 28px; font-size: 18px; line-height: 1.55; }
 
   @media (max-width: 820px) {
     .shell { padding: 20px; }
@@ -211,8 +214,49 @@ PRACTICE_PAGE_HTML = r"""<!doctype html>
         <p id="status" class="status" aria-live="polite"></p>
         <div class="actions">
           <button class="button primary" id="save" type="button">Save this round</button>
+          <button class="button primary" id="phrase-offer" type="button" hidden>Try my everyday phrase</button>
           <button class="button secondary" id="next" type="button" hidden>Next round</button>
           <button class="button secondary" id="finish" type="button" hidden>Finish for today</button>
+        </div>
+      </section>
+
+      <section id="phrase-intro" class="result" hidden>
+        <div class="eyebrow">Optional everyday phrase</div>
+        <h2 id="phrase-text">Remind me to water the plants this evening.</h2>
+        <p class="lead">Say it in your own voice and at your own pace. Parker will show what it heard and use the ordinary repair and confirmation steps.</p>
+        <div class="pace-note">
+          <span class="dot-icon" aria-hidden="true">✓</span>
+          <span><b>You choose when to stop.</b> Nothing from this phrase recording is kept after local transcription. You can skip and finish now.</span>
+        </div>
+        <p id="phrase-intro-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button class="button primary" id="phrase-start" type="button">Start when ready</button>
+          <button class="button secondary" id="phrase-skip" type="button">Skip and finish</button>
+        </div>
+      </section>
+
+      <section id="phrase-live" class="live" hidden>
+        <div class="live-label">Say your everyday phrase</div>
+        <h2 id="phrase-live-text">Remind me to water the plants this evening.</h2>
+        <p class="lead">Stop when you are finished. There is no timer.</p>
+        <div class="actions" style="justify-content:center">
+          <button class="button stop" id="phrase-stop" type="button">Stop and let Parker listen</button>
+          <button class="button secondary" id="phrase-live-finish" type="button">Skip this phrase and finish</button>
+        </div>
+      </section>
+
+      <section id="phrase-result" class="result" hidden>
+        <div class="eyebrow">Parker's response</div>
+        <div class="phrase-heard"><b>Parker heard</b><span id="phrase-heard">—</span></div>
+        <h2 id="phrase-speech">—</h2>
+        <ol id="phrase-choices" class="choice-list" hidden></ol>
+        <p id="phrase-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button class="button primary" id="phrase-confirm" type="button" hidden>Yes, do that</button>
+          <button class="button secondary" id="phrase-cancel" type="button" hidden>No, cancel</button>
+          <button class="button secondary" id="phrase-wrong" type="button" hidden>That's not right</button>
+          <button class="button primary" id="phrase-retry" type="button">Try the phrase again</button>
+          <button class="button secondary" id="phrase-result-finish" type="button">Finish for today</button>
         </div>
       </section>
     </main>
@@ -271,9 +315,18 @@ let saveMayHaveReachedServer = false;
 let sessionClosed = false;
 let selectedRating = null;
 let lastMetrics = null;
+let functionalPhrase = 'Remind me to water the plants this evening.';
+let phraseStream = null;
+let phraseRecorder = null;
+let phraseChunks = [];
+let phraseAttemptId = null;
+let phraseStartGeneration = 0;
+let phraseStarting = false;
 
 function show(name) {
-  for (const id of ['intro', 'live', 'result']) $(id).hidden = id !== name;
+  for (const id of ['intro', 'live', 'result', 'phrase-intro', 'phrase-live', 'phrase-result']) {
+    $(id).hidden = id !== name;
+  }
 }
 
 function setStatus(text, isError = false) {
@@ -342,6 +395,17 @@ async function abortAttempt(message) {
     $('intro-status').textContent = message;
     $('intro-status').className = 'status error';
   }
+}
+
+async function drainMediaRecorder(targetRecorder) {
+  if (!targetRecorder || targetRecorder.state === 'inactive') return true;
+  const recorderResult = new Promise(resolve => {
+    targetRecorder.addEventListener('stop', () => resolve(true), {once: true});
+    targetRecorder.addEventListener('error', () => resolve(false), {once: true});
+    try { targetRecorder.stop(); } catch (error) { resolve(false); }
+  });
+  const timeoutResult = new Promise(resolve => setTimeout(() => resolve(false), 1500));
+  return Promise.race([recorderResult, timeoutResult]);
 }
 
 async function drainRecorderWithFallback() {
@@ -566,6 +630,7 @@ async function saveAttempt() {
       setStatus('Round saved. No audio recording was kept.');
     }
     $('save').hidden = true;
+    $('phrase-offer').hidden = false;
     $('next').hidden = round >= 3;
     $('finish').hidden = false;
     await loadHistory();
@@ -589,6 +654,19 @@ function showFinishedPractice() {
   $('intro').querySelector('.actions').hidden = true;
 }
 
+function setFinishError(message) {
+  if (!$('phrase-intro').hidden || !$('phrase-live').hidden) {
+    show('phrase-intro');
+    $('phrase-intro-status').textContent = message;
+    $('phrase-intro-status').className = 'status error';
+  } else if (!$('phrase-result').hidden) {
+    $('phrase-status').textContent = message;
+    $('phrase-status').className = 'status error';
+  } else {
+    setStatus(message, true);
+  }
+}
+
 async function finishPractice() {
   try {
     const response = await fetch(`/parker/practice/sessions/${encodeURIComponent(sessionKey)}/complete`, {method: 'POST'});
@@ -596,7 +674,7 @@ async function finishPractice() {
     sessionClosed = true;
     showFinishedPractice();
   } catch (error) {
-    setStatus('Parker could not finish this practice yet. Please try again.', true);
+    setFinishError('Parker could not finish this practice yet. Please try again.');
   }
 }
 
@@ -609,9 +687,231 @@ function nextRound() {
   retainedMime = null;
   retentionIssue = '';
   lastMetrics = null;
+  $('phrase-offer').hidden = true;
   $('finish').hidden = true;
   show('intro');
   $('start').focus();
+}
+
+async function loadFunctionalPhrase() {
+  try {
+    const response = await fetch('/parker/practice/functional-phrase', {cache: 'no-store'});
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.phrase) functionalPhrase = data.phrase;
+  } catch (error) {
+    // The safe local default remains available if config cannot be read.
+  }
+  $('phrase-text').textContent = functionalPhrase;
+  $('phrase-live-text').textContent = functionalPhrase;
+}
+
+async function offerFunctionalPhrase() {
+  await loadFunctionalPhrase();
+  $('phrase-intro-status').textContent = '';
+  show('phrase-intro');
+  $('phrase-start').focus();
+}
+
+async function releasePhraseStream() {
+  if (phraseStream) phraseStream.getTracks().forEach(track => track.stop());
+  phraseStream = null;
+}
+
+async function discardFunctionalPhraseRecording() {
+  phraseStartGeneration += 1;
+  phraseStarting = false;
+  const activeRecorder = phraseRecorder;
+  phraseRecorder = null;
+  if (activeRecorder && activeRecorder.state !== 'inactive') {
+    try { activeRecorder.stop(); } catch (error) { /* already stopping */ }
+  }
+  await releasePhraseStream();
+  phraseChunks = [];
+  $('phrase-start').disabled = false;
+  $('phrase-stop').disabled = false;
+}
+
+async function abortFunctionalPhrase(message) {
+  await discardFunctionalPhraseRecording();
+  show('phrase-intro');
+  $('phrase-intro-status').textContent = message;
+  $('phrase-intro-status').className = 'status error';
+}
+
+async function skipFunctionalPhrase() {
+  await discardFunctionalPhraseRecording();
+  show('phrase-intro');
+  await finishPractice();
+}
+
+async function startFunctionalPhrase() {
+  if (phraseStarting || phraseRecorder) return;
+  $('phrase-intro-status').textContent = '';
+  $('phrase-intro-status').className = 'status';
+  const mime = bestRecorderMime();
+  if (mime === null || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $('phrase-intro-status').textContent = 'This browser cannot record the phrase. You can skip and finish.';
+    $('phrase-intro-status').className = 'status error';
+    return;
+  }
+
+  const startGeneration = ++phraseStartGeneration;
+  phraseStarting = true;
+  $('phrase-start').disabled = true;
+  let acquiredStream = null;
+  try {
+    acquiredStream = await navigator.mediaDevices.getUserMedia({audio: {
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false
+    }});
+    if (startGeneration !== phraseStartGeneration || sessionClosed) {
+      acquiredStream.getTracks().forEach(track => track.stop());
+      return;
+    }
+
+    const activeRecorder = mime
+      ? new MediaRecorder(acquiredStream, {mimeType: mime})
+      : new MediaRecorder(acquiredStream);
+    phraseStream = acquiredStream;
+    phraseRecorder = activeRecorder;
+    phraseChunks = [];
+    const track = phraseStream.getAudioTracks()[0];
+    if (track) {
+      track.addEventListener('ended', () => {
+        if (phraseRecorder === activeRecorder) {
+          void abortFunctionalPhrase('The microphone disconnected. The phrase was not processed. You can skip and finish.');
+        }
+      }, {once: true});
+    }
+    activeRecorder.ondataavailable = event => {
+      if (startGeneration === phraseStartGeneration && event.data && event.data.size) {
+        phraseChunks.push(event.data);
+      }
+    };
+    activeRecorder.start();
+    $('phrase-stop').disabled = false;
+    show('phrase-live');
+    $('phrase-stop').focus();
+  } catch (error) {
+    if (acquiredStream) acquiredStream.getTracks().forEach(track => track.stop());
+    if (startGeneration !== phraseStartGeneration || sessionClosed) return;
+    await releasePhraseStream();
+    phraseRecorder = null;
+    $('phrase-intro-status').textContent = 'Parker could not open the microphone. Check permission, or skip and finish.';
+    $('phrase-intro-status').className = 'status error';
+  } finally {
+    if (startGeneration === phraseStartGeneration) {
+      phraseStarting = false;
+      $('phrase-start').disabled = false;
+    }
+  }
+}
+
+function renderFunctionalPhraseResult(result) {
+  $('phrase-heard').textContent = result.heard || 'Nothing recognized';
+  $('phrase-speech').textContent = result.speech || 'Please try again when you are ready.';
+  const list = $('phrase-choices');
+  list.textContent = '';
+  for (const choice of result.choices || []) {
+    const item = document.createElement('li');
+    item.textContent = `${choice.position}. ${choice.label}`;
+    list.appendChild(item);
+  }
+  list.hidden = !list.children.length;
+  $('phrase-confirm').hidden = !result.awaiting_confirmation;
+  $('phrase-cancel').hidden = !result.awaiting_confirmation;
+  $('phrase-wrong').hidden = !result.awaiting_confirmation;
+  $('phrase-retry').hidden = Boolean(result.awaiting_confirmation);
+  $('phrase-status').textContent = result.awaiting_confirmation
+    ? 'Nothing has run. Choose yes, no, or that the read-back is wrong.'
+    : 'Nothing ran. Try again, or finish for today.';
+  $('phrase-status').className = 'status';
+  show('phrase-result');
+}
+
+async function stopFunctionalPhrase() {
+  if (!phraseRecorder) return;
+  const flowGeneration = phraseStartGeneration;
+  const activeRecorder = phraseRecorder;
+  phraseRecorder = null;
+  $('phrase-stop').disabled = true;
+  const finalized = await drainMediaRecorder(activeRecorder);
+  await releasePhraseStream();
+  if (flowGeneration !== phraseStartGeneration || sessionClosed) {
+    phraseChunks = [];
+    return;
+  }
+  if (!finalized || !phraseChunks.length) {
+    phraseChunks = [];
+    $('phrase-intro-status').textContent = 'Parker did not receive a complete recording. Try again, or skip and finish.';
+    $('phrase-intro-status').className = 'status error';
+    show('phrase-intro');
+    return;
+  }
+
+  const blob = new Blob(phraseChunks, {type: activeRecorder.mimeType || phraseChunks[0].type});
+  phraseChunks = [];
+  const mime = canonicalMime(blob.type);
+  if (!mime || blob.size > 2 * 1024 * 1024) {
+    $('phrase-intro-status').textContent = 'This phrase recording could not be processed locally. Try again, or skip and finish.';
+    $('phrase-intro-status').className = 'status error';
+    show('phrase-intro');
+    return;
+  }
+
+  phraseAttemptId = randomId();
+  $('phrase-status').textContent = 'Parker is listening locally…';
+  try {
+    const encodedAudio = await blobBase64(blob);
+    if (flowGeneration !== phraseStartGeneration || sessionClosed) return;
+    const response = await fetch('/parker/practice/functional-phrase/attempts', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        client_attempt_id: phraseAttemptId,
+        practice_session_key: sessionKey,
+        audio_mime: mime,
+        audio_base64: encodedAudio,
+      }),
+    });
+    if (flowGeneration !== phraseStartGeneration || sessionClosed) return;
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({}));
+      throw new Error(failure.detail || `HTTP ${response.status}`);
+    }
+    renderFunctionalPhraseResult(await response.json());
+  } catch (error) {
+    $('phrase-intro-status').textContent = `Parker could not process the phrase: ${error.message}. Try again, or skip and finish.`;
+    $('phrase-intro-status').className = 'status error';
+    show('phrase-intro');
+  }
+}
+
+async function decideFunctionalPhrase(decision) {
+  if (!phraseAttemptId) return;
+  for (const id of ['phrase-confirm', 'phrase-cancel', 'phrase-wrong']) $(id).disabled = true;
+  $('phrase-status').textContent = 'Applying your explicit choice through Parker’s normal confirmation step…';
+  try {
+    const response = await fetch('/parker/practice/functional-phrase/decision', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({
+        client_attempt_id: phraseAttemptId,
+        practice_session_key: sessionKey,
+        decision,
+      }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    $('phrase-speech').textContent = result.speech;
+    $('phrase-status').textContent = 'Choice recorded locally. You can finish for today.';
+    for (const id of ['phrase-confirm', 'phrase-cancel', 'phrase-wrong']) $(id).hidden = true;
+    $('phrase-retry').hidden = result.kind === 'executed';
+  } catch (error) {
+    $('phrase-status').textContent = 'Parker could not apply that choice. Nothing new ran; please try again.';
+    $('phrase-status').className = 'status error';
+    for (const id of ['phrase-confirm', 'phrase-cancel', 'phrase-wrong']) $(id).disabled = false;
+  }
 }
 
 async function loadHistory() {
@@ -649,6 +949,8 @@ document.querySelectorAll('[data-rating]').forEach(button => {
 });
 
 function abandonPracticeOnExit() {
+  phraseStartGeneration += 1;
+  phraseStarting = false;
   if ((savedRoundCount > 0 || saveInFlight || saveMayHaveReachedServer) && !sessionClosed) {
     const abandonUrl = `/parker/practice/sessions/${encodeURIComponent(sessionKey)}/abandon`;
     const beaconQueued = typeof navigator.sendBeacon === 'function' && navigator.sendBeacon(abandonUrl);
@@ -657,22 +959,40 @@ function abandonPracticeOnExit() {
     }
     sessionClosed = true;
   }
+  if (phraseRecorder && phraseRecorder.state !== 'inactive') {
+    try { phraseRecorder.stop(); } catch (error) { /* page is already closing */ }
+  }
+  releasePhraseStream();
   abortAttempt('');
 }
 
 window.addEventListener('pagehide', abandonPracticeOnExit);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && running) abortAttempt('The practice paused when this page was hidden. Start again when ready.');
+  if (document.hidden && (phraseStarting || phraseRecorder)) {
+    void abortFunctionalPhrase('The phrase paused when this page was hidden. Start again when ready, or skip and finish.');
+  }
 });
 
 $('start').addEventListener('click', startAttempt);
 $('stop').addEventListener('click', stopAttempt);
 $('save').addEventListener('click', saveAttempt);
+$('phrase-offer').addEventListener('click', offerFunctionalPhrase);
 $('next').addEventListener('click', nextRound);
 $('finish').addEventListener('click', finishPractice);
+$('phrase-start').addEventListener('click', startFunctionalPhrase);
+$('phrase-stop').addEventListener('click', stopFunctionalPhrase);
+$('phrase-live-finish').addEventListener('click', skipFunctionalPhrase);
+$('phrase-retry').addEventListener('click', offerFunctionalPhrase);
+$('phrase-skip').addEventListener('click', skipFunctionalPhrase);
+$('phrase-result-finish').addEventListener('click', skipFunctionalPhrase);
+$('phrase-confirm').addEventListener('click', () => decideFunctionalPhrase('yes'));
+$('phrase-cancel').addEventListener('click', () => decideFunctionalPhrase('no'));
+$('phrase-wrong').addEventListener('click', () => decideFunctionalPhrase('none_of_these'));
 configureRetentionSupport();
 updatePips();
 loadHistory();
+loadFunctionalPhrase();
 </script>
 </body>
 </html>

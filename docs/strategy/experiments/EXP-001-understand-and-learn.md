@@ -72,6 +72,7 @@ Slices (dependency order):
 *(append as it lands — dates, aggregate numbers, report links)*
 
 - 2026-08-17: pre-experiment audit — 82% repair+n-best on 333 synthetic/public clips (2026-07-03 report), 0 pilot clips, repair events write-only, Parker pre-deployment.
+- 2026-08-28: local Functional Phrase release candidate connects one optional post-practice phrase to local ASR, the existing repair/confirmation policy, and outcome rows; deterministic tests only. The three-session first-user protocol exists but has not been run, so this is implementation evidence—not deployment, preference, clinical, or population evidence.
 
 ## Decision
 

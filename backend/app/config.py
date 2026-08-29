@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     # ASR initial prompt and available to repair candidate generation.
     personal_lexicon: str = ""
 
+    # One family-curated, non-clinical everyday request offered after a saved
+    # Voice Practice round. It is a prompt only: spoken audio still enters the
+    # normal TextSession repair/confirmation policy before any local action.
+    parker_functional_phrase: str = "Remind me to water the plants this evening."
+
     # Addressed-to-me gating for the live talk loop (EXP-001 slice 1;
     # app/conversation/addressing.py). "open" (default): every transcription
     # window is treated as directed at Parker — the historical behavior, right

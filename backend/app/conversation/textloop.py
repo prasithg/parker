@@ -1286,6 +1286,7 @@ class TextSession:
         model_client: "Any | None" = None,
         brain: "BrainAdapter | None" = None,
         brain_context: "BrainContext | None" = None,
+        outcome_source: str = "text_loop",
     ):
         self.db = db
         self.call_log_id = call_log_id
@@ -1324,7 +1325,7 @@ class TextSession:
         # EXP-001 outcome layer: one recorded outcome per directed
         # interaction (app/conversation/outcomes.py). Output-only, like the
         # screen mirror — recording must never break the conversation.
-        self._outcomes = OutcomeRecorder(db, call_log_id)
+        self._outcomes = OutcomeRecorder(db, call_log_id, source=outcome_source)
 
     @property
     def awaiting_reply(self) -> bool:

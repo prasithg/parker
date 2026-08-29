@@ -72,17 +72,23 @@ def capture_intent(
     return captured
 
 
-def resolve_captured_intents(db: Session, now: datetime | None = None) -> list[ResolutionResult]:
+def resolve_captured_intents(
+    db: Session,
+    now: datetime | None = None,
+    *,
+    call_log_id: int | None = None,
+) -> list[ResolutionResult]:
     """Resolve pending intents whose due time has arrived into concrete action candidates."""
 
     current = now or datetime.utcnow()
-    due_intents = (
+    query = (
         db.query(CapturedIntent)
         .filter(CapturedIntent.status == "pending")
         .filter((CapturedIntent.due_at.is_(None)) | (CapturedIntent.due_at <= current))
-        .order_by(CapturedIntent.created_at, CapturedIntent.id)
-        .all()
     )
+    if call_log_id is not None:
+        query = query.filter(CapturedIntent.call_log_id == call_log_id)
+    due_intents = query.order_by(CapturedIntent.created_at, CapturedIntent.id).all()
     executable = currently_executable_action_types()
     results: list[ResolutionResult] = []
     for intent in due_intents:
@@ -111,17 +117,25 @@ def resolve_captured_intents(db: Session, now: datetime | None = None) -> list[R
     return results
 
 
-def stage_resolved_actions(db: Session, now: datetime | None = None) -> list[StagedAction]:
+def stage_resolved_actions(
+    db: Session,
+    now: datetime | None = None,
+    *,
+    call_log_id: int | None = None,
+) -> list[StagedAction]:
     """Stage reversible resolved actions; reject non-reversible candidates in v0."""
 
     current = now or datetime.utcnow()
     del current  # reserved for future staging windows/audit details
-    resolutions = (
+    query = (
         db.query(ResolutionResult)
         .filter(ResolutionResult.status == "resolved")
-        .order_by(ResolutionResult.created_at, ResolutionResult.id)
-        .all()
     )
+    if call_log_id is not None:
+        query = query.join(ResolutionResult.captured_intent).filter(
+            CapturedIntent.call_log_id == call_log_id
+        )
+    resolutions = query.order_by(ResolutionResult.created_at, ResolutionResult.id).all()
     executable = currently_executable_action_types()
     staged: list[StagedAction] = []
     for resolution in resolutions:
