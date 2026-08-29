@@ -529,6 +529,15 @@ class CuriosityBrain:
             event = self._last_event
         if event is None:
             league_names = ", ".join(key.upper() for key in leagues)
+            if not events:
+                # Off-season / rest day: an empty board is the honest answer,
+                # not a request to repeat the team name.
+                return BrainReply(
+                    speech=(
+                        f"I don't see any {league_names} games on today's board — "
+                        "there may be none on right now."
+                    )
+                )
             return BrainReply(
                 speech=(
                     f"I can check today's {league_names} games. "
@@ -650,7 +659,7 @@ class CuriosityBrain:
             opponent = second if first["display"] == matched else first
             them = first if opponent is second else second
             result = CuriosityBrain._speak_event(event, next_game=False)
-            return f"The {them['display']} played the {opponent['display']}. {result}"
+            return f"{them['display']} played {opponent['display']}. {result}"
         if next_game and state == "post":
             # "When do they play next?" after a final: today's board only
             # shows this game — be honest instead of misreading the past
@@ -678,9 +687,11 @@ class CuriosityBrain:
                 f"Final score: {first['display']} {first['score']}, "
                 f"{second['display']} {second['score']}."
             )
+        # No leading article: "Celtics won" and "Collingwood won" both read
+        # naturally; "the Collingwood" (seen live on the AFL board) does not.
         return (
-            f"The {winner['display']} won — {winner['score']} to "
-            f"{loser['score']} over the {loser['display']}."
+            f"{winner['display']} won — {winner['score']} to "
+            f"{loser['score']} over {loser['display']}."
         )
 
     # ------------------------------------------------------------------

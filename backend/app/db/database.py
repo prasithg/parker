@@ -32,6 +32,12 @@ def create_tables(bind=None):
     import app.parker.screen  # noqa: F401
 
     target = bind if bind is not None else engine
+    if target is engine:
+        # A fresh PARKER_HOME that does not exist yet must not crash startup —
+        # SQLite cannot create its file in a missing directory.
+        from app import paths
+
+        paths.ensure_parker_home()
     Base.metadata.create_all(bind=target)
 
     # Additive migration for the research-handoff table shipped one stacked

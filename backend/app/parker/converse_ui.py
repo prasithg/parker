@@ -184,12 +184,12 @@ CONVERSE_PAGE_HTML = """<!doctype html>
   <button class="big" id="btn-stop" hidden>Stop Parker</button>
   <button class="big" id="btn-again" hidden>Try again</button>
 </div>
-<div id="type-row" hidden>
+<form id="type-row" hidden>
   <label for="type-input" class="label" hidden>Type your question</label>
   <input id="type-input" type="text" autocomplete="off"
          placeholder="Type your question instead…" maxlength="500">
-  <button id="type-send">Send</button>
-</div>
+  <button id="type-send" type="submit">Send</button>
+</form>
 
 <footer>
   <span>Take your time — pauses never cut you off. Only Done sends it.</span>
@@ -557,9 +557,11 @@ $('btn-again').addEventListener('click', tryAgain);
 $('btn-yes').addEventListener('click', () => sendText('yes'));
 $('btn-no').addEventListener('click', () => sendText('no'));
 $('type-toggle').addEventListener('click', (event) => { event.preventDefault(); showTypeRow($('type-row').hidden); });
-$('type-send').addEventListener('click', () => { sendText($('type-input').value); $('type-input').value = ''; });
-$('type-input').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') { sendText($('type-input').value); $('type-input').value = ''; }
+// A real form: Enter in the input and the Send button both submit natively.
+$('type-row').addEventListener('submit', (event) => {
+  event.preventDefault();
+  sendText($('type-input').value);
+  $('type-input').value = '';
 });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') stopParker(); });
 window.addEventListener('pagehide', () => {

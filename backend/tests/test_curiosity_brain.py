@@ -391,6 +391,16 @@ def test_no_team_match_asks_which_team():
     assert "Which team" in reply.speech
 
 
+def test_empty_scoreboard_is_honest_about_no_games():
+    """Off-season reality (found live: NBA in August has an empty board)."""
+
+    fetcher = sports_fetcher({"events": []})
+    brain = make_brain(fetcher, leagues="nba")
+    reply = brain.respond([], "Did the Celtics win last night?", CONTEXT)
+    assert "don't see any NBA games" in reply.speech
+    assert "Which team" not in reply.speech
+
+
 def test_scores_provider_failure_is_brief_and_honest():
     url = ESPN_SCOREBOARD_URL.format(path="basketball/nba")
     fetcher = FakeFetcher(error_urls={url})
