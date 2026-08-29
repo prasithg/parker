@@ -118,6 +118,13 @@ eval-brain-lane: backend-venv
 eval-hands: backend-venv
 	$(BACKEND_PYTHON) benchmark/evaluate_hands_v0.py --write-report
 
+# Patient Curiosity Loop eval: the six Dad-shaped traces, failure
+# containment, and stop races through the real converse harness path with
+# fake providers. Keyless and offline; pass LIVE=1 to add a one-shot real
+# provider reachability probe (skips gracefully offline).
+eval-curiosity-loop: backend-venv
+	$(BACKEND_PYTHON) benchmark/evaluate_curiosity_loop_v0.py --write-report $(if $(LIVE),--live,)
+
 # Deterministic local demo reset. Most v0 schema changes still require a fresh
 # DB; the research-handoff privacy columns have one narrow additive migration.
 reset-db: backend-venv

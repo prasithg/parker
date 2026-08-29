@@ -1328,6 +1328,18 @@ class TextSession:
         self._outcomes = OutcomeRecorder(db, call_log_id, source=outcome_source)
 
     @property
+    def has_pending_choices(self) -> bool:
+        """Numbered repair/confirmation choices are waiting for a selection."""
+
+        return self._pending_choices is not None
+
+    @property
+    def has_pending_confirmation(self) -> bool:
+        """A staged action is waiting for the patient's spoken yes/no."""
+
+        return self._pending_confirmation is not None
+
+    @property
     def awaiting_reply(self) -> bool:
         """True while Parker's previous turn recently asked the user something.
 
@@ -2380,6 +2392,21 @@ class TextSession:
         self._pending_choices = None
         self._pending_utterance = None
         self._pending_alternates = []
+
+    def dismiss_transient_state(self) -> None:
+        """Drop pending choices/confirmation after the user stopped Parker.
+
+        The converse harness calls this when a turn's result is discarded
+        (Stop raced the response): the next turn must not inherit a
+        cancelled generation's repair choices or yes/no offer. Mirrors the
+        defer semantics — a staged action stays visible on the review page,
+        it just stops being the next utterance's implicit context.
+        """
+
+        self._dismiss_pending_choices()
+        self._pending_confirmation = None
+        self._pending_confirmation_contract = None
+        self._invited_reply = False
 
     def _select_choice(
         self, choice: dict[str, Any], choices: list[dict[str, Any]]

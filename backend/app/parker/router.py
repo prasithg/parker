@@ -50,6 +50,7 @@ from app.parker.research_handoff import (
     redact_local_research_handoff,
     serialize_local_research_handoff,
 )
+from app.parker.converse_router import router as converse_router
 from app.parker.digest import render_digest_page
 from app.parker.practice_router import router as practice_router
 from app.parker.review_ui import REVIEW_PAGE_HTML
@@ -59,6 +60,7 @@ from app.parker.loop_state import get_loop_state
 
 router = APIRouter()
 router.include_router(practice_router)
+router.include_router(converse_router)
 
 RECENT_HISTORY_LIMIT = 10
 

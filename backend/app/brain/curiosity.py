@@ -102,6 +102,10 @@ _SPORTS_WORDS = re.compile(
 )
 _NEXT_GAME = re.compile(r"\b(?:next|when)\b.*\bplay", re.IGNORECASE)
 _THEY_FRAME = re.compile(r"\b(?:they|them|the game|that game)\b", re.IGNORECASE)
+_OPPONENT_FRAME = re.compile(
+    r"\bwho\b.*\b(?:play|played|against|beat)\b|\bagainst who|\bwho was it\b",
+    re.IGNORECASE,
+)
 
 # WMO weather codes -> short spoken description (Open-Meteo contract).
 _WEATHER_CODES: dict[int, str] = {
@@ -114,16 +118,16 @@ _WEATHER_CODES: dict[int, str] = {
     51: "drizzly",
     53: "drizzly",
     55: "drizzly",
-    56: "freezing drizzle",
-    57: "freezing drizzle",
-    61: "light rain",
+    56: "icy and drizzly",
+    57: "icy and drizzly",
+    61: "lightly rainy",
     63: "rainy",
-    65: "heavy rain",
-    66: "freezing rain",
-    67: "freezing rain",
-    71: "light snow",
+    65: "very rainy",
+    66: "icy and rainy",
+    67: "icy and rainy",
+    71: "lightly snowy",
     73: "snowy",
-    75: "heavy snow",
+    75: "very snowy",
     77: "snowy",
     80: "showery",
     81: "showery",
@@ -535,7 +539,11 @@ class CuriosityBrain:
         self._last_event = event
         self._last_team = event.get("matched_team")
         return BrainReply(
-            speech=self._speak_event(event, next_game=bool(_NEXT_GAME.search(text))),
+            speech=self._speak_event(
+                event,
+                next_game=bool(_NEXT_GAME.search(text)),
+                opponent_question=bool(_OPPONENT_FRAME.search(text)),
+            ),
             sources=(
                 Source(
                     label=f"ESPN — {event.get('league', '').upper()}".strip(" —"),
@@ -631,10 +639,18 @@ class CuriosityBrain:
         return None
 
     @staticmethod
-    def _speak_event(event: dict[str, Any], *, next_game: bool) -> str:
+    def _speak_event(
+        event: dict[str, Any], *, next_game: bool, opponent_question: bool = False
+    ) -> str:
         first, second = event["competitors"]
         state = event["state"]
         detail = event.get("status_detail") or ""
+        if opponent_question and event.get("matched_team"):
+            matched = event["matched_team"]
+            opponent = second if first["display"] == matched else first
+            them = first if opponent is second else second
+            result = CuriosityBrain._speak_event(event, next_game=False)
+            return f"The {them['display']} played the {opponent['display']}. {result}"
         if next_game and state == "post":
             # "When do they play next?" after a final: today's board only
             # shows this game — be honest instead of misreading the past

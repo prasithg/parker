@@ -100,6 +100,10 @@ def voice_practice_dir() -> Path:
     return parker_home() / "voice-practice"
 
 
+def receipts_dir() -> Path:
+    return parker_home() / "receipts"
+
+
 # --- Whisper model location -------------------------------------------------
 #
 # faster-whisper stores weights in Hugging Face hub layout:
