@@ -1162,3 +1162,30 @@ demo browser), room acoustics, and voluntary return use are still
 unverified. Decisions still Pras's: exact leagues/teams (decision 5), the
 OpenClaw-gateway A/B when a real gateway exists, and whether browser TTS
 quality is acceptable long-term versus an interruptible `say` subprocess.
+
+### Verification round (same day)
+
+Two fresh-context verifier sessions ran against the shipped slice — one
+adversarial (executes probes), one first-user UX critic (drives the real
+API). The UX critic's blocking findings were all reproduced live, fixed,
+and re-verified live the same evening (commit `0a8cbe7`): sports
+follow-ups retracting sourced answers, unknown days answering today under
+a source chip, errand choices offered to trailing-off questions, the
+"Just say the number" loop, tremor double-tap on swapped controls, raw
+error strings on the patient screen, and Stop erasing the answer it was
+silencing.
+
+Deliberately NOT changed, with reasons:
+
+- Interest-lane answers carry no source chip. Claude's answers are not
+  current-information claims; a "Parker's own knowledge" chip on every
+  conversational reply would be noise, and the brain already says so when
+  live data would be needed. The visible source/freshness cue remains a
+  live-data (weather/scores) contract.
+- Interest-lane length keeps the shipped `trim_for_speech` contract
+  (3 sentences / 360 chars + "Want more detail?") rather than the
+  handoff's 1–2 sentences; tightening it is a product decision for Pras
+  since it changes every brain surface, not just the harness.
+- Voice "stop" mid-answer stays impossible by design in this harness (the
+  microphone is closed while Parker speaks); the runbook now says so
+  explicitly so nobody coaches the first user into a failure.
