@@ -34,8 +34,10 @@ class BrainAdapter(Protocol):
         context: BrainContext,         # patient name + lexicon names, nothing else
     ) -> BrainReply: ...
 
-BrainReply(speech: str, proposed_actions: tuple[ProposedAction, ...])
+BrainReply(speech: str, proposed_actions: tuple[ProposedAction, ...],
+           sources: tuple[Source, ...])
 ProposedAction(action_type, label, subject, intent_text, recipient=None)
+Source(label, url="", fresh_as_of="")   # answer evidence: shown, never spoken
 ```
 
 - `action_type` must come from `PROPOSABLE_ACTION_TYPES` — the capture-able
@@ -151,6 +153,38 @@ then touch a skill. Pinned end to end in
    them on the approved family computer → Parker summarizes aloud what it
    opened. No purchases, no contact with agents — human steps stay human,
    and the eval asserts no purchase path exists anywhere in the flow.
+
+## The current-information lane: `CuriosityBrain` (`backend/app/brain/curiosity.py`)
+
+The Patient Curiosity Loop's answer lane, shipped 2026-08-29 for the
+`/parker/converse` harness. It is a `BrainAdapter` *wrapper*: weather
+questions go to Open-Meteo and league-score questions to the ESPN public
+scoreboard — both keyless, no accounts — and every other utterance
+delegates to the wrapped inner brain (Claude, OpenClaw+fallback, or the
+honest stub when nothing is configured).
+
+- **Sources are part of the reply.** Live answers carry
+  `Source(label, url, fresh_as_of)` — the screen shows "Open-Meteo —
+  Melbourne · as of 9:00 AM today"; TTS never reads a URL. The
+  post-response guard passes sources through on clean replies and drops
+  them with everything else on a medical trip.
+- **Follow-ups answer from per-session cache.** "What about tomorrow?"
+  reuses the already-fetched daily forecast (zero network); "who did they
+  play?" resolves against the last-mentioned game. The brain instance
+  lives exactly as long as its `TextSession`, so this is conversation
+  memory, not a global cache.
+- **Failure is one honest sentence.** Any transport/parse failure becomes
+  "I couldn't reach the weather service just now" and the session
+  survives; an empty scoreboard (off-season) answers that no games are on
+  rather than re-asking for the team.
+- **Same suspicion as every brain.** It runs only after the deterministic
+  pre-model guards (a refused utterance never reaches a provider — pinned
+  by tests and `make eval-curiosity-loop`), proposes no actions, and has
+  no send path. Config: `PARKER_HOME_PLACE`, `PARKER_SPORTS_LEAGUES`,
+  `PARKER_WEATHER_UNITS`.
+
+It is wired into the converse harness only; `make talk-loop` / `make repl`
+keep their existing brain wiring until the harness earns the promotion.
 
 ## Later: realtime speech models
 

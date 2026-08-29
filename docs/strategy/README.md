@@ -17,6 +17,7 @@ Vision → Capabilities → Experiments → Work → Evidence → better Experim
 - **Capabilities** — living briefs in [capabilities/](capabilities/). Each has a mission, honest baseline, maturity level, metrics, weaknesses, and an experiment backlog. Only the three priority capabilities have briefs today; the other five (Reasoning, Coaching, Agency, Trust) ride on existing models and policies until they earn a program.
 - **Experiments** — specs and evidence in [experiments/](experiments/). Experiments are the unit of progress; they run days-to-weeks and end in a keep/modify/abandon decision.
 - **Work** — implementation slices, tracked as delegated coding sessions and logged in [../next-slices.md](../next-slices.md) as they ship.
+- **First-user problem/value hypothesis** — [2026-08-29-problem-first-value-proposition.md](2026-08-29-problem-first-value-proposition.md): Dad's actual voice-assistant job, the Uri Levine problem-first lens, the truthful introduction, and the Patient Curiosity Loop that should earn the next home-use evidence.
 - **Evidence** — eval reports in [../../benchmark/reports/](../../benchmark/reports/), experiment evidence sections, and the weekly log.
 
 ## Metric hierarchy

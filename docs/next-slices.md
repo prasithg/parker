@@ -1116,3 +1116,49 @@ failure/relaunch checks are in
 [`living-room-first-session-smoke-checklist.md`](living-room-first-session-smoke-checklist.md).
 Do not call the candidate home-deployed, first-user-tested, or clinically
 validated until those human/device gates actually run.
+
+## 2026-08-29 — Patient Curiosity Loop (browser harness) — SHIPPED
+
+Executed from `docs/plans/2026-08-29-patient-curiosity-loop-execution.md`
+(the repo-grounded revision of the codex handoff), against the first-user
+strategy in `docs/strategy/2026-08-29-problem-first-value-proposition.md`.
+
+Shipped:
+
+- `/parker/converse` — the laptop/browser harness: manual Start/Done capture
+  (browser-encoded 16 kHz WAV, no VAD cutoff — only Done ends a turn), the
+  transcript shown before the answer, tappable repair choices and yes/no
+  confirmations backed by the same pipeline, browser-TTS speech with an
+  immediate Stop, and a typing fallback.
+- `ConverseStore` (`backend/app/parker/converse.py`) — one persistent
+  `TextSession` per browser session, one warmed shared transcriber, a
+  generation contract for Stop (late results discarded, transient prompts
+  dismissed via the new public `TextSession.dismiss_transient_state()`,
+  screen row overwritten; 100 stop-vs-response races pinned stale-free),
+  temp-audio deletion on every path, TTL/cap lifecycle.
+- `CuriosityBrain` (`backend/app/brain/curiosity.py`) — keyless live
+  weather (Open-Meteo; `PARKER_HOME_PLACE` or the spoken place, one bounded
+  question when neither exists) and league scores (ESPN scoreboard,
+  `PARKER_SPORTS_LEAGUES`) in front of the configured inner brain, with
+  follow-up continuity from per-session cache and honest one-sentence
+  failure. `BrainReply` gained `sources` (label/url/freshness) — shown on
+  screen, never spoken, dropped whole on a medical trip.
+- Latency as an observable contract: per-stage timings in every turn
+  response, aggregate-only JSONL receipts under `PARKER_HOME/receipts`,
+  `benchmark/curiosity_latency_report.py` scoring against the budgets.
+- `make eval-curiosity-loop` — six Dad-shaped scripted traces, failure
+  containment, and stop races through the real harness path (gate PASS);
+  `scripts/converse_smoke.py` — the pre-Dad rehearsal on the actual laptop.
+
+Measured on the dev laptop (2026-08-29): warmed whisper-base median
+~440 ms after Done; live Open-Meteo Melbourne answer with source+freshness
+chip; live ESPN AFL final ("Did Collingwood win?" → the real 96–93 result)
+in 541 ms server total; browser drive verified idle → answer → follow-up →
+Stop → confirmation flows with zero console errors.
+
+Evidence boundary: laptop-verified with synthesized speech and typed turns;
+Dad's own speech, the real-microphone browser session (TCC prompt on the
+demo browser), room acoustics, and voluntary return use are still
+unverified. Decisions still Pras's: exact leagues/teams (decision 5), the
+OpenClaw-gateway A/B when a real gateway exists, and whether browser TTS
+quality is acceptable long-term versus an interruptible `say` subprocess.

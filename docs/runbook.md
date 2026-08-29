@@ -179,7 +179,7 @@ Design contract (pinned by tests in `backend/tests/test_screen.py`):
   aloud in the room anyway, and the person it serves should never face a
   password. Locking `DASHBOARD_PASSWORD` locks the caregiver surface,
   never this one.
-- **It degrades gracefully.** Fresh DB → "Parker is listening"; a server
+- **It degrades gracefully.** Fresh DB → "Parker is not listening"; a server
   restart keeps the last frame until the next exchange.
 
 Every path into `TextSession` drives it — `make repl`, `make talk`,
@@ -188,6 +188,55 @@ updates live while the talk loop runs, including Parker-initiated
 confirmation offers ("Shall I go ahead — yes or no?"), which appear with
 an empty "You said" and a yes/no chip. Options stay on screen through
 silent windows: taking a minute to answer never blanks the cards.
+
+## The Patient Curiosity Loop: `/parker/converse`
+
+The laptop/browser harness for the first-user experience in
+`docs/strategy/2026-08-29-problem-first-value-proposition.md`: tap Start,
+take your time (pauses never cut a turn off — only Done sends it), see
+what Parker heard, get a brief current answer with its source named on
+screen, ask a follow-up without restating the topic, and Stop instantly.
+
+Setup (the family member does all of this before Dad sits down):
+
+```bash
+PARKER_HOME_PLACE="Melbourne" PARKER_SPORTS_LEAGUES="afl" make run
+```
+
+then open `http://localhost:8000/parker/converse` in Safari or Chrome and
+grant the microphone permission with one throwaway question of your own.
+The page speaks through the browser (`speechSynthesis`) so Stop is
+immediate; the microphone is only open between Start and Done, so Parker
+never hears itself.
+
+- `PARKER_HOME_PLACE` answers bare "what's the weather?" questions
+  (Open-Meteo, keyless). Unset, Parker asks one bounded question instead
+  of guessing. Any spoken place ("weather in Ballarat?") wins over it.
+- `PARKER_SPORTS_LEAGUES` is a comma list from: nba, wnba, nfl, mlb,
+  nhl, epl, mls, afl (ESPN public scoreboard, keyless). Pick one that is
+  in season — an empty board answers honestly that no games are on.
+- Everything else rides the shipped brainstem: repair choices render as
+  tappable cards, action requests read back and wait for yes/no (tap or
+  voice), refusal guards run before any provider, and staged actions
+  stay on `/parker/review/ui`.
+- "Type instead" (footer) is a quiet fallback for harder-speech days;
+  same turns, same pipeline.
+- Latency receipts (stage timings only, never words) accumulate in
+  `PARKER_HOME/receipts/converse_latency.jsonl`; aggregate them with
+  `backend/.venv/bin/python benchmark/curiosity_latency_report.py`.
+
+Before a first-user session, rehearse the exact machine once:
+
+```bash
+backend/.venv/bin/python scripts/converse_smoke.py --place Melbourne --leagues afl --team-question "Did Collingwood win?"
+```
+
+It boots a throwaway server, synthesizes utterances with macOS `say`
+(including a 1.8 s mid-utterance pause), runs them through the real turn
+endpoint with the real local ASR, and prints the latency table against
+the budgets. Then follow the first-session rules in the strategy doc —
+Dad chooses the questions, one repair at most, Stop demonstrated as
+control, and no coaching on the first miss.
 
 ## The family digest: `make digest`
 
