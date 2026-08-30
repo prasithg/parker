@@ -70,32 +70,41 @@ class ConverseError(RuntimeError):
 
 
 class TimedBrain:
-    """Wraps the session brain to expose per-turn provider latency.
+    """Wraps the session brain: per-turn provider latency + sentence streaming.
 
-    Purely observational: same contract, same reply, no retries. The store
-    reads and resets ``last_elapsed_ms`` around each turn so the timing a
-    turn reports is its own.
+    Purely observational on the reply itself — same contract, no retries.
+    The store reads and resets ``last_elapsed_ms`` around each turn so the
+    timing a turn reports is its own. When the store sets ``on_sentence``
+    for a streaming turn and the inner brain supports ``respond_stream``,
+    sentences flow to the callback as they generate; the returned reply is
+    still the authoritative, guard-screened one.
     """
 
     def __init__(self, inner: BrainAdapter) -> None:
         self._inner = inner
         self.last_elapsed_ms: float = 0.0
+        self.on_sentence: Callable[[str], None] | None = None
 
     def respond(
         self, history: list[Message], utterance: str, context: BrainContext
     ) -> BrainReply:
         started = time.monotonic()
         try:
+            callback = self.on_sentence
+            if callback is not None and hasattr(self._inner, "respond_stream"):
+                return self._inner.respond_stream(history, utterance, context, callback)
             return self._inner.respond(history, utterance, context)
         finally:
             self.last_elapsed_ms += (time.monotonic() - started) * 1000.0
 
 
-def _build_default_brain() -> TimedBrain:
-    from app.brain.build import build_brain_adapter
-    from app.brain.curiosity import build_curiosity_brain
+def _build_default_brain() -> TimedBrain | None:
+    """The configured brain wrapped for timing, or None for the honest stub."""
 
-    return TimedBrain(build_curiosity_brain(build_brain_adapter()))
+    from app.brain.build import build_brain_adapter
+
+    inner = build_brain_adapter()
+    return None if inner is None else TimedBrain(inner)
 
 
 def _decode_audio(encoded: str) -> bytes:
@@ -125,7 +134,9 @@ def _strip_choices(choices: Optional[list[dict[str, Any]]]) -> list[dict[str, An
 class ConverseSession:
     """One browser conversation: state the store guards with two locks."""
 
-    def __init__(self, session_id: str, db: Any, text_session: TextSession, brain: TimedBrain):
+    def __init__(
+        self, session_id: str, db: Any, text_session: TextSession, brain: TimedBrain | None
+    ):
         self.id = session_id
         self.db = db
         self.text_session = text_session
@@ -354,7 +365,8 @@ class ConverseStore:
                 return result
 
         route_started = time.monotonic()
-        session.brain.last_elapsed_ms = 0.0
+        if session.brain is not None:
+            session.brain.last_elapsed_ms = 0.0
         exchanges: list[dict[str, Any]] = []
         for line in lines:
             response = session.text_session.handle(line, context=TOUCH_CONTEXT)
@@ -368,7 +380,7 @@ class ConverseStore:
         if offer is not None:
             exchanges.append({"you": "", **offer})
         timings["route"] = (time.monotonic() - route_started) * 1000.0
-        timings["provider"] = session.brain.last_elapsed_ms
+        timings["provider"] = session.brain.last_elapsed_ms if session.brain else 0.0
         timings["route"] = max(0.0, timings["route"] - timings["provider"])
 
         with session.state_lock:

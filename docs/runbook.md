@@ -200,7 +200,7 @@ screen, ask a follow-up without restating the topic, and Stop instantly.
 Setup (the family member does all of this before Dad sits down):
 
 ```bash
-PARKER_HOME_PLACE="Melbourne" PARKER_SPORTS_LEAGUES="afl" make run
+PARKER_HOME_PLACE="Melbourne, Australia" make run
 ```
 
 then open `http://localhost:8000/parker/converse` in Safari or Chrome and
@@ -209,12 +209,15 @@ The page speaks through the browser (`speechSynthesis`) so Stop is
 immediate; the microphone is only open between Start and Done, so Parker
 never hears itself.
 
-- `PARKER_HOME_PLACE` answers bare "what's the weather?" questions
-  (Open-Meteo, keyless). Unset, Parker asks one bounded question instead
-  of guessing. Any spoken place ("weather in Ballarat?") wins over it.
-- `PARKER_SPORTS_LEAGUES` is a comma list from: nba, wnba, nfl, mlb,
-  nhl, epl, mls, afl (ESPN public scoreboard, keyless). Pick one that is
-  in season — an empty board answers honestly that no games are on.
+- Every subject — weather, footy, news, people — answers through the one
+  general brain lane (Claude + server-side web search, needs
+  `ANTHROPIC_API_KEY`). There are deliberately no per-subject provider
+  lanes to configure or maintain.
+- `PARKER_HOME_PLACE` grounds local questions and searches — set it with
+  the country ("Melbourne, Australia"); a bare city name can collide with
+  same-named towns elsewhere. Any spoken place wins over it.
+- `PARKER_BRAIN_EFFORT=low` (default) is the latency lever: a searched
+  spoken turn measures ~4 s on the dev laptop (was ~15 s at high effort).
 - Everything else rides the shipped brainstem: repair choices render as
   tappable cards, action requests read back and wait for yes/no (tap or
   voice), refusal guards run before any provider, and staged actions
@@ -234,7 +237,7 @@ never hears itself.
 Before a first-user session, rehearse the exact machine once:
 
 ```bash
-backend/.venv/bin/python scripts/converse_smoke.py --place Melbourne --leagues afl --team-question "Did Collingwood win?"
+backend/.venv/bin/python scripts/converse_smoke.py --place "Melbourne, Australia"
 ```
 
 It boots a throwaway server, synthesizes utterances with macOS `say`

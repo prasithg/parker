@@ -119,6 +119,15 @@ class Settings(BaseSettings):
     # Without ANTHROPIC_API_KEY the answer lane stays the deterministic stub.
     parker_brain_model: str = "claude-sonnet-5"
     parker_brain_max_tokens: int = 300
+    # Server-side web search for the Claude brain: the long tail of curiosity
+    # (news, people, prices, events) answers with real citations instead of
+    # hand-built provider lanes. Costs per search; family-administered.
+    parker_brain_web_search: bool = True
+    parker_brain_web_search_max_uses: int = 3
+    # Reasoning effort for the voice brain. "low" is the measured latency
+    # lever for spoken turns (a searched answer dropped from ~15 s to ~4 s
+    # on the dev laptop) and short warm answers don't need deep thinking.
+    parker_brain_effort: str = "low"
 
     # Local voice output (macOS say; no cloud, no dependencies)
     parker_tts_enabled: bool = True
@@ -139,14 +148,11 @@ class Settings(BaseSettings):
     # normal TextSession repair/confirmation policy before any local action.
     parker_functional_phrase: str = "Remind me to water the plants this evening."
 
-    # Patient Curiosity Loop (app/brain/curiosity.py). Home place answers bare
-    # "what's the weather?" questions; empty means Parker asks one bounded
-    # question instead of guessing. Leagues are comma-separated keys from the
-    # supported map (nba, nfl, mlb, nhl, epl, mls, afl, wnba); empty means the
-    # scores lane says honestly that the family hasn't picked leagues yet.
+    # Where the household is (town/suburb). Grounds the brain's local
+    # answers and web searches — "what's the weather?" never needs the town
+    # restated. Context only; there are deliberately no per-subject provider
+    # lanes (general web search covers every subject).
     parker_home_place: str = ""
-    parker_sports_leagues: str = ""
-    parker_weather_units: str = "celsius"
 
     # Addressed-to-me gating for the live talk loop (EXP-001 slice 1;
     # app/conversation/addressing.py). "open" (default): every transcription

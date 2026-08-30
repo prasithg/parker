@@ -154,37 +154,30 @@ then touch a skill. Pinned end to end in
    opened. No purchases, no contact with agents — human steps stay human,
    and the eval asserts no purchase path exists anywhere in the flow.
 
-## The current-information lane: `CuriosityBrain` (`backend/app/brain/curiosity.py`)
+## Current information: general web search, no subject lanes
 
-The Patient Curiosity Loop's answer lane, shipped 2026-08-29 for the
-`/parker/converse` harness. It is a `BrainAdapter` *wrapper*: weather
-questions go to Open-Meteo and league-score questions to the ESPN public
-scoreboard — both keyless, no accounts — and every other utterance
-delegates to the wrapped inner brain (Claude, OpenClaw+fallback, or the
-honest stub when nothing is configured).
+Decided 2026-08-30 (Pras): there are deliberately **no per-subject provider
+lanes** — no weather adapter, no sports adapter, no new lane per subject.
+Every current-information question (weather, scores, news, people, prices)
+flows through the one general brain lane: the Claude adapter with the
+server-side web search tool.
 
-- **Sources are part of the reply.** Live answers carry
-  `Source(label, url, fresh_as_of)` — the screen shows "Open-Meteo —
-  Melbourne · as of 9:00 AM today"; TTS never reads a URL. The
-  post-response guard passes sources through on clean replies and drops
-  them with everything else on a medical trip.
-- **Follow-ups answer from per-session cache.** "What about tomorrow?"
-  reuses the already-fetched daily forecast (zero network); "who did they
-  play?" resolves against the last-mentioned game. The brain instance
-  lives exactly as long as its `TextSession`, so this is conversation
-  memory, not a global cache.
-- **Failure is one honest sentence.** Any transport/parse failure becomes
-  "I couldn't reach the weather service just now" and the session
-  survives; an empty scoreboard (off-season) answers that no games are on
-  rather than re-asking for the team.
-- **Same suspicion as every brain.** It runs only after the deterministic
-  pre-model guards (a refused utterance never reaches a provider — pinned
-  by tests and `make eval-curiosity-loop`), proposes no actions, and has
-  no send path. Config: `PARKER_HOME_PLACE`, `PARKER_SPORTS_LEAGUES`,
-  `PARKER_WEATHER_UNITS`.
-
-It is wired into the converse harness only; `make talk-loop` / `make repl`
-keep their existing brain wiring until the harness earns the promotion.
+- **Search is read-only information retrieval, never an action path.**
+  `propose_action` remains the only action channel; the post-response
+  guard still screens every reply.
+- **Sources are part of the reply.** Citations on answer text become
+  `Source` chips; when the model answers without grounded spans (common),
+  the pages the search actually returned are the fallback evidence. URLs
+  are never spoken.
+- **`PARKER_HOME_PLACE` is context, not a lane** — it grounds the system
+  prompt and the search tool's `user_location` so "what's the weather?"
+  never needs the town restated (set it like "Melbourne, Australia";
+  a bare city name can collide with same-named towns elsewhere — found
+  live when "Melbourne" pulled Florida forecasts).
+- **Latency is tuned, not hidden**: `PARKER_BRAIN_EFFORT=low` (default)
+  took a searched spoken turn from ~15 s to ~4 s on the dev laptop;
+  sentence streaming starts TTS after the first sentence. Config:
+  `PARKER_BRAIN_WEB_SEARCH` (default on), `PARKER_BRAIN_WEB_SEARCH_MAX_USES`.
 
 ## Later: realtime speech models
 

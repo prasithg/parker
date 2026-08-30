@@ -82,7 +82,6 @@ def test_request_shape_carries_history_utterance_persona_and_tool():
     assert len(client.calls) == 1
     call = client.calls[0]
     assert call["model"] == "claude-test-model"
-    assert call["max_tokens"] == 123
     # history in order, new utterance last
     assert call["messages"] == [
         {"role": "user", "content": "what's a good stretch for stiff shoulders?"},
@@ -96,20 +95,57 @@ def test_request_shape_carries_history_utterance_persona_and_tool():
     assert "1-3 short" in system
     assert "No medical advice" in system
     assert "emergency services" in system
-    # the structured proposal mechanism is the only action channel
+    # propose_action stays the only ACTION channel; web search (default on)
+    # is read-only information retrieval, never an action path.
+    assert [tool["name"] for tool in call["tools"]] == ["propose_action", "web_search"]
+    assert call["tools"][1]["type"] == "web_search_20260209"
+    # a search turn needs output headroom for the tool call + the answer
+    assert call["max_tokens"] == 700
+
+
+def test_without_web_search_the_proposal_tool_is_the_only_tool(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "parker_brain_web_search", False)
+    client = FakeAnthropic([_TextBlock("hello")])
+    adapter = ClaudeBrainAdapter(client, model="claude-test-model", max_tokens=123)
+    adapter.respond([], "hello", CONTEXT)
+
+    call = client.calls[0]
     assert [tool["name"] for tool in call["tools"]] == ["propose_action"]
+    assert call["max_tokens"] == 123  # no search, no headroom bump
 
 
-def test_defaults_come_from_settings():
+def test_defaults_come_from_settings(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "parker_brain_web_search", False)
     client = FakeAnthropic([_TextBlock("hello")])
     adapter = ClaudeBrainAdapter(client)
 
     adapter.respond([], "hello", CONTEXT)
 
-    from app.config import settings
-
     assert client.calls[0]["model"] == settings.parker_brain_model
     assert client.calls[0]["max_tokens"] == settings.parker_brain_max_tokens
+
+
+def test_home_place_grounds_search_location_and_prompt():
+    client = FakeAnthropic([_TextBlock("hello")])
+    adapter = ClaudeBrainAdapter(client, model="m", max_tokens=100)
+    placed = BrainContext(patient_name="Dad", lexicon_names=(), home_place="Fitzroy")
+
+    adapter.respond([], "what's the weather?", placed)
+
+    call = client.calls[0]
+    search_tool = call["tools"][1]
+    assert search_tool["user_location"] == {"type": "approximate", "city": "Fitzroy"}
+    assert "household is in Fitzroy" in call["system"]
+
+    # No home place -> no location grounding, no prompt line.
+    client2 = FakeAnthropic([_TextBlock("hello")])
+    ClaudeBrainAdapter(client2, model="m", max_tokens=100).respond([], "hi", CONTEXT)
+    assert "user_location" not in client2.calls[0]["tools"][1]
+    assert "household is in" not in client2.calls[0]["system"]
 
 
 def test_reply_parses_text_blocks_and_tool_proposals():
@@ -263,3 +299,202 @@ def test_single_overlong_sentence_hard_caps():
 
     assert len(trimmed) < 130
     assert trimmed.endswith(WANT_MORE_SUFFIX)
+
+
+# ---------------------------------------------------------------------------
+# General web search: citations become sources; streaming; pause_turn
+# ---------------------------------------------------------------------------
+
+
+class _Citation:
+    def __init__(self, url, title):
+        self.url = url
+        self.title = title
+
+
+class _CitedTextBlock:
+    type = "text"
+
+    def __init__(self, text, citations):
+        self.text = text
+        self.citations = citations
+
+
+def test_search_citations_become_sources_deduped_and_capped():
+    blocks = [
+        _CitedTextBlock(
+            "It's 14 in Fitzroy.",
+            [
+                _Citation("https://weatherzone.com.au/vic", "Weatherzone — Fitzroy"),
+                _Citation("https://weatherzone.com.au/vic", "Weatherzone — Fitzroy"),  # dupe
+            ],
+        ),
+        _CitedTextBlock(
+            "Rain is expected tomorrow.",
+            [
+                _Citation("https://bom.gov.au/", "Bureau of Meteorology"),
+                _Citation("https://a.example/", "A"),
+                _Citation("https://b.example/", "B"),  # beyond the cap
+            ],
+        ),
+    ]
+    adapter = ClaudeBrainAdapter(FakeAnthropic(blocks), model="m", max_tokens=100)
+    reply = adapter.respond([], "weather?", CONTEXT)
+
+    assert [s.url for s in reply.sources] == [
+        "https://weatherzone.com.au/vic",
+        "https://bom.gov.au/",
+        "https://a.example/",
+    ]
+    assert reply.sources[0].label == "Weatherzone — Fitzroy"
+    assert all(s.fresh_as_of == "just searched" for s in reply.sources)
+
+
+def test_citation_without_title_falls_back_to_domain():
+    blocks = [_CitedTextBlock("News.", [_Citation("https://news.example.com/story/1", "")])]
+    adapter = ClaudeBrainAdapter(FakeAnthropic(blocks), model="m", max_tokens=100)
+    reply = adapter.respond([], "news?", CONTEXT)
+    assert reply.sources[0].label == "news.example.com"
+
+
+def test_respond_stream_falls_back_to_single_emit_without_stream_support():
+    """Injected fakes without messages.stream keep working — the whole
+    answer arrives as one sentence callback."""
+
+    client = FakeAnthropic([_TextBlock("One answer.")])
+    adapter = ClaudeBrainAdapter(client, model="m", max_tokens=100)
+    heard: list[str] = []
+    reply = adapter.respond_stream([], "hi", CONTEXT, heard.append)
+    assert heard == ["One answer."]
+    assert reply.speech == "One answer."
+
+
+class _FakeStream:
+    def __init__(self, deltas, final):
+        self._deltas = deltas
+        self._final = final
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    @property
+    def text_stream(self):
+        yield from self._deltas
+
+    def get_final_message(self):
+        return self._final
+
+
+class FakeStreamingAnthropic:
+    def __init__(self, deltas, final_blocks):
+        self._deltas = deltas
+        self._final = _Response(final_blocks)
+        self.calls: list[dict] = []
+
+    @property
+    def messages(self):
+        return self
+
+    def create(self, **kwargs):  # pause_turn continuations use create
+        self.calls.append(kwargs)
+        return self._final
+
+    def stream(self, **kwargs):
+        self.calls.append(kwargs)
+        return _FakeStream(self._deltas, self._final)
+
+
+def test_respond_stream_emits_complete_sentences_as_they_form():
+    deltas = ["It's 14 and cl", "ear. Tomorrow looks ", "rainy. Take a coat."]
+    final = [_TextBlock("It's 14 and clear. Tomorrow looks rainy. Take a coat.")]
+    adapter = ClaudeBrainAdapter(FakeStreamingAnthropic(deltas, final), model="m", max_tokens=100)
+
+    heard: list[str] = []
+    reply = adapter.respond_stream([], "weather?", CONTEXT, heard.append)
+
+    assert heard == ["It's 14 and clear.", "Tomorrow looks rainy.", "Take a coat."]
+    assert reply.speech == "It's 14 and clear. Tomorrow looks rainy. Take a coat."
+
+
+def test_pause_turn_is_resumed_and_bounded():
+    class _PausedResponse(_Response):
+        stop_reason = "pause_turn"
+
+    class PausingClient:
+        def __init__(self):
+            self.calls = []
+            self._responses = [
+                _PausedResponse([_TextBlock("Searching…")]),
+                _Response([_TextBlock("Here is the answer.")]),
+            ]
+
+        @property
+        def messages(self):
+            return self
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return self._responses[min(len(self.calls) - 1, 1)]
+
+    client = PausingClient()
+    adapter = ClaudeBrainAdapter(client, model="m", max_tokens=100)
+    reply = adapter.respond([], "long research question", CONTEXT)
+
+    assert len(client.calls) == 2  # one continuation, not an infinite loop
+    assert "Here is the answer." in reply.speech
+    # the continuation carried the paused assistant turn back
+    assert client.calls[1]["messages"][-1]["role"] == "assistant"
+
+
+class _SearchResultItem:
+    type = "web_search_result"
+
+    def __init__(self, url, title):
+        self.url = url
+        self.title = title
+
+
+class _SearchToolResultBlock:
+    type = "web_search_tool_result"
+
+    def __init__(self, items):
+        self.content = items
+
+
+def test_searched_pages_are_fallback_sources_when_nothing_is_cited():
+    """Citations are span-dependent and often absent live; the pages the
+    search returned are still honest evidence for the screen."""
+
+    blocks = [
+        _SearchToolResultBlock(
+            [
+                _SearchResultItem("https://weatherzone.com.au/vic", "Weatherzone — Melbourne"),
+                _SearchResultItem("https://bom.gov.au/", "Bureau of Meteorology"),
+            ]
+        ),
+        _TextBlock("Partly cloudy, top of 16."),
+    ]
+    adapter = ClaudeBrainAdapter(FakeAnthropic(blocks), model="m", max_tokens=100)
+    reply = adapter.respond([], "weather?", CONTEXT)
+    assert [s.label for s in reply.sources] == ["Weatherzone — Melbourne", "Bureau of Meteorology"]
+
+
+def test_cited_sources_win_over_searched_pages():
+    blocks = [
+        _SearchToolResultBlock([_SearchResultItem("https://other.example/", "Other page")]),
+        _CitedTextBlock("Cited answer.", [_Citation("https://cited.example/", "The cited page")]),
+    ]
+    adapter = ClaudeBrainAdapter(FakeAnthropic(blocks), model="m", max_tokens=100)
+    reply = adapter.respond([], "news?", CONTEXT)
+    assert [s.label for s in reply.sources] == ["The cited page"]
+
+
+def test_request_carries_the_effort_setting():
+    client = FakeAnthropic([_TextBlock("hello")])
+    ClaudeBrainAdapter(client, model="m", max_tokens=100).respond([], "hi", CONTEXT)
+    from app.config import settings
+
+    assert client.calls[0]["output_config"] == {"effort": settings.parker_brain_effort}

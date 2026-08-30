@@ -1189,3 +1189,27 @@ Deliberately NOT changed, with reasons:
 - Voice "stop" mid-answer stays impossible by design in this harness (the
   microphone is closed while Parker speaks); the runbook now says so
   explicitly so nobody coaches the first user into a failure.
+
+## 2026-08-30 — General web search replaces the subject lanes — SHIPPED
+
+Pras's direction, same-day: no per-subject provider lanes ("I just want
+general web search, not specific things every time I want a new subject"),
+and no local-first data rule — best experience wins.
+
+- `CuriosityBrain` (the day-old Open-Meteo/ESPN lanes) deleted outright;
+  every subject flows through the Claude adapter with the server-side
+  `web_search_20260209` tool. Citations become `Source` chips; when spans
+  aren't cited (common, observed live), the searched pages are the
+  fallback evidence.
+- `PARKER_HOME_PLACE` demoted from lane to context: grounds the system
+  prompt + the search tool's `user_location`. Set with country — a bare
+  "Melbourne" pulled Florida forecasts live.
+- `PARKER_BRAIN_EFFORT=low` (new, default): the measured latency lever —
+  a searched spoken turn dropped ~15 s → ~4 s on the dev laptop.
+  `max_uses` must stay ≥2 (a 1-search budget starves the dynamic-filter
+  search and the model apologizes about "tool limits" — observed live).
+- Removed settings: `PARKER_SPORTS_LEAGUES`, `PARKER_WEATHER_UNITS`.
+- Live evidence (converse path, Melbourne): weather 4.3 s sourced from
+  Victorian pages, tomorrow follow-up 3.8 s, "Did Collingwood win?" →
+  "No, sorry Dad. The Bulldogs won a tense three-point victory, 14.12
+  (96) to 14.9 (93)…" 3.9 s with AFL sources.

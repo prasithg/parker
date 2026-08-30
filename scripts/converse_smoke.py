@@ -13,9 +13,10 @@ path the browser page uses — and prints per-turn heard/answer/timings
 plus the budget aggregation at the end.
 
 Live behavior notes:
-- Weather/scores go to the real keyless providers when the machine is
-  online (PARKER_HOME_PLACE / PARKER_SPORTS_LEAGUES below); offline they
-  degrade to the honest failure speech — the smoke reports which happened.
+- Every subject answers through the general brain lane (Claude + web
+  search when a key is configured); PARKER_HOME_PLACE grounds local
+  questions. Offline or keyless, turns degrade honestly — the smoke
+  reports which happened.
 - ``--offline`` skips the network-dependent turns entirely.
 - Audio artifacts live in the temp dir and are deleted at exit; receipts
   are copied next to nothing — the aggregate table is the artifact.
@@ -42,17 +43,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-def build_utterances(sports_question: str, followup_team: str) -> list[tuple[str, str, bool]]:
+def build_utterances(sports_question: str) -> list[tuple[str, str, bool]]:
     # Deliberately includes the paths a first user wanders into, not just
-    # the designed happy path: a subject-switching follow-up after sports,
-    # a day past the horizon, and a trailing-off question.
+    # the designed happy path: a subject switch mid-conversation, a
+    # long mid-utterance pause, and a trailing-off question. All subjects
+    # flow through the one general lane — no per-subject providers.
     return [
         ("weather-today", "What is the weather today?", False),
         ("weather-paused", "What is the [[slnc 1800]] weather today?", False),
         ("weather-tomorrow", "What about tomorrow?", False),
-        ("weather-unknown-day", "What about the day after?", False),
         ("sports-score", sports_question, False),
-        ("sports-switch", f"How about {followup_team}?", False),
+        ("subject-switch", "And what's in the news today?", False),
         ("vague-question", "What is the... the... you know...", True),
         ("reminder", "Remind me to water the plants this evening", True),
         ("confirm-yes", "yes", True),
@@ -97,21 +98,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server", default=None, help="use a running server instead of booting one")
     parser.add_argument("--place", default="Melbourne", help="PARKER_HOME_PLACE for the boot server")
-    parser.add_argument("--leagues", default="nba", help="PARKER_SPORTS_LEAGUES for the boot server")
     parser.add_argument("--repeat", type=int, default=3, help="repetitions of the weather turn for distribution")
     parser.add_argument("--offline", action="store_true", help="skip network-dependent turns")
     parser.add_argument(
         "--team-question",
-        default="Did the Celtics win last night?",
-        help="the spoken sports question (match it to a league that is in season)",
-    )
-    parser.add_argument(
-        "--followup-team",
-        default="the Lakers",
-        help="a second team for the subject-switching follow-up ('How about X?')",
+        default="Did Collingwood win on the weekend?",
+        help="the spoken sports question (any team — it goes through web search)",
     )
     args = parser.parse_args()
-    utterances = build_utterances(args.team_question, args.followup_team)
+    utterances = build_utterances(args.team_question)
 
     tmp = tempfile.TemporaryDirectory(prefix="parker-converse-smoke-")
     tmp_path = Path(tmp.name)
@@ -126,7 +121,6 @@ def main() -> int:
             env.update(
                 PARKER_HOME=str(home),
                 PARKER_HOME_PLACE=args.place,
-                PARKER_SPORTS_LEAGUES=args.leagues,
             )
             server_proc = subprocess.Popen(
                 [str(REPO / "backend/.venv/bin/uvicorn"), "app.main:app", "--port", "8123"],

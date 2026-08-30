@@ -59,11 +59,14 @@ class BrainContext:
 
     Names come from the family-configured personal lexicon — the same list
     that biases ASR — so the brain can resolve "tell Sarah" to a real
-    person. Never credentials, medical records, or raw audio.
+    person. ``home_place`` grounds local questions (weather, what's on
+    nearby) so "what's the weather?" never needs a town restated. Never
+    credentials, medical records, or raw audio.
     """
 
     patient_name: str = "Dad"
     lexicon_names: tuple[str, ...] = ()
+    home_place: str = ""
 
 
 @dataclass(frozen=True)
