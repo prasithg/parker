@@ -219,6 +219,9 @@ def test_session_config_carries_persona_vad_transcription_and_tools(
         "interrupt_response": True,
     }
     assert session["audio"]["input"]["transcription"]["model"]
+    # output rate is required by the live API — its absence voided the whole
+    # session.update (tools included) on the first real probe
+    assert session["audio"]["output"]["format"] == {"type": "audio/pcm", "rate": 24000}
     # brainless -> propose_action stays the only tool
     assert [tool["name"] for tool in session["tools"]] == ["propose_action"]
     assert "Parkinson" in session["instructions"]

@@ -52,6 +52,7 @@ class ReceiptCollector(logging.Handler):
 
 
 async def main() -> int:
+    import app.main  # noqa: F401 — registers every model on Base.metadata
     from app.db.database import Base
     from app.demo.persona import seed_persona_data
     from app.parker import realtime
@@ -121,12 +122,16 @@ async def main() -> int:
             )
         )
         await bridge._upstream.send(json.dumps({"type": "response.create"}))
+        sources_seen_at = None
         while time.monotonic() - started < SESSION_SECONDS:
             await asyncio.sleep(1)
-            if any(e.get("type") == "sources" for e in browser_events) and (
-                time.monotonic() - started
-            ) > 25:
-                break
+            if sources_seen_at is None and any(
+                e.get("type") == "sources" for e in browser_events
+            ):
+                sources_seen_at = time.monotonic()
+                print("\n[probe] sources landed — waiting for the steer-back narration…")
+            if sources_seen_at is not None and time.monotonic() - sources_seen_at > 14:
+                break  # long enough to hear the model weave the result in
     finally:
         await to_bridge.put({"type": "end"})
         try:

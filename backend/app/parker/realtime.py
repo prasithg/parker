@@ -216,7 +216,10 @@ def build_session_update() -> dict[str, Any]:
                     "transcription": {"model": "gpt-4o-mini-transcribe"},
                 },
                 "output": {
-                    "format": {"type": "audio/pcm"},
+                    # rate is REQUIRED by the live API (session.update is
+                    # rejected wholesale without it — tools and all; found
+                    # by the first real live probe, 2026-08-30).
+                    "format": {"type": "audio/pcm", "rate": 24000},
                     "voice": settings.openai_realtime_voice,
                 },
             },
