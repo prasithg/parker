@@ -70,32 +70,41 @@ class ConverseError(RuntimeError):
 
 
 class TimedBrain:
-    """Wraps the session brain to expose per-turn provider latency.
+    """Wraps the session brain: per-turn provider latency + sentence streaming.
 
-    Purely observational: same contract, same reply, no retries. The store
-    reads and resets ``last_elapsed_ms`` around each turn so the timing a
-    turn reports is its own.
+    Purely observational on the reply itself — same contract, no retries.
+    The store reads and resets ``last_elapsed_ms`` around each turn so the
+    timing a turn reports is its own. When the store sets ``on_sentence``
+    for a streaming turn and the inner brain supports ``respond_stream``,
+    sentences flow to the callback as they generate; the returned reply is
+    still the authoritative, guard-screened one.
     """
 
     def __init__(self, inner: BrainAdapter) -> None:
         self._inner = inner
         self.last_elapsed_ms: float = 0.0
+        self.on_sentence: Callable[[str], None] | None = None
 
     def respond(
         self, history: list[Message], utterance: str, context: BrainContext
     ) -> BrainReply:
         started = time.monotonic()
         try:
+            callback = self.on_sentence
+            if callback is not None and hasattr(self._inner, "respond_stream"):
+                return self._inner.respond_stream(history, utterance, context, callback)
             return self._inner.respond(history, utterance, context)
         finally:
             self.last_elapsed_ms += (time.monotonic() - started) * 1000.0
 
 
-def _build_default_brain() -> TimedBrain:
-    from app.brain.build import build_brain_adapter
-    from app.brain.curiosity import build_curiosity_brain
+def _build_default_brain() -> TimedBrain | None:
+    """The configured brain wrapped for timing, or None for the honest stub."""
 
-    return TimedBrain(build_curiosity_brain(build_brain_adapter()))
+    from app.brain.build import build_brain_adapter
+
+    inner = build_brain_adapter()
+    return None if inner is None else TimedBrain(inner)
 
 
 def _decode_audio(encoded: str) -> bytes:
@@ -125,7 +134,9 @@ def _strip_choices(choices: Optional[list[dict[str, Any]]]) -> list[dict[str, An
 class ConverseSession:
     """One browser conversation: state the store guards with two locks."""
 
-    def __init__(self, session_id: str, db: Any, text_session: TextSession, brain: TimedBrain):
+    def __init__(
+        self, session_id: str, db: Any, text_session: TextSession, brain: TimedBrain | None
+    ):
         self.id = session_id
         self.db = db
         self.text_session = text_session
@@ -285,7 +296,18 @@ class ConverseStore:
         turn_id: int,
         audio_base64: str | None = None,
         text: str | None = None,
+        emit: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        """Run one turn; ``emit`` (optional) receives progressive events.
+
+        Events, in order: ``{"event": "heard", ...}`` once the transcript
+        exists, then zero or more ``{"event": "speech", "text": sentence}``
+        as the brain's answer generates — each sentence pre-screened by the
+        same medical-boundary detector the final guard uses, capped at the
+        TTS trim length, and dropped once the generation goes stale. The
+        complete guard-screened result is still the return value.
+        """
+
         session = self._require(session_id)
         if (audio_base64 is None) == (text is None):
             raise ConverseError(422, "Provide exactly one of audio_base64 or text")
@@ -308,9 +330,57 @@ class ConverseStore:
                 turn_id=turn_id,
                 audio_bytes=audio_bytes,
                 text=text,
+                emit=emit,
             )
         self._write_turn_receipt(session, result)
         return result
+
+    def _streaming_sentence_guard(
+        self,
+        session: ConverseSession,
+        generation: int,
+        emit: Callable[[dict[str, Any]], None],
+    ) -> Callable[[str], None]:
+        """Per-sentence gate for streamed speech.
+
+        Applies the same medical-boundary detector as the final guard to
+        the ACCUMULATED text (so a violation assembled across sentences
+        still trips), enforces the TTS trim cap, and stops emitting the
+        moment the generation goes stale. The final whole-reply guard still
+        runs afterwards and remains authoritative.
+        """
+
+        from app.brain.guard import speech_violates_medical_boundary
+
+        state = {"accumulated": "", "spoken": "", "count": 0, "blocked": False}
+
+        def on_sentence(sentence: str) -> None:
+            if state["blocked"] or state["count"] >= 3:
+                return
+            with session.state_lock:
+                if session.generation != generation:
+                    state["blocked"] = True
+                    return
+            state["accumulated"] = f"{state['accumulated']} {sentence}".strip()
+            if speech_violates_medical_boundary(state["accumulated"]):
+                state["blocked"] = True  # the final guard speaks the redirect
+                return
+            # Mirror trim_for_speech exactly (3 sentences AND 360 chars), so
+            # what streams is always a prefix of the final screened speech —
+            # the page speaks the final's remainder ("Want more detail?"),
+            # never characters the trim withheld.
+            would_speak = f"{state['spoken']} {sentence}".strip()
+            if state["spoken"] and len(would_speak) > 360:
+                state["blocked"] = True
+                return
+            state["spoken"] = would_speak
+            state["count"] += 1
+            try:
+                emit({"event": "speech", "text": sentence})
+            except Exception:  # noqa: BLE001 — a dead pipe must not kill the turn
+                state["blocked"] = True
+
+        return on_sentence
 
     def _process_turn(
         self,
@@ -320,6 +390,7 @@ class ConverseStore:
         turn_id: int,
         audio_bytes: bytes | None,
         text: str | None,
+        emit: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         timings: dict[str, float] = {"decode": 0.0, "asr": 0.0, "route": 0.0, "provider": 0.0}
         started = time.monotonic()
@@ -331,6 +402,12 @@ class ConverseStore:
 
         if self._is_stale(session, generation):
             return self._stopped_result(session, turn_id, timings, started)
+
+        if emit is not None and lines:
+            try:
+                emit({"event": "heard", "heard": " ".join(lines)})
+            except Exception:  # noqa: BLE001
+                emit = None
 
         if not lines:
             with session.state_lock:
@@ -354,11 +431,20 @@ class ConverseStore:
                 return result
 
         route_started = time.monotonic()
-        session.brain.last_elapsed_ms = 0.0
+        if session.brain is not None:
+            session.brain.last_elapsed_ms = 0.0
+            if emit is not None:
+                session.brain.on_sentence = self._streaming_sentence_guard(
+                    session, generation, emit
+                )
         exchanges: list[dict[str, Any]] = []
-        for line in lines:
-            response = session.text_session.handle(line, context=TOUCH_CONTEXT)
-            exchanges.append({"you": line, **response})
+        try:
+            for line in lines:
+                response = session.text_session.handle(line, context=TOUCH_CONTEXT)
+                exchanges.append({"you": line, **response})
+        finally:
+            if session.brain is not None:
+                session.brain.on_sentence = None
 
         from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
 
@@ -368,7 +454,7 @@ class ConverseStore:
         if offer is not None:
             exchanges.append({"you": "", **offer})
         timings["route"] = (time.monotonic() - route_started) * 1000.0
-        timings["provider"] = session.brain.last_elapsed_ms
+        timings["provider"] = session.brain.last_elapsed_ms if session.brain else 0.0
         timings["route"] = max(0.0, timings["route"] - timings["provider"])
 
         with session.state_lock:

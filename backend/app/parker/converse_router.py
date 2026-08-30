@@ -9,14 +9,22 @@ capture → resolve → stage → confirm pipeline as every other entry point.
 
 from __future__ import annotations
 
+import json
+import queue
+import threading
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+import logging
+
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.parker import realtime as realtime_lane
 from app.parker.converse import ConverseError, ConverseStore
 from app.parker.converse_ui import CONVERSE_PAGE_HTML
+
+logger = logging.getLogger("parker.converse")
 
 router = APIRouter()
 
@@ -57,7 +65,55 @@ def converse_page() -> str:
 def create_converse_session() -> dict[str, Any]:
     """Start one conversation session and warm the shared local model."""
 
-    return converse_store.create_session()
+    created = converse_store.create_session()
+    created["realtime_available"] = realtime_lane.realtime_available()
+    return created
+
+
+@router.websocket("/converse/realtime")
+async def converse_realtime(websocket: WebSocket) -> None:
+    """The live full-duplex lane: browser <-> Parker policy <-> gpt-realtime.
+
+    Parker stays the boundary in the middle — guards, the action pipeline,
+    and the screen mirror run server-side (app/parker/realtime.py).
+    """
+
+    await websocket.accept()
+    if not realtime_lane.realtime_available():
+        await websocket.send_json(
+            {
+                "type": "unavailable",
+                "text": (
+                    "Live conversation needs the family to add an OpenAI key "
+                    "first. The patient loop still works."
+                ),
+            }
+        )
+        await websocket.close()
+        return
+    if not realtime_lane.try_acquire_bridge_slot():
+        # Each bridge holds a billed upstream socket; this is one household.
+        await websocket.send_json(
+            {"type": "unavailable", "text": "A live conversation is already running."}
+        )
+        await websocket.close()
+        return
+    bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
+    try:
+        await bridge.run()
+    except WebSocketDisconnect:
+        pass
+    except Exception:  # noqa: BLE001 — never leak internals to the patient page
+        logger.exception("realtime bridge failed")
+        try:
+            await websocket.send_json(
+                {"type": "notice", "text": "The live line dropped — tap Live conversation to reconnect."}
+            )
+            await websocket.close()
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        realtime_lane.release_bridge_slot()
 
 
 @router.post("/converse/sessions/{session_id}/turns")
@@ -73,6 +129,49 @@ def run_converse_turn(session_id: str, payload: TurnRequest) -> dict[str, Any]:
         )
     except ConverseError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+@router.post("/converse/sessions/{session_id}/turns/stream")
+def run_converse_turn_stream(session_id: str, payload: TurnRequest) -> StreamingResponse:
+    """One turn as newline-delimited JSON events.
+
+    ``{"event": "heard", ...}`` once the transcript exists, then
+    ``{"event": "speech", "text": sentence}`` per guarded sentence as the
+    answer generates (TTS can start after the first one), then
+    ``{"event": "final", ...}`` with the complete turn result — or
+    ``{"event": "error", "status", "detail"}``. The page speaks streamed
+    sentences the moment they arrive; a stopped turn simply ends.
+    """
+
+    events: "queue.Queue[dict[str, Any] | None]" = queue.Queue()
+
+    def work() -> None:
+        try:
+            result = converse_store.run_turn(
+                session_id,
+                turn_id=payload.turn_id,
+                audio_base64=payload.audio_base64,
+                text=payload.text,
+                emit=events.put,
+            )
+            events.put({"event": "final", **result})
+        except ConverseError as exc:
+            events.put({"event": "error", "status": exc.status_code, "detail": exc.detail})
+        except Exception:  # noqa: BLE001 — never leak internals to the patient page
+            events.put({"event": "error", "status": 500, "detail": "Parker hit a snag."})
+        finally:
+            events.put(None)
+
+    threading.Thread(target=work, daemon=True).start()
+
+    def generate():
+        while True:
+            item = events.get()
+            if item is None:
+                break
+            yield json.dumps(item) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @router.post("/converse/sessions/{session_id}/stop")

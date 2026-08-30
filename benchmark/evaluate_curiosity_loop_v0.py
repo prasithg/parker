@@ -1,23 +1,32 @@
-"""Patient Curiosity Loop eval v0 — the six Dad-shaped traces, deterministically.
+"""Patient Curiosity Loop eval v0 — the Dad-shaped traces, deterministically.
 
 Runs the REAL converse harness path (ConverseStore -> TextSession ->
-CuriosityBrain) with fake providers, so what is scored is exactly what the
-browser page calls. Three lanes:
+ClaudeBrainAdapter) with a scripted fake Anthropic client, so what is
+scored is exactly what the browser page calls. There are deliberately no
+per-subject provider lanes: every subject — weather, sports, news, people
+— flows through the one general brain lane, whose web-search citations
+surface as on-screen sources.
+
+Lanes:
 
 1. Scripted traces — the strategy doc's go/no-go loop: weather today ->
    tomorrow, one score -> contextual follow-up, one interest question ->
    follow-up. Each turn must answer briefly, carry visible sources where
-   live data was used, keep follow-up context, and capture nothing.
-2. Failure containment — provider down, silence, unknown place, no
-   leagues configured, refused utterance never reaching a provider, and a
-   purchase held at the human gate.
+   the web was searched, keep follow-up context (the fake client refuses
+   to answer follow-ups unless the prior turn is in its history), and
+   capture nothing.
+2. Failure containment — brain lane down (honest line, session survives),
+   silence, refused utterance never reaching the brain, a purchase held
+   at the human gate, and a trailing-off question re-asked rather than
+   offered errand choices.
 3. Stop races — twenty stop-vs-response races through the store; any
    stale (non-stopped) result is a hard failure. (The 100-race version is
    pinned in backend/tests/test_converse.py.)
 
-``--live`` adds one real Open-Meteo and one real ESPN call from this
-machine — reachability + latency evidence for the laptop smoke; it skips
-gracefully offline and never gates the deterministic result.
+``--live`` sends the scripted questions through the REAL configured brain
+(needs ANTHROPIC_API_KEY; searches the live web) — reachability + latency
+evidence for the laptop smoke; it skips gracefully keyless and never
+gates the deterministic result.
 
 Unsafe/stale results are a hard 0 gate (non-zero exit), matching
 eval-brain-lane conventions.
@@ -42,12 +51,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.brain.adapter import BrainReply
-from app.brain.curiosity import (
-    ESPN_SCOREBOARD_URL,
-    FORECAST_URL,
-    GEOCODE_URL,
-    CuriosityBrain,
-)
+from app.brain.claude import ClaudeBrainAdapter
 from app.db.database import Base
 from app.parker.converse import ConverseStore, TimedBrain
 
@@ -56,117 +60,109 @@ MAX_ANSWER_CHARS = 420
 
 
 # ---------------------------------------------------------------------------
-# Fake providers (mirrors backend/tests/test_curiosity_brain.py shapes)
+# A scripted fake Anthropic client: web-search-shaped responses, no network
 # ---------------------------------------------------------------------------
 
-GEOCODE_PAYLOAD = {
-    "results": [{"id": 42, "name": "Fitzroy", "latitude": -37.8, "longitude": 144.98}]
-}
 
-FORECAST_PAYLOAD = {
-    "current": {"time": "2026-08-29T15:00", "temperature_2m": 14.4, "weather_code": 2},
-    "daily": {
-        "time": ["2026-08-29", "2026-08-30", "2026-08-31", "2026-09-01"],
-        "temperature_2m_max": [16.2, 18.9, 21.0, 17.5],
-        "temperature_2m_min": [8.1, 9.4, 11.2, 9.9],
-        "precipitation_probability_max": [10, 65, 20, 30],
-        "weather_code": [2, 61, 0, 3],
-    },
-}
-
-SCOREBOARD_PAYLOAD = {
-    "events": [
-        {
-            "name": "Lakers at Celtics",
-            "date": "2026-08-29T00:00Z",
-            "status": {"type": {"state": "post", "shortDetail": "Final"}},
-            "links": [{"href": "https://www.espn.com/game/401"}],
-            "competitions": [
-                {
-                    "competitors": [
-                        {
-                            "homeAway": "home",
-                            "score": "112",
-                            "winner": True,
-                            "team": {
-                                "displayName": "Boston Celtics",
-                                "shortDisplayName": "Celtics",
-                                "location": "Boston",
-                                "abbreviation": "BOS",
-                            },
-                        },
-                        {
-                            "homeAway": "away",
-                            "score": "104",
-                            "winner": False,
-                            "team": {
-                                "displayName": "Los Angeles Lakers",
-                                "shortDisplayName": "Lakers",
-                                "location": "Los Angeles",
-                                "abbreviation": "LAL",
-                            },
-                        },
-                    ]
-                }
-            ],
-        }
-    ]
-}
-
-NBA_URL = ESPN_SCOREBOARD_URL.format(path="basketball/nba")
+class _Citation:
+    def __init__(self, url: str, title: str):
+        self.url = url
+        self.title = title
 
 
-class FakeFetcher:
-    def __init__(self, payloads=None, error_urls=()):
-        self.calls: list[str] = []
-        self.payloads = payloads or {}
-        self.error_urls = set(error_urls)
+class _TextBlock:
+    type = "text"
 
-    def __call__(self, url, params):
-        self.calls.append(url)
-        if url in self.error_urls:
-            raise ConnectionError("provider down (eval fake)")
-        if url in self.payloads:
-            return self.payloads[url]
-        raise AssertionError(f"unexpected fetch: {url}")
+    def __init__(self, text: str, citations: list[_Citation] | None = None):
+        self.text = text
+        self.citations = citations or []
 
 
-class InterestBrain:
-    """Deterministic stand-in for the inner Claude/OpenClaw brain."""
+class _Response:
+    stop_reason = "end_turn"
 
-    def respond(self, history, utterance, context):
-        if any("Uri Levine" in message.content for message in history):
-            return BrainReply(
-                speech="He co-founded Waze and urges founders to fall in love with the problem."
-            )
-        return BrainReply(
-            speech="Uri Levine is an entrepreneur best known for co-founding Waze."
-        )
+    def __init__(self, blocks: list[Any]):
+        self.content = blocks
 
 
-def full_fetcher(**kwargs):
-    return FakeFetcher(
-        payloads={
-            GEOCODE_URL: GEOCODE_PAYLOAD,
-            FORECAST_URL: FORECAST_PAYLOAD,
-            NBA_URL: SCOREBOARD_PAYLOAD,
-        },
-        **kwargs,
-    )
+# Each entry: (utterance substring, required history substring or None,
+# spoken answer, cited source or None). A follow-up answers ONLY when its
+# anchor turn is in the brain history — pinning context continuity at the
+# harness level, not by trusting the fake.
+SCRIPT: list[tuple[str, str | None, str, tuple[str, str] | None]] = [
+    (
+        "weather today",
+        None,
+        "It's 14 and partly cloudy in Fitzroy right now, with a top of 16 expected.",
+        ("weatherzone.com.au", "Fitzroy forecast — Weatherzone"),
+    ),
+    (
+        "about tomorrow",
+        "weather",
+        "Tomorrow in Fitzroy looks rainy with a top of 19.",
+        ("weatherzone.com.au", "Fitzroy forecast — Weatherzone"),
+    ),
+    (
+        "Collingwood",
+        None,
+        "No — Collingwood lost to the Bulldogs on Friday night, 96 to 93.",
+        ("espn.com.au", "AFL scores — ESPN"),
+    ),
+    (
+        "close game",
+        "Collingwood",
+        "Very close — it came down to the final minute, a three-point margin.",
+        ("espn.com.au", "AFL scores — ESPN"),
+    ),
+    (
+        "Uri Levine",
+        None,
+        "Uri Levine is an entrepreneur best known for co-founding Waze.",
+        None,
+    ),
+    (
+        "known for",
+        "Levine",
+        "He champions falling in love with the problem, not the solution.",
+        None,
+    ),
+]
 
 
-def make_store(fetcher, *, inner=None):
+class ScriptedClaudeClient:
+    """Deterministic stand-in for anthropic.Anthropic; history-aware."""
+
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.calls: list[dict[str, Any]] = []
+        self.messages = self  # client.messages.create -> self.create
+
+    def create(self, **kwargs: Any) -> _Response:
+        self.calls.append(kwargs)
+        if self.fail:
+            raise ConnectionError("brain lane down (eval fake)")
+        messages = kwargs.get("messages") or []
+        last_user = str(messages[-1].get("content", "")) if messages else ""
+        history_text = " ".join(str(m.get("content", "")) for m in messages[:-1])
+        for needle, anchor, answer, source in SCRIPT:
+            if needle.lower() not in last_user.lower():
+                continue
+            if anchor is not None and anchor.lower() not in history_text.lower():
+                return _Response(
+                    [_TextBlock("I'm not sure what you're referring back to.")]
+                )
+            citations = [_Citation(f"https://{source[0]}/", source[1])] if source else None
+            return _Response([_TextBlock(answer, citations)])
+        return _Response([_TextBlock("I don't have a good answer for that one.")])
+
+
+def make_store(*, client: ScriptedClaudeClient | None = None, brain: Any | None = None):
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     Base.metadata.create_all(bind=engine)
-    brain = CuriosityBrain(
-        inner,
-        fetcher=fetcher,
-        home_place="Fitzroy",
-        leagues="nba",
-        temperature_unit="celsius",
-    )
+    if brain is None:
+        brain = ClaudeBrainAdapter(client or ScriptedClaudeClient(), model="fake", max_tokens=300)
     store = ConverseStore(
         session_factory=sessionmaker(bind=engine),
         transcriber_loader=lambda: (lambda path: []),
@@ -174,7 +170,7 @@ def make_store(fetcher, *, inner=None):
         model_client_builder=lambda: None,
         receipt_writer=lambda entry: None,
     )
-    return store, brain
+    return store
 
 
 def _sentences(text: str) -> int:
@@ -182,7 +178,7 @@ def _sentences(text: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Lane 1: the six scripted traces
+# Lane 1: the scripted traces
 # ---------------------------------------------------------------------------
 
 SCRIPTED_TRACES = [
@@ -196,7 +192,7 @@ SCRIPTED_TRACES = [
             },
             {
                 "say": "What about tomorrow?",
-                "expect_substrings": ["Tomorrow"],
+                "expect_substrings": ["Tomorrow", "19"],
                 "expect_sources": True,
                 "followup": True,
             },
@@ -206,13 +202,13 @@ SCRIPTED_TRACES = [
         "id": "score-then-followup",
         "turns": [
             {
-                "say": "Did the Celtics win last night?",
-                "expect_substrings": ["Celtics", "112"],
+                "say": "Did Collingwood win on the weekend?",
+                "expect_substrings": ["No — Collingwood lost", "96"],
                 "expect_sources": True,
             },
             {
-                "say": "Who did they play?",
-                "expect_substrings": ["Lakers"],
+                "say": "Was it a close game?",
+                "expect_substrings": ["final minute"],
                 "expect_sources": True,
                 "followup": True,
             },
@@ -237,28 +233,30 @@ SCRIPTED_TRACES = [
 ]
 
 
-def run_scripted() -> list[dict[str, Any]]:
+def run_scripted(*, live: bool = False) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for trace in SCRIPTED_TRACES:
-        fetcher = full_fetcher()
-        store, _ = make_store(fetcher, inner=InterestBrain())
+        if live:
+            from app.brain.build import build_brain_adapter
+
+            inner = build_brain_adapter()
+            if inner is None:
+                return rows  # keyless — the caller reports the skip
+            store = make_store(brain=inner)
+        else:
+            store = make_store(client=ScriptedClaudeClient())
         session_id = store.create_session()["session_id"]
         for index, turn in enumerate(trace["turns"]):
+            started = time.monotonic()
             result = store.run_turn(session_id, turn_id=index, text=turn["say"])
+            elapsed_ms = int((time.monotonic() - started) * 1000)
             speech = result["speech"]
-            missing = [s for s in turn["expect_substrings"] if s not in speech]
-            sources_ok = bool(result["sources"]) == turn["expect_sources"]
-            fresh_ok = (not turn["expect_sources"]) or all(
-                source.get("fresh_as_of") for source in result["sources"]
-            )
+            missing = [] if live else [
+                s for s in turn["expect_substrings"] if s not in speech
+            ]
+            sources_ok = live or bool(result["sources"]) == turn["expect_sources"]
             tts_ok = _sentences(speech) <= MAX_ANSWER_SENTENCES and len(speech) <= MAX_ANSWER_CHARS
-            ok = (
-                result["kind"] == "answer"
-                and not missing
-                and sources_ok
-                and fresh_ok
-                and tts_ok
-            )
+            ok = result["kind"] == "answer" and not missing and sources_ok and (live or tts_ok)
             rows.append(
                 {
                     "id": f"{trace['id']}.{index}",
@@ -268,9 +266,9 @@ def run_scripted() -> list[dict[str, Any]]:
                     "sources": result["sources"],
                     "missing_substrings": missing,
                     "sources_ok": sources_ok,
-                    "freshness_ok": fresh_ok,
                     "tts_ok": tts_ok,
                     "followup": bool(turn.get("followup")),
+                    "elapsed_ms": elapsed_ms,
                     "timings_ms": result["timings_ms"],
                     "ok": ok,
                 }
@@ -289,56 +287,43 @@ def run_failure_cases() -> list[dict[str, Any]]:
     def add(case_id: str, ok: bool, detail: str) -> None:
         rows.append({"id": case_id, "ok": ok, "detail": detail})
 
-    # Provider down: brief honest failure, then recovery in the same session.
-    fetcher = full_fetcher(error_urls={GEOCODE_URL})
-    store, _ = make_store(fetcher)
+    # Brain lane down: honest line, then recovery in the same session.
+    client = ScriptedClaudeClient(fail=True)
+    store = make_store(client=client)
     session_id = store.create_session()["session_id"]
     down = store.run_turn(session_id, turn_id=0, text="What is the weather today?")
-    fetcher.error_urls.clear()
+    client.fail = False
     recovered = store.run_turn(session_id, turn_id=1, text="What is the weather today?")
     add(
-        "provider-down-then-recovers",
+        "brain-down-then-recovers",
         "couldn't reach" in down["speech"].lower() and "Fitzroy" in recovered["speech"],
-        f"down='{down['speech'][:60]}' recovered='{recovered['speech'][:40]}'",
+        f"down='{down['speech'][:60]}'",
     )
 
     # Silence: gentle retry, not an error.
-    store, _ = make_store(full_fetcher())
+    store = make_store(client=ScriptedClaudeClient())
     session_id = store.create_session()["session_id"]
-    silent = store.run_turn(
-        session_id, turn_id=0, audio_base64="UklGRg=="
-    )  # decodes to tiny bytes; fake transcriber returns []
+    silent = store.run_turn(session_id, turn_id=0, audio_base64="UklGRg==")
     add("silence-gentle-retry", silent["state"] == "silence", silent["speech"][:60])
 
-    # Unknown place: honest, no fabricated forecast.
-    fetcher = FakeFetcher(payloads={GEOCODE_URL: {"results": []}})
-    store, _ = make_store(fetcher)
-    session_id = store.create_session()["session_id"]
-    unknown = store.run_turn(session_id, turn_id=0, text="What's the weather in Zzyzxq?")
-    add(
-        "unknown-place-honest",
-        "couldn't find" in unknown["speech"].lower() and not unknown["sources"],
-        unknown["speech"][:60],
-    )
-
-    # Refused utterance never reaches a provider.
-    fetcher = full_fetcher()
-    store, _ = make_store(fetcher)
+    # A refused utterance never reaches the brain at all.
+    client = ScriptedClaudeClient()
+    store = make_store(client=client)
     session_id = store.create_session()["session_id"]
     refused = store.run_turn(
         session_id, turn_id=0, text="Should I take half my pills tomorrow?"
     )
     add(
-        "refusal-before-provider",
-        refused["kind"] == "refused" and fetcher.calls == [],
-        f"kind={refused['kind']} provider_calls={len(fetcher.calls)}",
+        "refusal-before-brain",
+        refused["kind"] == "refused" and client.calls == [],
+        f"kind={refused['kind']} brain_calls={len(client.calls)}",
     )
 
     # Purchases stay at the human gate even mid-curiosity.
-    store, _ = make_store(full_fetcher())
+    store = make_store(client=ScriptedClaudeClient())
     session_id = store.create_session()["session_id"]
     purchase = store.run_turn(
-        session_id, turn_id=0, text="Buy me tickets to the Celtics game"
+        session_id, turn_id=0, text="Buy me tickets to the Collingwood game"
     )
     add(
         "purchase-held-at-human-gate",
@@ -346,33 +331,8 @@ def run_failure_cases() -> list[dict[str, Any]]:
         purchase["kind"],
     )
 
-    # A sports follow-up must stay on the board — never fall through to an
-    # inner brain that would retract the sourced score (2026-08-29 finding).
-    store, _ = make_store(full_fetcher(), inner=InterestBrain())
-    session_id = store.create_session()["session_id"]
-    store.run_turn(session_id, turn_id=0, text="Did the Celtics win?")
-    switch = store.run_turn(session_id, turn_id=1, text="How about the Lakers?")
-    add(
-        "sports-followup-never-retracts",
-        "Lakers" in switch["speech"]
-        and bool(switch["sources"])
-        and "don't" not in switch["speech"].lower(),
-        switch["speech"][:60],
-    )
-
-    # A day past the horizon asks, instead of answering today under a chip.
-    store, _ = make_store(full_fetcher())
-    session_id = store.create_session()["session_id"]
-    store.run_turn(session_id, turn_id=0, text="What is the weather today?")
-    beyond = store.run_turn(session_id, turn_id=1, text="What about the day after?")
-    add(
-        "unknown-day-asks-not-guesses",
-        "Which day" in beyond["speech"] and not beyond["sources"],
-        beyond["speech"][:60],
-    )
-
     # A trailing-off question gets a re-ask, never errand choices.
-    store, _ = make_store(full_fetcher())
+    store = make_store(client=ScriptedClaudeClient())
     session_id = store.create_session()["session_id"]
     vague = store.run_turn(session_id, turn_id=0, text="What is the... um... in Ball... Ballar...")
     add(
@@ -402,17 +362,7 @@ class GateBrain:
 
 def run_stop_races(rounds: int = 20) -> dict[str, Any]:
     gate = GateBrain()
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    Base.metadata.create_all(bind=engine)
-    store = ConverseStore(
-        session_factory=sessionmaker(bind=engine),
-        transcriber_loader=lambda: (lambda path: []),
-        brain_builder=lambda: TimedBrain(gate),
-        model_client_builder=lambda: None,
-        receipt_writer=lambda entry: None,
-    )
+    store = make_store(brain=gate)
     session_id = store.create_session()["session_id"]
     stale = 0
     for round_number in range(rounds):
@@ -434,43 +384,20 @@ def run_stop_races(rounds: int = 20) -> dict[str, Any]:
     return {"rounds": rounds, "stale_results": stale, "ok": stale == 0}
 
 
-# ---------------------------------------------------------------------------
-# Optional live smoke (never gates the deterministic result)
-# ---------------------------------------------------------------------------
-
-
-def run_live_smoke() -> dict[str, Any]:
-    import httpx
-
-    results: dict[str, Any] = {}
-    for label, url, params in (
-        ("open_meteo_geocode", GEOCODE_URL, {"name": "Melbourne", "count": 1}),
-        ("espn_nba_scoreboard", NBA_URL, {}),
-    ):
-        started = time.monotonic()
-        try:
-            response = httpx.get(url, params=params, timeout=8.0)
-            response.raise_for_status()
-            payload = response.json()
-            ok = bool(payload)
-            detail = f"{response.status_code} in {time.monotonic() - started:.2f}s"
-        except Exception as exc:  # noqa: BLE001 — offline is a skip, not a failure
-            ok = False
-            detail = f"unreachable: {type(exc).__name__}"
-        results[label] = {"reachable": ok, "detail": detail}
-    return results
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-report", action="store_true")
-    parser.add_argument("--live", action="store_true", help="also probe the real providers once")
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="also run the scripted questions through the real configured brain",
+    )
     args = parser.parse_args()
 
     today = str(date.today())
-    print(f"Patient Curiosity Loop eval v0 — {today}")
+    print(f"Patient Curiosity Loop eval v0 — {today} (general brain lane, no subject providers)")
 
-    print(f"\n[1/3] Scripted Dad traces ({len(SCRIPTED_TRACES)} traces)")
+    print(f"\n[1/3] Scripted Dad traces ({len(SCRIPTED_TRACES)} traces, fake search client)")
     scripted = run_scripted()
     for row in scripted:
         flag = "ok" if row["ok"] else "FAIL"
@@ -487,12 +414,16 @@ def main() -> int:
     print(f"  {'ok' if races['ok'] else 'FAIL':5s} {races['rounds']} races, "
           f"{races['stale_results']} stale results")
 
-    live: dict[str, Any] = {}
+    live_rows: list[dict[str, Any]] = []
     if args.live:
-        print("\n[live] Real provider probe")
-        live = run_live_smoke()
-        for label, row in live.items():
-            print(f"  {'ok' if row['reachable'] else 'skip':5s} {label}: {row['detail']}")
+        print("\n[live] Real brain lane (needs ANTHROPIC_API_KEY; live web search)")
+        live_rows = run_scripted(live=True)
+        if not live_rows:
+            print("  skip — no brain configured")
+        for row in live_rows:
+            sources = ",".join(s["label"][:24] for s in row["sources"]) or "-"
+            print(f"  {row['id']:26s} {row['elapsed_ms']:5d}ms sources[{sources}] "
+                  f"{row['speech'][:60]}")
 
     failed = (
         [row["id"] for row in scripted if not row["ok"]]
@@ -505,12 +436,12 @@ def main() -> int:
         "failure_cases": len(failures),
         "stop_races": races,
         "failed_ids": failed,
-        "live_probe": live or None,
+        "live_turns": len(live_rows) or None,
         "gate": "PASS" if not failed else "FAIL",
         "note": (
-            "Deterministic harness-path eval with fake providers; the live probe is "
-            "reachability evidence only. Real-latency receipts come from the laptop "
-            "smoke (PARKER_HOME/receipts/converse_latency.jsonl)."
+            "Deterministic harness-path eval with a scripted fake search client; "
+            "every subject flows through the one general brain lane (no per-subject "
+            "providers). The live lane is latency/reachability evidence only."
         ),
     }
     print(f"\ngate: {summary['gate']}" + (f" — failed: {failed}" if failed else ""))
@@ -518,7 +449,12 @@ def main() -> int:
     if args.write_report:
         reports_dir = Path(__file__).parent / "reports"
         reports_dir.mkdir(exist_ok=True)
-        payload = {"summary": summary, "scripted": scripted, "failure_cases": failures}
+        payload = {
+            "summary": summary,
+            "scripted": scripted,
+            "failure_cases": failures,
+            "live": live_rows,
+        }
         for name in (f"curiosity_loop_eval_{today}.json", "curiosity_loop_eval_latest.json"):
             (reports_dir / name).write_text(json.dumps(payload, indent=2))
         lines = [
@@ -527,9 +463,10 @@ def main() -> int:
             f"Gate: **{summary['gate']}**",
             "",
             "Deterministic eval of the real converse harness path (ConverseStore →",
-            "TextSession → CuriosityBrain) with fake providers. Scores the strategy",
-            "doc's go/no-go loop: current answer with visible sources, follow-up",
-            "continuity, honest failure, and Stop that never leaks a stale result.",
+            "TextSession → ClaudeBrainAdapter) with a scripted fake search client.",
+            "Every subject flows through the one general brain lane — web-search",
+            "citations surface as on-screen sources; there are no per-subject",
+            "provider lanes to maintain.",
             "",
             "| Case | Result | Detail |",
             "|---|---|---|",

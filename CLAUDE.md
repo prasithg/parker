@@ -12,7 +12,7 @@ North Star: successful interactions without human assistance — the user prefer
 
 Voice is the main interface and the first wedge. Parker's broader thesis is variable-speech understanding, repair under uncertainty, safe action, follow-through, family coordination, per-user learning from consented local usage data, and eval-backed usefulness. The project's trajectory is public: attract other families and developers so more deployment and more usage improve the shared harness, evals, and skills — never a central model trained on anyone's voice without consent.
 
-Live-loop direction: local-first ASR stays the default; families may opt into frontier realtime speech models (OpenAI Realtime / gpt-realtime family) for the conversational loop as an explicit administrator choice.
+Live-loop direction (Pras, 2026-08-30): best experience wins — send whatever data a lane needs (cloud audio included). Local-first ASR is a nice-to-have fallback, not a rule; frontier realtime speech models (OpenAI Realtime / gpt-realtime family) are a first-class lane, family-administered like every other setting.
 
 Core loop:
 
