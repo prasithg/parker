@@ -9,10 +9,13 @@ capture → resolve → stage → confirm pipeline as every other entry point.
 
 from __future__ import annotations
 
+import json
+import queue
+import threading
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.parker.converse import ConverseError, ConverseStore
@@ -73,6 +76,49 @@ def run_converse_turn(session_id: str, payload: TurnRequest) -> dict[str, Any]:
         )
     except ConverseError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+@router.post("/converse/sessions/{session_id}/turns/stream")
+def run_converse_turn_stream(session_id: str, payload: TurnRequest) -> StreamingResponse:
+    """One turn as newline-delimited JSON events.
+
+    ``{"event": "heard", ...}`` once the transcript exists, then
+    ``{"event": "speech", "text": sentence}`` per guarded sentence as the
+    answer generates (TTS can start after the first one), then
+    ``{"event": "final", ...}`` with the complete turn result — or
+    ``{"event": "error", "status", "detail"}``. The page speaks streamed
+    sentences the moment they arrive; a stopped turn simply ends.
+    """
+
+    events: "queue.Queue[dict[str, Any] | None]" = queue.Queue()
+
+    def work() -> None:
+        try:
+            result = converse_store.run_turn(
+                session_id,
+                turn_id=payload.turn_id,
+                audio_base64=payload.audio_base64,
+                text=payload.text,
+                emit=events.put,
+            )
+            events.put({"event": "final", **result})
+        except ConverseError as exc:
+            events.put({"event": "error", "status": exc.status_code, "detail": exc.detail})
+        except Exception:  # noqa: BLE001 — never leak internals to the patient page
+            events.put({"event": "error", "status": 500, "detail": "Parker hit a snag."})
+        finally:
+            events.put(None)
+
+    threading.Thread(target=work, daemon=True).start()
+
+    def generate():
+        while True:
+            item = events.get()
+            if item is None:
+                break
+            yield json.dumps(item) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @router.post("/converse/sessions/{session_id}/stop")

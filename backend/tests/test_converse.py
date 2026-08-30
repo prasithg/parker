@@ -657,3 +657,138 @@ def test_turn_racing_end_session_gets_a_404_not_a_closed_db(db):
     # Either it ran before the drop (fine) or it was refused with 404 —
     # never an exception from a closed session.
     assert kind == "late" or value == 404
+
+
+# ---------------------------------------------------------------------------
+# Sentence streaming (rung 1): events, guards, caps, stop
+# ---------------------------------------------------------------------------
+
+
+class StreamingBrain:
+    """Emits scripted sentences through respond_stream, like the Claude adapter."""
+
+    def __init__(self, sentences, sources=()):
+        self.sentences = list(sentences)
+        self.sources = tuple(sources)
+
+    def respond(self, history, utterance, context):
+        return BrainReply(speech=" ".join(self.sentences), sources=self.sources)
+
+    def respond_stream(self, history, utterance, context, on_sentence):
+        for sentence in self.sentences:
+            on_sentence(sentence)
+        return self.respond(history, utterance, context)
+
+
+def test_streaming_turn_emits_heard_then_guarded_sentences_then_matches_final(db):
+    brain = StreamingBrain(["It's 14 and clear.", "Tomorrow looks rainy."])
+    store = make_store(db, brain=brain)
+    session_id = store.create_session()["session_id"]
+
+    events = []
+    result = store.run_turn(
+        session_id, turn_id=1, text="What is the weather today?", emit=events.append
+    )
+
+    assert events[0] == {"event": "heard", "heard": "What is the weather today?"}
+    speech_events = [e["text"] for e in events if e["event"] == "speech"]
+    assert speech_events == ["It's 14 and clear.", "Tomorrow looks rainy."]
+    assert result["kind"] == "answer"
+    assert result["speech"] == "It's 14 and clear. Tomorrow looks rainy."
+
+
+def test_streamed_sentences_stop_at_the_tts_trim_cap(db):
+    brain = StreamingBrain([f"Sentence number {i}." for i in range(1, 7)])
+    store = make_store(db, brain=brain)
+    session_id = store.create_session()["session_id"]
+
+    events = []
+    store.run_turn(session_id, turn_id=1, text="What day is it?", emit=events.append)
+
+    speech_events = [e for e in events if e["event"] == "speech"]
+    assert len(speech_events) == 3  # mirrors trim_for_speech's 3-sentence cap
+
+
+def test_medical_violation_assembled_across_sentences_is_never_streamed(db):
+    brain = StreamingBrain(
+        ["Here is a thought.", "You should take an extra 50 mg before lunch."]
+    )
+    store = make_store(db, brain=brain)
+    session_id = store.create_session()["session_id"]
+
+    events = []
+    result = store.run_turn(
+        session_id, turn_id=1, text="What do you think?", emit=events.append
+    )
+
+    speech_events = [e["text"] for e in events if e["event"] == "speech"]
+    assert speech_events == ["Here is a thought."]  # the violating tail never streams
+    assert result["kind"] == "refused"  # the final guard replaces the whole reply
+    assert "doctor" in result["speech"]
+
+
+def test_stop_mid_stream_silences_the_remaining_sentences(db):
+    store_holder = {}
+    emitted = []
+
+    class StopAfterFirst:
+        def respond(self, history, utterance, context):
+            return BrainReply(speech="one. two.")
+
+        def respond_stream(self, history, utterance, context, on_sentence):
+            on_sentence("Sentence one.")
+            store_holder["store"].stop(store_holder["sid"])  # Stop lands mid-answer
+            on_sentence("Sentence two.")
+            return self.respond(history, utterance, context)
+
+    store = make_store(db, brain=StopAfterFirst())
+    session_id = store.create_session()["session_id"]
+    store_holder.update(store=store, sid=session_id)
+
+    result = store.run_turn(
+        session_id, turn_id=1, text="What day is it?", emit=emitted.append
+    )
+
+    speech_events = [e["text"] for e in emitted if e["event"] == "speech"]
+    assert speech_events == ["Sentence one."]  # nothing after Stop
+    assert result["state"] == "stopped"
+
+
+def test_http_stream_endpoint_yields_ndjson_events(db, http_store):
+    session_id = client.post("/parker/converse/sessions").json()["session_id"]
+    with client.stream(
+        "POST",
+        f"/parker/converse/sessions/{session_id}/turns/stream",
+        json={"turn_id": 1, "text": "Remind me to water the plants"},
+    ) as response:
+        assert response.status_code == 200
+        lines = [line for line in response.iter_lines() if line]
+    events = [__import__("json").loads(line) for line in lines]
+    assert events[0]["event"] == "heard"
+    assert events[-1]["event"] == "final"
+    assert events[-1]["kind"] == "confirm_offer"
+
+
+def test_http_stream_endpoint_reports_errors_as_events(db, http_store):
+    with client.stream(
+        "POST",
+        "/parker/converse/sessions/nope/turns/stream",
+        json={"turn_id": 1, "text": "hi"},
+    ) as response:
+        lines = [line for line in response.iter_lines() if line]
+    events = [__import__("json").loads(line) for line in lines]
+    assert events[-1]["event"] == "error"
+    assert events[-1]["status"] == 404
+
+
+def test_converse_page_carries_the_presence_layer(db):
+    """Thinking/talking presence: orb, earcons, streaming reader, honest cue."""
+
+    html = client.get("/parker/converse").text
+    assert 'id="orb"' in html
+    assert "earcon(" in html            # audible tap confirmation
+    assert "turns/stream" in html       # sentence-streaming endpoint
+    assert "Let me check." in html      # truthful latency cue, never a fake answer
+    assert "prefers-reduced-motion" in html
+    assert "onboundary" in html         # word-pulse while talking
+    assert "Thinking…" in html and "Parker is talking" in html

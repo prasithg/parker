@@ -296,7 +296,18 @@ class ConverseStore:
         turn_id: int,
         audio_base64: str | None = None,
         text: str | None = None,
+        emit: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        """Run one turn; ``emit`` (optional) receives progressive events.
+
+        Events, in order: ``{"event": "heard", ...}`` once the transcript
+        exists, then zero or more ``{"event": "speech", "text": sentence}``
+        as the brain's answer generates — each sentence pre-screened by the
+        same medical-boundary detector the final guard uses, capped at the
+        TTS trim length, and dropped once the generation goes stale. The
+        complete guard-screened result is still the return value.
+        """
+
         session = self._require(session_id)
         if (audio_base64 is None) == (text is None):
             raise ConverseError(422, "Provide exactly one of audio_base64 or text")
@@ -319,9 +330,48 @@ class ConverseStore:
                 turn_id=turn_id,
                 audio_bytes=audio_bytes,
                 text=text,
+                emit=emit,
             )
         self._write_turn_receipt(session, result)
         return result
+
+    def _streaming_sentence_guard(
+        self,
+        session: ConverseSession,
+        generation: int,
+        emit: Callable[[dict[str, Any]], None],
+    ) -> Callable[[str], None]:
+        """Per-sentence gate for streamed speech.
+
+        Applies the same medical-boundary detector as the final guard to
+        the ACCUMULATED text (so a violation assembled across sentences
+        still trips), enforces the TTS trim cap, and stops emitting the
+        moment the generation goes stale. The final whole-reply guard still
+        runs afterwards and remains authoritative.
+        """
+
+        from app.brain.guard import speech_violates_medical_boundary
+
+        state = {"accumulated": "", "count": 0, "blocked": False}
+
+        def on_sentence(sentence: str) -> None:
+            if state["blocked"] or state["count"] >= 3:
+                return
+            with session.state_lock:
+                if session.generation != generation:
+                    state["blocked"] = True
+                    return
+            state["accumulated"] = f"{state['accumulated']} {sentence}".strip()
+            if speech_violates_medical_boundary(state["accumulated"]):
+                state["blocked"] = True  # the final guard speaks the redirect
+                return
+            state["count"] += 1
+            try:
+                emit({"event": "speech", "text": sentence})
+            except Exception:  # noqa: BLE001 — a dead pipe must not kill the turn
+                state["blocked"] = True
+
+        return on_sentence
 
     def _process_turn(
         self,
@@ -331,6 +381,7 @@ class ConverseStore:
         turn_id: int,
         audio_bytes: bytes | None,
         text: str | None,
+        emit: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         timings: dict[str, float] = {"decode": 0.0, "asr": 0.0, "route": 0.0, "provider": 0.0}
         started = time.monotonic()
@@ -342,6 +393,12 @@ class ConverseStore:
 
         if self._is_stale(session, generation):
             return self._stopped_result(session, turn_id, timings, started)
+
+        if emit is not None and lines:
+            try:
+                emit({"event": "heard", "heard": " ".join(lines)})
+            except Exception:  # noqa: BLE001
+                emit = None
 
         if not lines:
             with session.state_lock:
@@ -367,10 +424,18 @@ class ConverseStore:
         route_started = time.monotonic()
         if session.brain is not None:
             session.brain.last_elapsed_ms = 0.0
+            if emit is not None:
+                session.brain.on_sentence = self._streaming_sentence_guard(
+                    session, generation, emit
+                )
         exchanges: list[dict[str, Any]] = []
-        for line in lines:
-            response = session.text_session.handle(line, context=TOUCH_CONTEXT)
-            exchanges.append({"you": line, **response})
+        try:
+            for line in lines:
+                response = session.text_session.handle(line, context=TOUCH_CONTEXT)
+                exchanges.append({"you": line, **response})
+        finally:
+            if session.brain is not None:
+                session.brain.on_sentence = None
 
         from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
 
