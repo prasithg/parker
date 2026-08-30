@@ -159,6 +159,22 @@ class OpenClawGateway:
             raise GatewayError("OpenClaw gateway skill invocation reply was malformed")
         return data
 
+    def current_context(self) -> list[str]:
+        """Ambient household context lines from the family's agent harness.
+
+        Bridge contract like the skill endpoints: ``GET /parker/v1/context``
+        returns ``{"lines": ["He paused a YouTube video about ...", ...]}``.
+        The harness (OpenClaw/Hermes) decides what it can see — calendar,
+        what's playing, room activity. Absent/empty/malformed replies are
+        simply no context; callers must treat every line as untrusted data.
+        """
+
+        data = self._request("GET", "/parker/v1/context")
+        lines = data.get("lines") if isinstance(data, dict) else None
+        if not isinstance(lines, list):
+            return []
+        return [str(line).strip() for line in lines if str(line).strip()]
+
 
 def _proposal_from_dict(data: dict[str, Any]) -> ProposedAction:
     return ProposedAction(

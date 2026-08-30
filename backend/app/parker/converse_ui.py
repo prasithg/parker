@@ -328,16 +328,10 @@ function appendSpeechText(text) {
   $('speech').textContent = current ? current + ' ' + text : text;
 }
 
-function renderResult(data) {
-  renderHeard(data.heard);
-  if (data.speech) {
-    $('answer-block').hidden = false;
-    $('speech').textContent = data.speech;
-  }
-
+function renderSources(list) {
   const sources = $('sources');
   sources.textContent = '';
-  for (const source of data.sources || []) {
+  for (const source of list || []) {
     const chip = document.createElement('span');
     chip.className = 'source-chip';
     chip.textContent = source.label;
@@ -350,7 +344,17 @@ function renderResult(data) {
     if (source.url) chip.title = source.url; // hover only — never spoken
     sources.appendChild(chip);
   }
-  sources.hidden = !(data.sources || []).length;
+  sources.hidden = !(list || []).length;
+}
+
+function renderResult(data) {
+  renderHeard(data.heard);
+  if (data.speech) {
+    $('answer-block').hidden = false;
+    $('speech').textContent = data.speech;
+  }
+
+  renderSources(data.sources);
 
   const wrap = $('choices');
   wrap.textContent = '';
@@ -846,6 +850,15 @@ function handleLiveEvent(event) {
     renderHeard(event.text);
     $('speech').textContent = '';
     $('answer-block').hidden = true;
+    $('sources').hidden = true; // last turn's evidence must not linger
+  } else if (event.type === 'sources') {
+    renderSources(event.items);
+  } else if (event.type === 'closing') {
+    // Parker said goodbye; let the scheduled audio finish before hanging up.
+    const remaining = live.playCtx
+      ? Math.max(0, (live.nextTime - live.playCtx.currentTime) * 1000)
+      : 0;
+    setTimeout(() => { if (liveActive()) endLive('The call wrapped up.'); }, remaining + 300);
   } else if (event.type === 'assistant_transcript_delta') {
     appendSpeechText(event.text);
   } else if (event.type === 'clear') {

@@ -42,6 +42,24 @@ def override_get_db(db):
 
 
 @pytest.fixture(autouse=True)
+def keyless_settings(monkeypatch):
+    """The pytest suite is keyless by design (docs/brain-adapters.md).
+
+    A developer's live keys in backend/.env must never leak real API calls
+    into tests — found live when the realtime no-key test opened a real
+    OpenAI socket. Tests that want a (fake) key set it explicitly; autouse
+    fixtures run first, so per-test monkeypatches still win.
+    """
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "parker_openclaw_gateway_url", "")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def reset_hands():
     """No test inherits another test's (fake) OpenClaw hands registry."""
 

@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest rollup voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test seed-persona live-voice-probe sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest rollup voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -144,6 +144,18 @@ demo: reset-db
 	@echo "Demo ready. Start the server with 'make run' and open:"
 	@echo "  http://localhost:8000/parker/review/ui   (caregiver review)"
 	@echo "  http://localhost:8000/parker/screen      (live patient screen)"
+
+# Seed Ravi, the north-star persona (docs/personas/ravi.md): memories,
+# medication schedule, a prior live session — what the fast-voice
+# orchestrator's context card reads. Idempotent; local DB only.
+seed-persona: backend-venv
+	cd backend && ./.venv/bin/python -m app.demo.persona
+
+# Live probe of the fast-voice orchestrator: one REAL realtime session +
+# one searched brain call (billed). Seeds Ravi into an isolated in-memory
+# DB, asks his Alcaraz question, prints receipts and a PASS/FAIL contract.
+live-voice-probe: backend-venv
+	cd backend && ./.venv/bin/python ../scripts/realtime_live_probe.py
 
 # Family handoff digest: a local, unsent daily summary — what happened,
 # what needs a look, what stayed local. Prints it and writes a markdown

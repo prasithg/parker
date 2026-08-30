@@ -1253,3 +1253,33 @@ workers (search/context/actions) run behind it and inject results into the
 live conversation for the front model to steer with. The bridge's existing
 function-output + response.create path is the injection seam. Planned in a
 fresh session.
+
+## 2026-08-30 — The fast-voice orchestrator — SHIPPED
+
+Built the same day as the handoff above (branch
+`fable/fast-voice-orchestrator`); design + contract now live in
+`docs/brain-adapters.md` ("The realtime lane: the fast-voice
+orchestrator"), the north star in `docs/personas/ravi.md`.
+
+Shipped: worker taxonomy v1 (`context` bridge-fired at open, `search`
+via `look_that_up`), the hardened injection contract (one gated
+response.create emitter, benign-collision tolerance, question+age echoed
+for the model's stale judgment, fenced untrusted content, sources
+browser-only), context card with dose-line filtering + gateway probe
+seam (`GET /parker/v1/context`), greeting / idle wrap-up / goodbye with
+browser `closing` handshake, session persistence (call log + topic
+memory, skipped for accidental taps), Ravi persona seed
+(`make seed-persona`), receipts logging, and `make live-voice-probe`.
+
+Named follow-ups (deliberately not built):
+- **Wake word** ("hey parker" opens the session) — still its own slice;
+  the orchestrator hangs off session-open, whatever opens it.
+- **Realtime OutcomeRecorder** — live-lane turns don't feed EXP-001's
+  interaction outcomes/rollup yet; decide what "understood first try"
+  means for full duplex, then instrument.
+- **Gateway context, harness side** — Parker probes
+  `GET /parker/v1/context`; the OpenClaw/Hermes plugin that answers it
+  (calendar, what's playing, room activity) doesn't exist yet.
+- **Browser-side receipts** for the live lane (server INFO logs only for
+  now); **LLM session summaries** (deterministic topics line today);
+  **duplicate-question coalescing** beyond the in-flight set.
