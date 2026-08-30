@@ -1,7 +1,19 @@
 # Handoff: the fast-voice orchestrator architecture
 
 Date: 2026-08-30
-Status: idea captured for the next session; Pras brings sharper clarity there.
+Status: **BUILT** same day (branch `fable/fast-voice-orchestrator`) — see
+`docs/brain-adapters.md` ("The realtime lane: the fast-voice
+orchestrator") for the shipped design, `app/parker/realtime_workers.py` +
+`app/parker/realtime.py` for the code, `backend/tests/test_realtime.py`
+for the pinned contract, and `docs/personas/ravi.md` for the north-star
+persona. Q1: taxonomy v1 = context + search (actions kept on their own
+path). Q2: two-step function ack + system-item injection, one gated
+response.create emitter, question+age echoed for the stale judgment; late
+results after close are dropped (Pras). Q3: realtime-lane-only. Q4:
+receipts logged under parker.realtime; `make live-voice-probe` prints
+them. Q5: fake upstream grew thread-safe feed(); ordering, guard, idle,
+and persistence contracts are all pinned. This doc stays as the idea's
+origin record.
 Prior context: the 2026-08-29/30 sessions (curiosity harness → general web
 search → streaming/presence → gpt-realtime lane), all merged at `0069320`.
 

@@ -179,7 +179,7 @@ server-side web search tool.
   sentence streaming starts TTS after the first sentence. Config:
   `PARKER_BRAIN_WEB_SEARCH` (default on), `PARKER_BRAIN_WEB_SEARCH_MAX_USES`.
 
-## The realtime lane: gpt-realtime full duplex (`backend/app/parker/realtime.py`)
+## The realtime lane: the fast-voice orchestrator (`backend/app/parker/realtime.py`)
 
 Shipped 2026-08-30 as the family opt-in the docs anticipated — and per
 Pras's same-day posture call, cloud audio is simply allowed when it makes
@@ -187,20 +187,49 @@ the best experience (CLAUDE.md live-loop line). The browser holds one
 websocket to Parker; Parker holds one to the OpenAI Realtime API
 (`gpt-realtime-2.1`, semantic VAD at low eagerness — end-pointing that
 reads whether a thought is finished, with native barge-in) and stays the
-policy boundary in the middle:
+policy boundary in the middle.
 
-- **`propose_action` is the only tool** the realtime session gets. A call
-  is validated and staged through the same pipeline; the model is told to
-  say it's waiting for on-screen confirmation. Nothing executes from this
-  lane in v0.
-- **The guard runs post-hoc on the streamed transcript.** The model hears
-  audio directly (that is the point), so the deterministic guards cannot
-  run pre-model here; instead a medical-boundary violation in the
-  assistant's own transcript cancels the response mid-word, flushes
-  unplayed audio, and speaks the standard redirect. Pinned by tests.
+Same day it became the **fast-voice orchestrator**: the front model owns
+presence and pacing and never blocks on work; background workers
+(`app/parker/realtime_workers.py`) run behind it and inject results
+mid-conversation as system items the model steers with. The session has a
+lifecycle: instant greeting → eager context card (recent-session memory,
+due medicines dose-free, an optional gateway probe — `GET
+/parker/v1/context` on the bridge contract — for ambient household
+context) → requests, with `look_that_up` questions acked instantly and
+answered when the search lands → idle wrap-up → goodbye with a browser
+`closing` handshake → the session persisted (call log + one topic memory)
+so the *next* session's card knows about it.
+
+- **Tools: `propose_action`, plus `look_that_up` when a brain is
+  configured.** Proposals validate and stage through the same pipeline
+  (model told it's waiting for on-screen confirmation; nothing executes
+  from this lane). Lookups are read-only information through the one
+  general brain lane — still no subject lanes, still no action path.
+- **Injection contract.** Items may inject any time; `response.create`
+  goes through exactly one gated emitter, so workers, proposals, the
+  greeting, and the watchdog can't double-fire against the server VAD
+  (benign protocol collisions are absorbed silently and retried at
+  `response.done`). Search notes carry the original question verbatim and
+  its age so the model can drop an answer the conversation moved past;
+  quoted lookup content is fenced as information-never-instructions, and
+  **sources are browser-only evidence** — untrusted page titles are never
+  rendered into the model's context. Context cards inject without a nudge
+  and are never narrated.
+- **Guards, two layers.** Worker output is brain output: `screen_reply`
+  (proposals dropped — workers never propose) runs *before* injection,
+  and card lines that would trip the spoken-dosage guard are dropped at
+  build time. On top, the post-hoc transcript guard still cancels a
+  medical-boundary reply mid-word, flushes unplayed audio, and speaks the
+  standard redirect. Pinned by tests.
 - **The screen mirror and outcome trail stay on** — user transcripts and
-  spoken replies land on the live Dad screen row like every other lane.
+  spoken replies land on the live Dad screen row like every other lane;
+  late worker results after a session closes are dropped by policy.
 - Enabled by `OPENAI_API_KEY` (+ `PARKER_REALTIME_ENABLED`, default on);
   keyless, the page simply doesn't offer it and the patient loop is
-  unchanged. Real-key live verification is pending the key; the whole
-  bridge contract is fake-upstream tested (`backend/tests/test_realtime.py`).
+  unchanged; brainless, the session honestly has no live data. The whole
+  bridge contract is fake-upstream tested (`backend/tests/test_realtime.py`)
+  and `make live-voice-probe` runs the real lane against Ravi's seeded
+  world (`docs/personas/ravi.md`). The patient Start/Done loop keeps its
+  streamed "let me check" cue — the orchestrator is realtime-lane-only in
+  v1.
