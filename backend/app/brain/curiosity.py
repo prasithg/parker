@@ -231,11 +231,23 @@ def requested_day(utterance: str) -> str:
     return "today"
 
 
+# Short replies to "which town?" that are conversation, not geography.
+# Without this, "never mind" was geocoded as a town (verified live).
+_NOT_A_PLACE = {
+    "okay", "ok", "yes", "yeah", "yep", "no", "nope", "nah", "stop", "wait",
+    "hold on", "never mind", "nevermind", "forget it", "nothing", "sorry",
+    "thanks", "thank you", "no thanks", "i don't know", "i dont know",
+    "don't know", "dont know", "what", "help", "hmm", "um", "uh",
+}
+
+
 def _looks_like_bare_place(utterance: str) -> bool:
     """A short answer to "which town?" — words only, no verbs we route on."""
 
     stripped = utterance.strip(" .!?")
     if not stripped or len(stripped.split()) > 4:
+        return False
+    if stripped.lower().strip(",") in _NOT_A_PLACE:
         return False
     return bool(re.fullmatch(r"[A-Za-z][A-Za-z' .-]*", stripped))
 
@@ -373,7 +385,7 @@ class CuriosityBrain:
                 ):
                     self._last_place = place
                     self._last_forecast = self._fetch_forecast(place)
-            elif self._last_place is None or self._last_forecast is None:
+            elif self._last_place is None:
                 self._awaiting_place = True
                 return BrainReply(
                     speech=(
@@ -381,10 +393,24 @@ class CuriosityBrain:
                         "should I look at?"
                     )
                 )
+            elif self._last_forecast is None:
+                # The place is known but the cache was dropped (a bad
+                # payload was un-poisoned): refetch, never re-ask the town.
+                self._last_forecast = self._fetch_forecast(self._last_place)
         except ProviderError:
             return BrainReply(speech=WEATHER_DOWN_SPEECH)
 
-        return self._speak_forecast(day)
+        try:
+            reply = self._speak_forecast(day)
+        except Exception:  # noqa: BLE001 — a hostile payload must not stick
+            reply = None
+        if reply is None or not reply.speech.strip():
+            # Whatever we cached could not be spoken — drop it so the next
+            # question refetches instead of re-failing forever, and degrade
+            # to the honest weather-specific line (never the dead-brain one).
+            self._last_forecast = None
+            return BrainReply(speech=WEATHER_DOWN_SPEECH)
+        return reply
 
     def _geocode(self, place_name: str) -> Optional[dict[str, Any]]:
         key = place_name.strip().lower()
@@ -422,7 +448,7 @@ class CuriosityBrain:
                 "temperature_unit": self._temperature_unit,
             },
         )
-        if not isinstance(data, dict) or "daily" not in data:
+        if not isinstance(data, dict) or not isinstance(data.get("daily"), dict):
             raise ProviderError("forecast payload had no daily block")
         return data
 
@@ -430,24 +456,41 @@ class CuriosityBrain:
         assert self._last_place is not None and self._last_forecast is not None
         place = self._last_place["name"]
         forecast = self._last_forecast
-        daily = forecast.get("daily") or {}
-        dates: list[str] = list(daily.get("time") or [])
-        highs = daily.get("temperature_2m_max") or []
-        lows = daily.get("temperature_2m_min") or []
-        codes = daily.get("weather_code") or []
-        rain = daily.get("precipitation_probability_max") or []
+        daily = forecast.get("daily") if isinstance(forecast.get("daily"), dict) else {}
+
+        def field(name: str) -> list[Any]:
+            value = daily.get(name)
+            return value if isinstance(value, list) else []
+
+        dates = [entry for entry in field("time") if isinstance(entry, str)]
+        highs = field("temperature_2m_max")
+        lows = field("temperature_2m_min")
+        codes = field("weather_code")
+        rain = field("precipitation_probability_max")
+
+        def number_at(values: list[Any], index: int) -> float | None:
+            # Open-Meteo sends null for missing values, and a defensive
+            # parse must never trust the types either (verified live: an
+            # unguarded round(None) poisoned a whole session's weather lane).
+            if index >= len(values):
+                return None
+            value = values[index]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            return float(value)
 
         def day_summary(index: int, label: str) -> str | None:
-            if index >= len(dates) or index >= len(highs):
+            high = number_at(highs, index)
+            if index >= len(dates) or high is None:
                 return None
             desc = _describe_weather_code(codes[index] if index < len(codes) else None)
-            high = round(highs[index])
-            low = round(lows[index]) if index < len(lows) else None
+            low = number_at(lows, index)
+            rain_chance = number_at(rain, index)
             rain_part = ""
-            if index < len(rain) and rain[index] is not None and rain[index] >= 40:
-                rain_part = f" and a {round(rain[index])} percent chance of rain"
-            low_part = f", down to {low} overnight" if low is not None else ""
-            return f"{label} looks {desc} with a top of {high}{low_part}{rain_part}"
+            if rain_chance is not None and rain_chance >= 40:
+                rain_part = f" and a {round(rain_chance)} percent chance of rain"
+            low_part = f", down to {round(low)} overnight" if low is not None else ""
+            return f"{label} looks {desc} with a top of {round(high)}{low_part}{rain_part}"
 
         index, label = self._resolve_day_index(day, dates)
         if day == "weekend":
@@ -466,12 +509,12 @@ class CuriosityBrain:
         elif index == 0:
             current = forecast.get("current") or {}
             now_part = ""
-            if isinstance(current, dict) and current.get("temperature_2m") is not None:
+            now_temp = (
+                current.get("temperature_2m") if isinstance(current, dict) else None
+            )
+            if isinstance(now_temp, (int, float)) and not isinstance(now_temp, bool):
                 desc = _describe_weather_code(current.get("weather_code"))
-                now_part = (
-                    f"It's {round(current['temperature_2m'])} and {desc} in "
-                    f"{place} right now. "
-                )
+                now_part = f"It's {round(now_temp)} and {desc} in {place} right now. "
             summary = day_summary(0, "Today")
             speech = f"{now_part}{summary}." if summary else now_part.strip()
         else:

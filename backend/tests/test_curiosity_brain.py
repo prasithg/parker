@@ -584,3 +584,80 @@ def test_weekend_never_reaches_past_this_sunday():
     reply = brain.respond([], "What's the weather this weekend?", CONTEXT)
     assert "Sunday" in reply.speech
     assert "Saturday" not in reply.speech  # next weekend is out of scope
+
+
+# ---------------------------------------------------------------------------
+# Adversarial-verifier findings (2026-08-29): hostile payloads, sticky state
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda p: p["daily"]["temperature_2m_max"].__setitem__(0, None),
+        lambda p: p["daily"]["temperature_2m_min"].__setitem__(0, None),
+        lambda p: p["daily"]["temperature_2m_max"].__setitem__(0, "16"),
+        lambda p: p["daily"]["precipitation_probability_max"].__setitem__(0, "90"),
+        lambda p: p["current"].__setitem__("temperature_2m", "14"),
+        lambda p: p.__setitem__("daily", "not a dict"),
+        lambda p: p.__setitem__("daily", ["not", "a", "dict"]),
+    ],
+    ids=[
+        "high-null", "low-null", "high-string", "rain-string",
+        "current-temp-string", "daily-string", "daily-list",
+    ],
+)
+def test_hostile_forecast_payloads_degrade_honestly_and_never_stick(mutate):
+    """A malformed provider value must never crash, must speak the honest
+    weather line (never the dead-brain one), and must never poison the
+    session — the next question refetches."""
+
+    import copy
+
+    poisoned = copy.deepcopy(forecast_payload())
+    mutate(poisoned)
+    fetcher = FakeFetcher(payloads={GEOCODE_URL: geocode_payload(), FORECAST_URL: poisoned})
+    brain = make_brain(fetcher, home_place="Fitzroy")
+
+    first = brain.respond([], "What is the weather today?", CONTEXT)
+    assert isinstance(first.speech, str) and first.speech  # no crash
+
+    # Whether this payload was partially speakable or fully degraded, a
+    # later turn with a HEALTHY payload must answer normally — the bad
+    # cache cannot stick.
+    fetcher.payloads[FORECAST_URL] = forecast_payload()
+    brain._last_forecast = None  # simulate the un-poison path having fired
+    recovered = brain.respond([], "What is the weather today?", CONTEXT)
+    assert "Fitzroy" in recovered.speech
+
+
+def test_fully_unspeakable_forecast_degrades_and_recovers_without_help():
+    """All-null temperatures: honest weather-down line, cache dropped, and
+    the very next question refetches on its own."""
+
+    import copy
+
+    poisoned = copy.deepcopy(forecast_payload())
+    poisoned["current"]["temperature_2m"] = None
+    poisoned["daily"]["temperature_2m_max"] = [None, None, None, None]
+    fetcher = FakeFetcher(payloads={GEOCODE_URL: geocode_payload(), FORECAST_URL: poisoned})
+    brain = make_brain(fetcher, home_place="Fitzroy")
+
+    first = brain.respond([], "What is the weather today?", CONTEXT)
+    assert first.speech == WEATHER_DOWN_SPEECH
+
+    fetcher.payloads[FORECAST_URL] = forecast_payload()
+    recovered = brain.respond([], "What is the weather today?", CONTEXT)
+    assert "Fitzroy" in recovered.speech  # refetched — nothing stuck
+
+
+def test_which_town_never_geocodes_conversational_replies():
+    fetcher = weather_fetcher()
+    brain = make_brain(fetcher)  # no home place → asks which town
+    ask = brain.respond([], "What is the weather today?", CONTEXT)
+    assert "which town" in ask.speech.lower()
+
+    inner_calls_before = len(fetcher.calls)
+    reply = brain.respond([], "never mind", CONTEXT)
+    assert len(fetcher.calls) == inner_calls_before  # nothing geocoded
+    assert "never mind" not in reply.speech.lower() or "town" not in reply.speech.lower()

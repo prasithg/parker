@@ -160,6 +160,7 @@ class ConverseStore:
         self._sessions: dict[str, ConverseSession] = {}
         self._store_lock = threading.Lock()
         self._transcriber: Transcriber | None = None
+        self._transcriber_lock = threading.Lock()
         self._transcriber_error: str | None = None
 
     # ------------------------------------------------------------------
@@ -224,22 +225,23 @@ class ConverseStore:
         return SessionLocal()
 
     def _warm_transcriber(self) -> bool:
-        """Load the shared local model once; remember an unavailable state."""
+        """Load the shared local model exactly once; remember an unavailable state."""
 
-        if self._transcriber is not None:
-            return True
-        loader = self._transcriber_loader
-        if loader is None:
-            from app.voice.transcribe import load_local_transcriber
+        with self._transcriber_lock:
+            if self._transcriber is not None:
+                return True
+            loader = self._transcriber_loader
+            if loader is None:
+                from app.voice.transcribe import load_local_transcriber
 
-            loader = load_local_transcriber
-        try:
-            self._transcriber = loader()
-            self._transcriber_error = None
-            return True
-        except RuntimeError as exc:
-            self._transcriber_error = str(exc)
-            return False
+                loader = load_local_transcriber
+            try:
+                self._transcriber = loader()
+                self._transcriber_error = None
+                return True
+            except RuntimeError as exc:
+                self._transcriber_error = str(exc)
+                return False
 
     def _sweep_expired(self) -> None:
         now = self._clock()
@@ -294,6 +296,12 @@ class ConverseStore:
             session.last_active = self._clock()
 
         with session.turn_lock:
+            # end_session may have raced the decode above: it drops and
+            # closes the session under this same lock, so a turn that gets
+            # the lock afterwards must not touch the closed DB session.
+            with self._store_lock:
+                if self._sessions.get(session_id) is not session:
+                    raise ConverseError(404, "Unknown or expired conversation session")
             result = self._process_turn(
                 session,
                 generation=generation,
@@ -325,19 +333,25 @@ class ConverseStore:
             return self._stopped_result(session, turn_id, timings, started)
 
         if not lines:
-            result = {
-                "turn_id": turn_id,
-                "state": "silence",
-                "kind": "silence",
-                "heard": "",
-                "speech": SILENCE_SPEECH,
-                "choices": [],
-                "sources": [],
-                "awaiting": "",
-                "timings_ms": self._final_timings(timings, started),
-            }
-            self._remember(session, result)
-            return result
+            with session.state_lock:
+                if session.generation != generation:
+                    # Stop raced a silent window; stopped means stopped —
+                    # even a gentle retry line must not land afterwards.
+                    return self._stopped_result(session, turn_id, timings, started)
+                result = {
+                    "turn_id": turn_id,
+                    "state": "silence",
+                    "kind": "silence",
+                    "heard": "",
+                    "speech": SILENCE_SPEECH,
+                    "choices": [],
+                    "sources": [],
+                    "awaiting": "",
+                    "timings_ms": self._final_timings(timings, started),
+                }
+                session.last_result = result
+                session.last_active = self._clock()
+                return result
 
         route_started = time.monotonic()
         session.brain.last_elapsed_ms = 0.0
@@ -409,6 +423,24 @@ class ConverseStore:
         speakable = [
             e for e in exchanges if e.get("speech") and e.get("kind") != "ambient_noop"
         ]
+        # One turn, one question. Whisper merges pause-free speech into one
+        # window, and each line routes separately — so a repair question
+        # from line one can be superseded by line two a millisecond later.
+        # A prompt that is not the final exchange is dead: speaking it would
+        # stack two questions in one breath while only the last one's
+        # buttons exist (found by the adversarial verifier).
+        prompt_kinds = {
+            "choices",
+            "clarify",
+            "retry",
+            "confirmation_repair",
+            "confirmation_mismatch",
+            "confirm_offer",
+        }
+        if speakable:
+            speakable = [
+                e for e in speakable[:-1] if e.get("kind") not in prompt_kinds
+            ] + [speakable[-1]]
         # A capture immediately followed by its own confirmation offer says
         # the subject twice ("Okay — I'll bring up X… Ready when you are:
         # a reminder about X…"). One turn, one readback: the offer alone
@@ -438,13 +470,23 @@ class ConverseStore:
             awaiting = "yes_no"
         else:
             awaiting = ""
+        # The rendered choices must be the LIVE pending set — which is not
+        # necessarily on the final exchange when a later line of the same
+        # window was a control word or silence-shaped noop.
+        if awaiting == "choices":
+            choice_source = next(
+                (e for e in reversed(exchanges) if e.get("choices")), {}
+            )
+            choices = _strip_choices(choice_source.get("choices"))
+        else:
+            choices = []
         return {
             "turn_id": turn_id,
             "state": "answer",
             "kind": str(last.get("kind", "")),
             "heard": heard,
             "speech": " ".join(spoken).strip(),
-            "choices": _strip_choices(last.get("choices")),
+            "choices": choices,
             "sources": sources,
             "awaiting": awaiting,
             "timings_ms": self._final_timings(timings, started),

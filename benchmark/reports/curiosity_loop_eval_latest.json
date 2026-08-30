@@ -9,16 +9,7 @@
       "ok": true
     },
     "failed_ids": [],
-    "live_probe": {
-      "open_meteo_geocode": {
-        "reachable": true,
-        "detail": "200 in 0.56s"
-      },
-      "espn_nba_scoreboard": {
-        "reachable": true,
-        "detail": "200 in 0.12s"
-      }
-    },
+    "live_probe": null,
     "gate": "PASS",
     "note": "Deterministic harness-path eval with fake providers; the live probe is reachability evidence only. Real-latency receipts come from the laptop smoke (PARKER_HOME/receipts/converse_latency.jsonl)."
   },
@@ -43,9 +34,9 @@
       "timings_ms": {
         "decode": 0,
         "asr": 0,
-        "route": 50,
+        "route": 48,
         "provider": 0,
-        "total_after_done": 50
+        "total_after_done": 48
       },
       "ok": true
     },

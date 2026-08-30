@@ -519,3 +519,141 @@ def test_converse_page_never_speaks_urls(db):
     assert "chip.title = source.url" in html
     # The spoken text is exactly data.speech — no source narration path.
     assert "SpeechSynthesisUtterance(text)" in html
+
+
+# ---------------------------------------------------------------------------
+# Adversarial-verifier findings (2026-08-29)
+# ---------------------------------------------------------------------------
+
+
+def test_one_window_never_speaks_two_stacked_questions(db):
+    """Pause-free speech splits into two utterances in one window; a repair
+    question superseded by the second line must not be spoken, and the
+    rendered choices must be the live set."""
+
+    transcriber = FakeTranscriber(
+        ["Call... the... you know... the one with the garden...", "remind me to stretch"]
+    )
+    store = make_store(db, transcriber=transcriber)
+    session_id = store.create_session()["session_id"]
+
+    result = store.run_turn(session_id, turn_id=1, audio_base64=WAV_B64)
+
+    assert result["awaiting"] == "yes_no"
+    assert "Did you mean" not in result["speech"]  # the dead prompt is silent
+    assert result["speech"].count("?") == 1  # exactly one question per turn
+    assert result["choices"] == []  # no buttons for a dismissed prompt
+
+
+def test_choices_render_even_when_a_control_word_ends_the_window(db):
+    """Line two being a bare control word must not hide the live choice
+    buttons the person is being asked to pick from."""
+
+    transcriber = FakeTranscriber(
+        ["Call... the... you know... the one with the garden...", "hold on"]
+    )
+    store = make_store(db, transcriber=transcriber)
+    session_id = store.create_session()["session_id"]
+
+    result = store.run_turn(session_id, turn_id=1, audio_base64=WAV_B64)
+
+    assert result["awaiting"] == "choices"
+    assert result["choices"], "live pending choices must render"
+    for choice in result["choices"]:
+        assert set(choice.keys()) == {"position", "label"}
+
+
+def test_stop_during_a_silent_window_still_means_stopped(db):
+    """The silence path must honor the generation contract too."""
+
+    release = threading.Event()
+    entered = threading.Event()
+
+    def gated_silence(path):
+        entered.set()
+        assert release.wait(timeout=5)
+        return []  # a silent window
+
+    store = make_store(db, transcriber=gated_silence)
+    session_id = store.create_session()["session_id"]
+
+    results = []
+    thread = threading.Thread(
+        target=lambda: results.append(
+            store.run_turn(session_id, turn_id=1, audio_base64=WAV_B64)
+        )
+    )
+    thread.start()
+    assert entered.wait(timeout=5)
+    store.stop(session_id)
+    release.set()
+    thread.join(timeout=5)
+
+    assert results[0]["state"] == "stopped"
+    assert results[0]["speech"] == ""
+    assert store.state(session_id)["last_result"] is None
+
+
+def test_concurrent_session_creates_load_the_model_exactly_once(db):
+    loads = []
+
+    def loader():
+        loads.append(1)
+        return FakeTranscriber()
+
+    store = make_store(db, loader=loader)
+    threads = [threading.Thread(target=store.create_session) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert len(loads) == 1
+
+
+def test_turn_racing_end_session_gets_a_404_not_a_closed_db(db):
+    """A turn that acquires the lock after end_session dropped the session
+    must refuse instead of writing through a closed DB session."""
+
+    release = threading.Event()
+    entered = threading.Event()
+
+    def gated(path):
+        entered.set()
+        assert release.wait(timeout=5)
+        return ["What day is it?"]
+
+    store = make_store(db, transcriber=gated)
+    session_id = store.create_session()["session_id"]
+
+    outcomes = []
+
+    def in_flight():
+        outcomes.append(("first", store.run_turn(session_id, turn_id=1, audio_base64=WAV_B64)))
+
+    def late_turn():
+        try:
+            outcomes.append(("late", store.run_turn(session_id, turn_id=2, text="hello")))
+        except ConverseError as exc:
+            outcomes.append(("late-error", exc.status_code))
+
+    first = threading.Thread(target=in_flight)
+    first.start()
+    assert entered.wait(timeout=5)
+
+    late = threading.Thread(target=late_turn)
+    late.start()
+
+    ender = threading.Thread(target=lambda: store.end_session(session_id))
+    ender.start()
+
+    release.set()
+    first.join(timeout=5)
+    late.join(timeout=5)
+    ender.join(timeout=5)
+
+    late_results = [entry for entry in outcomes if entry[0].startswith("late")]
+    assert late_results, "the late turn must resolve one way or the other"
+    kind, value = late_results[0]
+    # Either it ran before the drop (fine) or it was refused with 404 —
+    # never an exception from a closed session.
+    assert kind == "late" or value == 404
