@@ -1241,3 +1241,15 @@ Evidence boundary: patient-loop streaming/presence live-verified in the
 pane; the realtime lane's audio loop and voice quality are unverified
 until the key exists. A/B protocol: same page, same receipts, same
 outcome layer — patient loop vs live lane, Dad's preference decides.
+
+## Next: the fast-voice orchestrator (handoff, 2026-08-30)
+
+OPENAI_API_KEY added and verified (`realtime_available: true`) — the Live
+conversation lane is now active on `/parker/converse`. Pras's next
+direction, captured in
+[2026-08-30-voice-orchestrator-handoff.md](plans/2026-08-30-voice-orchestrator-handoff.md):
+the fast/realtime model holds the conversation and never blocks; background
+workers (search/context/actions) run behind it and inject results into the
+live conversation for the front model to steer with. The bridge's existing
+function-output + response.create path is the injection seam. Planned in a
+fresh session.
