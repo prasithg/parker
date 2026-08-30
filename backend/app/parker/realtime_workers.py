@@ -143,12 +143,21 @@ def run_search_worker(question: str) -> WorkerResult:
         if speech.endswith(WANT_MORE_SUFFIX):
             # The text lane's continuation hook; the front model steers instead.
             speech = speech[: -len(WANT_MORE_SUFFIX)].rstrip()
+        guard_tripped = screened.medical_boundary_tripped
+        sources = tuple(screened.reply.sources)
+        if not guard_tripped and speech_violates_medical_boundary(speech):
+            # Trimming can mint a boundary the full text lacked (a hard cap
+            # splitting a token) — the injected text must be re-screened
+            # AFTER every transformation, not just before (verifier find).
+            speech = MEDICAL_BOUNDARY_REDIRECT
+            guard_tripped = True
+            sources = ()
         return WorkerResult(
             kind="search",
             question=question,
             speech=speech,
-            guard_tripped=screened.medical_boundary_tripped,
-            sources=tuple(screened.reply.sources),
+            guard_tripped=guard_tripped,
+            sources=sources,
             started_at=started,
             finished_at=time.time(),
         )
@@ -234,9 +243,15 @@ def run_context_worker(make_db: Callable[[], Any]) -> WorkerResult:
     # A line the model must not read aloud (the post-hoc guard would cancel
     # it mid-word) must never be handed to the model at all.
     safe = [line for line in lines if not speech_violates_medical_boundary(line)]
+    card = "\n".join(safe[:14])
+    if speech_violates_medical_boundary(card):
+        # Individually clean lines can violate across a boundary once the
+        # checker collapses whitespace (verifier find). No card beats a
+        # card the spoken guard would cancel.
+        card = ""
     return WorkerResult(
         kind="context",
-        speech="\n".join(safe[:14]),
+        speech=card,
         started_at=started,
         finished_at=time.time(),
     )

@@ -607,6 +607,51 @@ def test_idle_wrapup_then_goodbye_then_closing_handshake(
         # the bridge closes itself even if the browser never answers
 
 
+def test_barge_in_during_the_goodbye_aborts_the_close(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    """He says "wait—" over the goodbye: Parker must NOT hang up on him.
+
+    The stand-down fires in the speech_started handler itself, because the
+    goodbye's response.done arrives faster than any watchdog tick.
+    """
+
+    monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 0.15)
+    monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 30.0)
+    monkeypatch.setattr(realtime, "_WATCHDOG_TICK_SECONDS", 0.05)
+    fake = upstream["script"]([])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        assert _wait_until(
+            lambda: any("anything else" in text for text in _system_items(fake))
+        )
+        # force the goodbye immediately, then barge in over it
+        monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 0.0)
+        assert _wait_until(lambda: any("goodbye" in t for t in _system_items(fake)))
+        monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 30.0)
+        fake.feed({"type": "input_audio_buffer.speech_started"})
+        assert ws.receive_json() == {"type": "clear"}  # barge-in flush
+        # the (cancelled) goodbye's response.done lands right after his voice
+        fake.feed({"type": "response.done", "response": {"output": []}})
+        fake.feed({"type": "response.output_audio_transcript.delta", "delta": "Go on."})
+        follow = ws.receive_json()
+        assert follow == {"type": "assistant_transcript_delta", "text": "Go on."}
+        # no closing event arrived in between — the line stayed open
+        ws.send_json({"type": "end"})
+
+
+def test_a_mute_model_cannot_hold_the_line_open_after_the_goodbye(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 0.1)
+    monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 0.1)
+    monkeypatch.setattr(realtime, "CLOSING_DRAIN_SECONDS", 0.2)
+    monkeypatch.setattr(realtime, "_WATCHDOG_TICK_SECONDS", 0.05)
+    upstream["script"]([])  # the model never answers anything
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        closing = ws.receive_json()  # forced by the watchdog floor
+        assert closing == {"type": "closing"}
+
+
 def test_a_word_from_him_stands_the_wrapup_down(
     db, realtime_enabled, brainless, upstream, monkeypatch
 ):

@@ -59,6 +59,30 @@ def test_search_worker_never_spends_a_call_on_a_guarded_question(monkeypatch):
     assert result.speech == MEDICAL_BOUNDARY_REDIRECT
 
 
+def test_search_worker_rescreens_after_trimming(monkeypatch):
+    """Trimming a space-free token can mint a dosage the full text lacked."""
+
+    pathological = "a" * 355 + ".50mg" + "y" * 100
+    brain = FakeBrain(BrainReply(speech=pathological, proposed_actions=(), sources=()))
+    monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda: brain)
+
+    result = realtime_workers.run_search_worker("tell me something long")
+    assert result.guard_tripped
+    assert result.speech == MEDICAL_BOUNDARY_REDIRECT
+    assert result.sources == ()
+
+
+def test_context_card_dropped_whole_when_lines_violate_only_joined(db, monkeypatch):
+    """Individually clean lines can trip the guard across a line boundary."""
+
+    def adversarial(_db):
+        return ["Sarah wrote that you should", "take the back steps slowly."]
+
+    monkeypatch.setattr(realtime_workers, "CONTEXT_SOURCES", (("adv", adversarial),))
+    result = realtime_workers.run_context_worker(lambda: db)
+    assert result.speech == ""  # no card beats a card the guard would cancel
+
+
 def test_search_worker_reports_a_missing_brain_honestly(monkeypatch):
     monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda: None)
     result = realtime_workers.run_search_worker("what's the weather?")

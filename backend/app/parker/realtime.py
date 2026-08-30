@@ -479,6 +479,7 @@ class RealtimeBridge:
         self._last_activity = time.monotonic()
         self._last_user_activity = 0.0  # only his voice stands the close down
         self._escalation_at = 0.0
+        self._goodbye_at = 0.0
         self._wrapup_asked = False
         self._goodbye_requested = False
         self._closing_sent = False
@@ -704,10 +705,21 @@ class RealtimeBridge:
                 and idle >= IDLE_GOODBYE_SECONDS
             ):
                 self._goodbye_requested = True
+                self._goodbye_at = now
                 await self._send_system_item(
                     _GOODBYE_INSTRUCTION.format(patient_name=self._patient_name())
                 )
                 await self._request_nudge()
+            elif (
+                self._goodbye_requested
+                and now - self._goodbye_at >= IDLE_GOODBYE_SECONDS
+            ):
+                # Floor under the ladder's last rung: a mute model must not
+                # hold the line open forever (verifier find). Close anyway.
+                self._closing_sent = True
+                await self._browser_send({"type": "closing"})
+                await asyncio.sleep(CLOSING_DRAIN_SECONDS)
+                return
 
     # ------------------------------------------------------------------
     # Browser -> upstream
@@ -786,6 +798,12 @@ class RealtimeBridge:
             # Barge-in: he started talking — whatever is queued goes silent.
             self._user_speaking = True
             self._last_activity = self._last_user_activity = time.monotonic()
+            if not self._closing_sent:
+                # His voice stands the wrap-up/goodbye down HERE, not on the
+                # next watchdog tick — the goodbye's response.done otherwise
+                # wins the race and hangs up on him mid-word (verifier find).
+                self._wrapup_asked = False
+                self._goodbye_requested = False
             await self._browser_send({"type": "clear"})
         elif etype == "input_audio_buffer.speech_stopped":
             self._user_speaking = False
