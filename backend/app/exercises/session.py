@@ -75,6 +75,7 @@ def start_local_exercise_session(
     staged_action_id: int | None = None,
     call_log_id: int | None = None,
     now: datetime | str | None = None,
+    commit: bool = True,
 ) -> LocalExerciseSession:
     """Persist a local Parker exercise session with a safe prompt card."""
 
@@ -90,8 +91,11 @@ def start_local_exercise_session(
         started_at=_coerce_datetime(now) or datetime.utcnow(),
     )
     db.add(session)
-    db.commit()
-    db.refresh(session)
+    if commit:
+        db.commit()
+        db.refresh(session)
+    else:
+        db.flush()
     return session
 
 

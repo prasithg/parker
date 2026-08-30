@@ -88,9 +88,10 @@ SCREEN_PAGE_HTML = """<!doctype html>
   #idle { text-align: center; }
   #idle .dot {
     font-size: clamp(2.5rem, 5vw, 4rem);
-    color: #2e6b2e;
+    color: #55647a;
     animation: breathe 2.4s ease-in-out infinite;
   }
+  #idle.active .dot { color: #2e6b2e; }
   #idle h1 { font-size: clamp(2.4rem, 5vw, 4rem); margin: 1vh 0; }
   #idle p { font-size: clamp(1.4rem, 2.6vw, 2.2rem); color: #8fa0b5; }
   @keyframes breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
@@ -123,12 +124,12 @@ SCREEN_PAGE_HTML = """<!doctype html>
 </main>
 <main id="idle">
   <div class="dot">●</div>
-  <h1>Parker is listening</h1>
-  <p>Just start talking — this screen shows what Parker hears and says.</p>
+  <h1 id="idle-title">Checking Parker…</h1>
+  <p id="idle-help">Waiting for local listening status.</p>
 </main>
 <footer>
   <span>Voice is the only input — nothing here needs to be touched.</span>
-  <span id="updated"></span>
+  <span><span id="runtime"></span> <span id="updated"></span></span>
 </footer>
 
 <script>
@@ -198,11 +199,53 @@ function agoText(iso) {
 
 let lastState = null;
 
+function loopIsActive(state) {
+  return ['listening', 'processing', 'speaking'].includes(state.loop_state);
+}
+
+function renderRuntime(state) {
+  const runtime = document.getElementById('runtime');
+  if (loopIsActive(state)) {
+    runtime.textContent = state.address_mode === 'wake'
+      ? 'Listening for “' + state.wake_name + '” ·'
+      : 'Listening ·';
+  } else if (state.loop_state === 'starting') {
+    runtime.textContent = 'Starting ·';
+  } else {
+    runtime.textContent = 'Not listening ·';
+  }
+}
+
+function renderIdle(state) {
+  const idle = document.getElementById('idle');
+  const title = document.getElementById('idle-title');
+  const help = document.getElementById('idle-help');
+  const active = loopIsActive(state);
+  idle.classList.toggle('active', active);
+  if (active && state.address_mode === 'wake') {
+    title.textContent = 'Say “' + state.wake_name + '” to start';
+    help.textContent = 'Parker is listening for the wake name. Replies to Parker’s own questions do not need it.';
+  } else if (active) {
+    title.textContent = 'Parker is listening';
+    help.textContent = 'Just start talking — this screen shows what Parker hears and says.';
+  } else if (state.loop_state === 'starting') {
+    title.textContent = 'Parker is starting';
+    help.textContent = 'Wait for the listening message before speaking.';
+  } else {
+    title.textContent = 'Parker is not listening';
+    help.textContent = 'Ask a family member to use Start first session or Start Listening.';
+  }
+}
+
 function render(state) {
   lastState = state;
   const live = document.getElementById('live');
   const idle = document.getElementById('idle');
-  if (state.empty) { live.hidden = true; idle.hidden = false; return; }
+  renderRuntime(state);
+  if (state.empty) {
+    renderIdle(state);
+    live.hidden = true; idle.hidden = false; return;
+  }
   idle.hidden = true;
   live.hidden = false;
   const heardBlock = document.getElementById('heard-block');
@@ -220,8 +263,10 @@ async function tick() {
   } catch (err) {
     // Server briefly away (restart, sleep): keep the last frame quietly.
   }
-  if (lastState && !lastState.empty) {
-    document.getElementById('updated').textContent = agoText(lastState.updated_at);
+  if (lastState) {
+    document.getElementById('updated').textContent = agoText(
+      lastState.empty ? lastState.loop_updated_at : lastState.updated_at
+    );
   } else {
     document.getElementById('updated').textContent = '';
   }

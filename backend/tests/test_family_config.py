@@ -65,6 +65,10 @@ def test_needs_onboarding_flips_on_completion_flag(home, restore_settings):
     family_config.write_family_config({"patient_name": "Ravi"})
     assert family_config.needs_onboarding() is True  # partial setup is not done
     family_config.write_family_config({"onboarding_completed": True})
+    assert family_config.needs_onboarding() is True  # phase-2 addressing still needs a choice
+    family_config.write_family_config(
+        {"parker_address_mode": "wake", "parker_wake_name": "Parker!"}
+    )
     assert family_config.needs_onboarding() is False
 
 

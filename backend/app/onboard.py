@@ -1,9 +1,9 @@
 """``parker onboard`` — terminal fallback for the desktop onboarding wizard.
 
 Same questions, same config.json writer, no windows: patient name,
-family contacts, lexicon extras, TTS voice, and the consent flags in
-plain language. Repair-event capture is opt-IN (default no), matching
-the engine default.
+family contacts, lexicon extras, explicit address mode + wake name, TTS
+voice, and the consent flags in plain language. Repair-event capture is
+opt-IN (default no), matching the engine default.
 """
 
 from __future__ import annotations
@@ -30,6 +30,17 @@ def _ask_yes_no(prompt: str, default: bool, input_fn: Callable[[str], str]) -> b
     return answer in {"y", "yes"}
 
 
+def _ask_address_mode(input_fn: Callable[[str], str]) -> str:
+    while True:
+        mode = _ask(
+            "Where will Parker listen? Enter wake for a living room or open for desk/push-to-talk",
+            "wake",
+            input_fn,
+        ).lower()
+        if mode in {"wake", "open"}:
+            return mode
+
+
 def run_terminal_onboarding(
     input_fn: Callable[[str], str] = input,
     print_fn: Callable[[str], None] = print,
@@ -49,6 +60,12 @@ def run_terminal_onboarding(
     answers["personal_lexicon"] = _ask(
         "Extra words Parker should be primed to hear (places, routines; comma-separated)",
         "",
+        input_fn,
+    )
+    answers["parker_address_mode"] = _ask_address_mode(input_fn)
+    answers["parker_wake_name"] = _ask(
+        "Wake name (used to start a new interaction in living-room mode)",
+        "Parker",
         input_fn,
     )
     answers["parker_tts_voice"] = _ask(

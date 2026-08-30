@@ -14,9 +14,46 @@ mirror it.
 from __future__ import annotations
 
 import sys
+from typing import Any, Callable
 
 from app.demo.talk import DEFAULT_SECONDS, run_talk_loop
+from app.voice.record import Recorder
 from app.voice.speak import load_local_speaker
+from app.voice.transcribe import Transcriber
+
+
+def prepare_talk_dependencies(
+    *,
+    vad_loader: Callable[[], Recorder] | None = None,
+    fixed_loader: Callable[[], Recorder] | None = None,
+    transcriber_loader: Callable[[], Transcriber] | None = None,
+    mic_probe: Callable[[float], dict[str, Any]] | None = None,
+    seconds: float = DEFAULT_SECONDS,
+) -> tuple[Recorder, Transcriber, str]:
+    """Load the local model and prove the microphone opens before readiness.
+
+    The desktop shell treats the first non-idle loop state as startup success,
+    so model/dependency/TCC failures must happen before that state is published.
+    The probe keeps no frames and does not require the person to speak.
+    """
+
+    from app.voice.record import load_local_recorder, load_vad_recorder, sample_mic_level
+    from app.voice.transcribe import load_local_transcriber
+
+    load_transcriber = transcriber_loader or load_local_transcriber
+    probe = mic_probe or sample_mic_level
+    load_vad = vad_loader or load_vad_recorder
+    load_fixed = fixed_loader or load_local_recorder
+
+    transcriber = load_transcriber()
+    probe(0.2)
+    try:
+        recorder = load_vad()
+        hint = f"[listening — pause when you're done, up to {seconds:g}s; Ctrl-C to stop]"
+    except RuntimeError:
+        recorder = load_fixed()
+        hint = f"[listening for {seconds:g}s — speak now, or Ctrl-C to stop]"
+    return recorder, transcriber, hint
 
 
 def run_cli_loop(seconds: float = DEFAULT_SECONDS, server_port: int = 8000) -> None:
@@ -37,70 +74,61 @@ def run_cli_loop(seconds: float = DEFAULT_SECONDS, server_port: int = 8000) -> N
     from app.parker.loop_state import (
         STATE_IDLE,
         STATE_SPEAKING,
+        STATE_STARTING,
         publish_loop_state,
     )
-    from app.voice.record import load_local_recorder, load_vad_recorder
 
     create_tables()
     configure_hands_from_settings()
     db = SessionLocal()
-    speak = load_local_speaker()
-    # End-pointed recording: `seconds` becomes the max window; a natural
-    # pause ends the turn early. Falls back to the fixed window when the
-    # VAD path is unavailable.
-    try:
-        recorder = load_vad_recorder()
-        listening_hint = f"[listening — pause when you're done, up to {seconds:g}s; Ctrl-C to stop]"
-    except RuntimeError:
-        recorder = load_local_recorder()
-        listening_hint = f"[listening for {seconds:g}s — speak now, or Ctrl-C to stop]"
-
     turn_count = 0
     latencies: list[float] = []
-
-    def on_turn_start(turn: int) -> None:
-        nonlocal turn_count
-        turn_count = turn
-        print(f"\n{listening_hint}")
-
-    def on_exchange(exchange: dict) -> None:
-        if exchange["you"]:
-            print(f"  you>    {exchange['you']}")
-        print(f"  parker> {exchange['parker']}")
-        if exchange["kind"] != "confirm_offer":  # Parker-initiated turns have no latency story
-            # Speech can start once ASR + routing (brain on answer turns) are
-            # done — this is Parker's added delay after the person stops talking.
-            to_speech = exchange["asr_seconds"] + exchange["route_seconds"]
-            latencies.append(to_speech)
-            slow = "  ← over the 4s budget" if to_speech > 4.0 else ""
-            print(
-                f"  [latency: asr {exchange['asr_seconds']:.2f}s + "
-                f"{exchange['kind']} {exchange['route_seconds']:.2f}s "
-                f"→ speech starts {to_speech:.2f}s after you stop]{slow}"
-            )
-        # Speaking blocks until done so the next window never records
-        # Parker's own voice.
-        publish_loop_state(db, STATE_SPEAKING)
-        speak(exchange["parker"])
-
-    def on_silence() -> None:
-        print("  (nothing heard — try again or speak a bit louder)")
-
-    from app.config import settings
-    from app.conversation.addressing import describe_address_config
-
-    print("Parker talk loop — continuous voice conversation.")
-    print("Parker answers out loud (set PARKER_TTS_ENABLED=false for text-only).")
-    # Misconfigured gating must be visible at startup, never silent: a typo'd
-    # mode or unmatchable wake name would otherwise look like deafness.
-    print(describe_address_config(settings.parker_address_mode, settings.parker_wake_name))
-    print(f"Open http://localhost:{server_port}/parker/review/ui as the caregiver view.\n")
-
     try:
+        publish_loop_state(db, STATE_STARTING)
+        recorder, transcriber, listening_hint = prepare_talk_dependencies(seconds=seconds)
+        speak = load_local_speaker()
+
+        def on_turn_start(turn: int) -> None:
+            nonlocal turn_count
+            turn_count = turn
+            print(f"\n{listening_hint}")
+
+        def on_exchange(exchange: dict) -> None:
+            if exchange["you"]:
+                print(f"  you>    {exchange['you']}")
+            print(f"  parker> {exchange['parker']}")
+            if exchange["kind"] != "confirm_offer":  # Parker-initiated turns have no latency story
+                # Speech can start once ASR + routing (brain on answer turns)
+                # are done — Parker's added delay after the person stops.
+                to_speech = exchange["asr_seconds"] + exchange["route_seconds"]
+                latencies.append(to_speech)
+                slow = "  ← over the 4s budget" if to_speech > 4.0 else ""
+                print(
+                    f"  [latency: asr {exchange['asr_seconds']:.2f}s + "
+                    f"{exchange['kind']} {exchange['route_seconds']:.2f}s "
+                    f"→ speech starts {to_speech:.2f}s after you stop]{slow}"
+                )
+            # Speaking blocks so the next window never records Parker's voice.
+            publish_loop_state(db, STATE_SPEAKING)
+            speak(exchange["parker"])
+
+        def on_silence() -> None:
+            print("  (nothing heard — try again or speak a bit louder)")
+
+        from app.config import settings
+        from app.conversation.addressing import describe_address_config
+
+        print("Parker talk loop — continuous voice conversation.")
+        print("Parker answers out loud (set PARKER_TTS_ENABLED=false for text-only).")
+        # Misconfigured gating must be visible at startup, never silent.
+        print(describe_address_config(settings.parker_address_mode, settings.parker_wake_name))
+        print(f"Open http://localhost:{server_port}/parker/review/ui as the caregiver view.\n")
+
         run_talk_loop(
             db,
             seconds=seconds,
             recorder=recorder,
+            transcriber=transcriber,
             on_turn_start=on_turn_start,
             on_exchange=on_exchange,
             on_silence=on_silence,

@@ -1,6 +1,6 @@
 # Parker local v0 — demo runbook
 
-A scripted walkthrough of everything Parker v0 can do locally, end to end, with no real sends. Written 2026-06-09; updated through 2026-06-10 (voice, auth, repair choices, continuous loop).
+A scripted walkthrough of everything Parker v0 can do locally, end to end, with no real sends. Written 2026-06-09; updated through 2026-08-28 (voice, auth, repair choices, continuous loop, Voice Practice, and the Functional Phrase bridge).
 
 ## Pilot setup: what to configure
 
@@ -43,7 +43,18 @@ The browser prompts once; buttons on the page reuse the credentials automaticall
 make voice-deps    # installs faster-whisper + sounddevice (local, no cloud)
 ```
 
-Required for `make demo-voice`, `make talk`, and `make talk-loop`. macOS prompts for microphone permission on first use of `make talk` / `make talk-loop`.
+Required for `make demo-voice`, `make talk`, `make talk-loop`, and the Functional Phrase step in Voice Practice. macOS prompts for microphone permission on first use.
+
+**5. Choose one everyday Functional Phrase (optional):**
+
+```bash
+# in backend/.env; keep this short, useful, reversible, and non-clinical
+PARKER_FUNCTIONAL_PHRASE=Remind me to water the plants this evening.
+```
+
+After the person saves a sustained-voice round at `/parker/practice`, they may finish, start another round, or voluntarily try this phrase. The phrase uses manual Start/Stop, local transcription, the ordinary `TextSession` repair choices, and the same restated confirmation gate as the talk loop. The phrase request itself never executes an action. An explicit later Yes can run only the existing local reversible action; No cancels; **That's not right** invokes the existing confirmation-repair cancellation. Medical/emergency/finance/purchase boundaries and message behavior are unchanged.
+
+Functional Phrase audio is always temporary and deleted after local transcription. The sustained-round retention checkbox remains the only optional local-audio path. For the bounded first-user check, follow [Functional Phrase Bridge — first-user three-session protocol](functional-phrase-first-user-protocol.md); it is a local one-person product protocol, not therapy or population evidence.
 
 ## Capability administration: what the family sets up once
 
@@ -168,7 +179,7 @@ Design contract (pinned by tests in `backend/tests/test_screen.py`):
   aloud in the room anyway, and the person it serves should never face a
   password. Locking `DASHBOARD_PASSWORD` locks the caregiver surface,
   never this one.
-- **It degrades gracefully.** Fresh DB → "Parker is listening"; a server
+- **It degrades gracefully.** Fresh DB → "Parker is not listening"; a server
   restart keeps the last frame until the next exchange.
 
 Every path into `TextSession` drives it — `make repl`, `make talk`,
@@ -177,6 +188,61 @@ updates live while the talk loop runs, including Parker-initiated
 confirmation offers ("Shall I go ahead — yes or no?"), which appear with
 an empty "You said" and a yes/no chip. Options stay on screen through
 silent windows: taking a minute to answer never blanks the cards.
+
+## The Patient Curiosity Loop: `/parker/converse`
+
+The laptop/browser harness for the first-user experience in
+`docs/strategy/2026-08-29-problem-first-value-proposition.md`: tap Start,
+take your time (pauses never cut a turn off — only Done sends it), see
+what Parker heard, get a brief current answer with its source named on
+screen, ask a follow-up without restating the topic, and Stop instantly.
+
+Setup (the family member does all of this before Dad sits down):
+
+```bash
+PARKER_HOME_PLACE="Melbourne" PARKER_SPORTS_LEAGUES="afl" make run
+```
+
+then open `http://localhost:8000/parker/converse` in Safari or Chrome and
+grant the microphone permission with one throwaway question of your own.
+The page speaks through the browser (`speechSynthesis`) so Stop is
+immediate; the microphone is only open between Start and Done, so Parker
+never hears itself.
+
+- `PARKER_HOME_PLACE` answers bare "what's the weather?" questions
+  (Open-Meteo, keyless). Unset, Parker asks one bounded question instead
+  of guessing. Any spoken place ("weather in Ballarat?") wins over it.
+- `PARKER_SPORTS_LEAGUES` is a comma list from: nba, wnba, nfl, mlb,
+  nhl, epl, mls, afl (ESPN public scoreboard, keyless). Pick one that is
+  in season — an empty board answers honestly that no games are on.
+- Everything else rides the shipped brainstem: repair choices render as
+  tappable cards, action requests read back and wait for yes/no (tap or
+  voice), refusal guards run before any provider, and staged actions
+  stay on `/parker/review/ui`.
+- "Type instead" (footer) is a quiet fallback for harder-speech days;
+  same turns, same pipeline.
+- **Stop is touch (or Escape) in this harness, not voice.** The
+  microphone is deliberately closed while Parker speaks so it cannot hear
+  itself, which means a spoken "stop" cannot land mid-answer. Do not tell
+  the first user "just say stop" — show the button. A voice barge-in
+  needs the full-duplex/realtime lane, which is explicitly out of scope
+  for this slice.
+- Latency receipts (stage timings only, never words) accumulate in
+  `PARKER_HOME/receipts/converse_latency.jsonl`; aggregate them with
+  `backend/.venv/bin/python benchmark/curiosity_latency_report.py`.
+
+Before a first-user session, rehearse the exact machine once:
+
+```bash
+backend/.venv/bin/python scripts/converse_smoke.py --place Melbourne --leagues afl --team-question "Did Collingwood win?"
+```
+
+It boots a throwaway server, synthesizes utterances with macOS `say`
+(including a 1.8 s mid-utterance pause), runs them through the real turn
+endpoint with the real local ASR, and prints the latency table against
+the budgets. Then follow the first-session rules in the strategy doc —
+Dad chooses the questions, one repair at most, Stop demonstrated as
+control, and no coaching on the first miss.
 
 ## The family digest: `make digest`
 
@@ -268,10 +334,16 @@ Leave it running in a terminal while the caregiver review page is open in a brow
 - Parker never listens while speaking, so it cannot transcribe itself.
 - Ctrl-C stops the loop and prints how many turns ran.
 
-**Living-room mode (addressed-to-me gating):** by default every recording
-window is treated as directed at Parker (`PARKER_ADDRESS_MODE=open`) — right
-for a desk demo or push-to-talk use. For an always-on room with a TV in mic
-range, set in `backend/.env`:
+**Living-room mode (addressed-to-me gating):** the packaged setup wizard now
+requires an explicit **Living room** (`wake`) or **Desk / push-to-talk**
+(`open`) choice and persists a sanitized wake name in `config.json`. An older
+profile with no stored choice does not silently inherit `open`. The final
+**Start first session** button asks Parker.app to start the existing TALK
+sidecar and open the Dad Screen together; only shell-observed startup can make
+the page say listening.
+
+For a developer-run `make talk-loop`, the historical code default remains
+`open`; choose wake mode explicitly in `backend/.env` for a TV/room test:
 
 ```bash
 PARKER_ADDRESS_MODE=wake

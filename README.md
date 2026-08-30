@@ -48,7 +48,7 @@ Every repair exchange is a naturally labeled example: what ASR heard, what Parke
 2. **n-best repair choices** — alternate hypotheses become concrete options, so "Tell Sarah…" survives being misheard as "There a…";
 3. few-shot exemplars from that person's history, and eventually a per-user fine-tune corpus.
 
-No raw audio is ever stored. The person's data stays in their house. Deploying Parker to more people improves the shared harness, evals, and skills — not a central model trained on anyone's voice without asking.
+The general assistant loop does not retain raw audio. Parker Voice Practice adds one explicit exception: the person may choose, round by round, to keep a short exercise recording locally alongside protocol-versioned metrics. The person's data stays in their house. Deploying Parker to more people should improve the shared harness, evals, skills, and later models only through an explicit contribution program—not silent central collection.
 
 ## Powering the voice loop
 
@@ -90,13 +90,15 @@ Working product name: **Parker**. (An earlier prototype was called ParkinsClaw; 
 
 The local v0 loop works end to end with no external services and no real sends:
 
-- **Input ladder** — typed (`make repl`), scripted demo (`make demo`), audio file (`make demo-voice AUDIO=…`), live microphone (`make talk`), continuous voice conversation (`make talk-loop`). Voice transcription is fully on-device (faster-whisper); no audio is retained beyond the input file.
+- **Input ladder** — typed (`make repl`), scripted demo (`make demo`), audio file (`make demo-voice AUDIO=…`), live microphone (`make talk`), continuous voice conversation (`make talk-loop`), and the browser Patient Curiosity Loop (`/parker/converse`). Voice transcription is fully on-device (faster-whisper); no audio is retained beyond the input file.
 - **Capture → resolve → stage → confirm → execute pipeline** — every action confirmed before execution; the local executable surface is reminders, local exercise sessions, and *local-only* family messages, plus policy-gated OpenClaw skills (`media_playlist`, read-only `open_links`) when the family's gateway enables them.
 - **Repair under uncertainty** — ambiguous effortful speech gets 2 numbered choices plus "none of these". With `ANTHROPIC_API_KEY` set, choices are model-generated and grounded in the utterance (claude-haiku); without it, a deterministic fallback keeps everything working. Alternate ASR hypotheses (n-best) become evidence-based choices that carry their parsed recipient/subject. Two bounded public-audio informational disagreements now repair before the read-only answer lane: `Orange, Texas` weather/place corruption and `Martin Jackson` vs `Michael Jackson` person-name disagreement. Selection never enters capture/stage/execute, and the local stub does not claim a live fetch. After an informational selection, Parker separately asks whether to leave the selected query as a local caregiver research card; no card exists until the user explicitly chooses yes, and the card can only be completed or cancelled locally.
 - **Conversational brain (opt-in)** — with `ANTHROPIC_API_KEY`, questions and unmatched conversation route to a pluggable `BrainAdapter` (Claude v0) with bounded follow-up history; brain-proposed actions become confirmation choices, never direct captures, and a deterministic post-response guard re-checks the medical boundary on every reply ([docs/brain-adapters.md](docs/brain-adapters.md)). Keyless, the answer lane stays a deterministic stub.
+- **Patient Curiosity Loop** — `/parker/converse` is the browser harness for the first-user experience ([strategy](docs/strategy/2026-08-29-problem-first-value-proposition.md)): tap Start, take unlimited time (only Done ends a turn — no VAD cutoff), see the transcript, get a brief current answer with the source and freshness named on screen (never spoken as a URL), ask a follow-up without restating the topic, and Stop instantly (browser TTS cancel + a server generation contract — a stopped turn's late result is discarded, pinned by a 100-race test). Weather (Open-Meteo) and league scores (ESPN scoreboard) answer live and keyless via `CuriosityBrain` in front of whatever inner brain is configured; provider failure is one honest sentence and the session survives. Repair choices and yes/no confirmations render as tappable cards backed by the same pipeline; a "Type instead" fallback covers harder-speech days. Per-turn stage timings accumulate as local aggregate-only receipts (`benchmark/curiosity_latency_report.py` scores them against the experiment budgets); `make eval-curiosity-loop` gates the six Dad-shaped traces, failure containment, and stop races deterministically.
 - **Voice out + latency line** — `make talk-loop` speaks answers aloud (macOS `say`, config-gated), end-points recording with an energy VAD, and prints a per-turn latency line (ASR + routing → when speech starts).
 - **Addressed-to-me gating** — family-configurable `PARKER_ADDRESS_MODE`: `open` (default; every window is directed — desk/demo use) or `wake` (always-on living-room use: an utterance needs the wake name, default "Parker", except replies to Parker's own questions — numbered choices, yes/no offers, and clarify/retry questions — which never do, within a bounded grace window (`PARKER_WAKE_GRACE_SECONDS`, default 120s) so a stale offer can't hold the microphone open; ambient room/TV speech silently no-ops with an auditable context record and never reaches the dad screen). Gating is window-level because ASR splits one spoken address into segments, and the wake prefix tolerates fillers and repeats ("Uh, Parker—", "Parker Parker"). Companion live-defect fixes, palilalia-aware: a repeated bare negation ("No, no.") against a stale draft cancels instead of producing a nonsense revision, and hesitation ("Wait... wait.", "No, wait.") leaves the draft untouched.
 - **Learning flywheel v0** — consent-gated repair-event capture (`REPAIR_EVENT_CAPTURE_CONSENTED`, default off), personal lexicon ASR biasing (`PERSONAL_LEXICON`), documented in [docs/adaptation-ladder.md](docs/adaptation-ladder.md).
+- **Parker Voice Practice + Functional Phrase bridge** — `/parker/practice` is a supporting, tablet-like sustained-voice exercise with manual Start/Stop/Save/Next/Finish pacing, device-relative microphone feedback, up to three suggested rounds, optional self-rating, recent-round history, and a per-round choice to retain the short recording locally. A person may finish after any saved round or voluntarily try one family-configured, non-clinical everyday phrase. The phrase recording is temporary: local ASR feeds the existing `TextSession` repair and restated confirmation flow, then the audio is deleted; the phrase POST cannot execute. Only a separate explicit Yes can run the existing local reversible action, while No or “That's not right” cancels through the normal confirmation policy. Page exit uses a beacon with keepalive fallback to request cleanup of persisted, in-flight, or response-ambiguous Saves. Compare-and-set terminal transitions keep the practice and generic parent lifecycle consistent when Finish, Save, and page exit race. Retry-idempotent sustained attempts preserve primitive voiced-frame counts and actual browser processing settings and use a server-derived relative target fraction. Optional sustained-round audio is a separately scoped local-only artifact under `PARKER_HOME/voice-practice`; unsupported or failed retention is disclosed while metrics remain saveable. This is local prototype behavior, not proof of everyday ASR, clinical improvement, home deployment, or population performance; the first-user protocol is [here](docs/functional-phrase-first-user-protocol.md).
 - **Interaction outcome layer + weekly rollup (EXP-001)** — every directed text-loop interaction records exactly one outcome (`understood_first_try` / `repaired_success` / `repair_abandoned` / `wrong_action` / `refused_safety` / `no_response` / `ambient_noop`); `make rollup` writes a local, aggregates-only markdown+JSON weekly artifact (home-local timezone, not UTC) with unassisted-success, first-attempt, repair-success, and nuisance-choice rates, plus hash-only repeated-error groups (consent-gated signatures). Zero transcript text in the artifact; nothing is sent.
 - **Local recliner/TV evening loop** — one `local_evening_sessions` row per calendar evening; optional offer/decline, unclear-response repair choices, engaged/completed/timed-out states, and caregiver review controls.
 - **Family message outbox with capability-level trust** — the family allowlists contacts once (`PARKER_FAMILY_CONTACTS`); a confirmed message to a listed contact releases on the patient's own yes (`released_local`, visible in review — awareness, not an approval queue), anyone else stays behind per-message approval (`queued_local` → `approved_local`). There is **no send path in the codebase at all**; cancel works from every live state.
@@ -104,7 +106,7 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Non-response escalation candidates** — review-only, never auto-dispatched.
 - **Real-audio eval harness** — `make eval-audio-real` runs real public-corpus and synthetic clips (audio stays in the Operations workspace, never in-repo) through local ASR and the actual routing, scored against each clip's oracle transcript: intent recovery with/without repair and with/without n-best, unsafe-capture gate, per-condition/language breakdowns.
 - **Deterministic eval suite** — task-taxonomy eval (`make eval-tasks`, 24 fixtures / 0 safety-critical misses including medical/medication/emergency/privacy/purchase red-team cases), interactivity trace evals (`make eval-interactivity`, `make eval-demo-interactivity`), degraded-input replay (`make eval-degraded-input-replay`), audio Autodata metadata fixtures (`make eval-audio-autodata`, 37 accepted fixtures / 6 held / 1 rejection-ledger row / 28 hard negatives / 0 unsafe, including a public-audio informational n-best entity-repair target), wake/addressed-to-me audio-context fixtures (`make eval-wake-context`, 14 public/synthetic audio-derived metadata fixtures / 0 unsafe, including ambient no-op, wake answers, two selected no-side-effect informational repairs, one explicitly confirmed local research handoff, context-required controls, medical/finance refusals, media repair, local reminder capture, read-only ticket lookup, and ticket-acquisition human-approval hold), caregiver-state legibility proxy (10/10 vs raw-chat 0/10, including ready/completed/cancelled and redacted-query local research-card states grounded in sanitized public-audio metadata), claim→metric overclaim guard, construct-validity matrix guard, release-readiness rollup, repair-choice quality spot-check, brain-lane safety eval (`make eval-brain-lane`, keyless red-team routing gate + live TTS/quality lane, unsafe as a hard 0), and the hands lane (`make eval-hands`, proposal → patient confirmation → skill execution over a fake OpenClaw gateway incl. off-allowlist/unknown-type/gateway-error edges, 8/8 with unsafe as a hard 0).
-- 807 backend tests as of the interaction outcome layer slice (2026-08-17).
+- 915 backend tests as of the Patient Curiosity Loop slice (2026-08-29).
 
 Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
 
@@ -121,21 +123,30 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 | Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer admin/skills dashboard |
 | Eval harness | real-audio harness + full synthetic suite (see above) | pilot-voice longitudinal tracking, human-graded repair quality |
 | Voice out / live loop | macOS `say` TTS + energy-VAD end-pointing in `make talk-loop`, per-turn latency line; no external send path exists | wake word, realtime models (gpt-realtime family) |
+| Curiosity loop | `/parker/converse` browser harness: manual Start/Done capture (16 kHz WAV in-browser), keyless live weather/scores with on-screen sources, browser-TTS immediate Stop with a stale-result generation contract, local latency receipts | streaming ASR, richer current-info providers, OpenClaw-gateway A/B |
 
 ## Parker as an app (beta)
 
 Parker is installable as a macOS menu-bar app — drag a dmg to
 Applications, no Python, no terminal. A Tauri v2 shell bundles the whole
-engine as a sidecar binary; onboarding is a guided wizard (mic
-permission, voice picker, plain-language consent, one-time local
-speech-model download), and daily use is a tray menu: Start/Pause
-Listening, the Dad Screen, Family Review, the Daily Digest. Unsigned
-beta, Apple silicon; acceptance-tested end-to-end from the dmg,
-including a spoken conversation confirmed with a spoken "Yes, go
-ahead". Build it with `make sidecar && cd desktop/src-tauri && cargo
-tauri build`; the full lifecycle (install → onboard → update →
-uninstall) is in [docs/desktop.md](docs/desktop.md), the architecture
-in [docs/desktop-architecture.md](docs/desktop-architecture.md).
+engine as a sidecar binary; onboarding is a guided wizard (explicit Living
+room `wake` vs Desk `open` addressing, sanitized wake name, mic permission,
+voice picker, plain-language consent, and one-time local speech-model
+download). Its final **Start first session** action reuses the existing TALK
+sidecar and Dad Screen, and stays non-listening unless shell-observed model,
+microphone, process, and window startup succeeds. Daily use remains the tray
+menu: Start/Pause Listening, Voice Practice, the Dad Screen, Family Review,
+and the Daily Digest. Voice Practice pauses TALK and first-session startup
+refuses while Practice owns the microphone. The changed first-session handoff
+is deterministic-test evidence only until the documented packaged
+WKWebView/TCC smoke pass runs; it is not a home-deployment or first-user claim.
+Unsigned beta, Apple silicon; the earlier app lifecycle was acceptance-tested
+end to end from the dmg, including a spoken conversation confirmed with a
+spoken "Yes, go ahead". Build it with `make sidecar && cd desktop/src-tauri &&
+cargo tauri build`; the full lifecycle (install → onboard → update → uninstall)
+is in [docs/desktop.md](docs/desktop.md), the architecture in
+[docs/desktop-architecture.md](docs/desktop-architecture.md), and the remaining
+device gates in [the Living Room smoke checklist](docs/living-room-first-session-smoke-checklist.md).
 
 ## Setup
 
@@ -152,6 +163,7 @@ make test            # full backend suite should pass (656 tests as of 2026-07-2
 make demo            # fresh DB + seeded family day + effortful-speech replay
 make run             # uvicorn on http://localhost:8000
 # open http://localhost:8000/parker/review/ui as the caregiver
+# open http://localhost:8000/parker/practice for Voice Practice
 ```
 
 **Talk to it** (optional on-device voice):
@@ -166,6 +178,8 @@ For a real pilot — env file, model-enhanced repair choices, review-page passwo
 ## Operating cadence
 
 Parker is a living public project. The repository should move when a meaningful feature, eval, demo, or documentation milestone is ready — not while a slice is half-finished, and not only after manual prompting.
+
+The organization runs under the [chairman + acting AI CEO operating model](docs/strategy/operating-model.md): Pras owns mission and reserved decisions; Hermes owns day-to-day strategy, product/research operations, and evidence-backed release flow.
 
 Ready-to-publish work should include:
 

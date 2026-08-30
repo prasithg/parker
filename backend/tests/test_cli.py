@@ -183,6 +183,8 @@ def test_terminal_onboarding_writes_config(home, restore_settings):
             "Ravi",            # patient name
             "Sarah, Michael",  # contacts
             "physio, bridge",  # lexicon
+            "wake",            # explicit living-room address mode
+            "Parker!",         # wake name (sanitized on write)
             "",                # voice (default)
             "y",               # repair-event capture consent
         ]
@@ -196,6 +198,8 @@ def test_terminal_onboarding_writes_config(home, restore_settings):
     config = read_family_config()
     assert config["patient_name"] == "Ravi"
     assert config["parker_family_contacts"] == "Sarah, Michael"
+    assert config["parker_address_mode"] == "wake"
+    assert config["parker_wake_name"] == "parker"
     assert config["repair_event_capture_consented"] is True
     assert config["onboarding_completed"] is True
     assert needs_onboarding() is False
@@ -210,4 +214,6 @@ def test_terminal_onboarding_defaults_keep_consent_off(home, restore_settings):
     assert code == 0
     config = read_family_config()
     assert config["patient_name"] == "Dad"
+    assert config["parker_address_mode"] == "wake"
+    assert config["parker_wake_name"] == "parker"
     assert config["repair_event_capture_consented"] is False  # opt-IN stays off

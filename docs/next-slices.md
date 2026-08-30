@@ -1085,3 +1085,107 @@ event, so the correction corpus survives (manual caregiver redaction
 remains a full erase; pinned by `test_expiry_sweep_preserves_linked_correction_pair`) —
 and (b) an install-day checklist item in slice 5 (capture flag ON + the
 five-sentence family conversation).
+
+## 2026-08-28 candidate — Voice Practice + Functional Phrase + Living Room First Session
+
+Local candidate stack:
+
+- commit `beca6ff` is the reviewed rollback boundary for the voluntary Voice
+  Practice → Functional Phrase bridge: temporary phrase audio, existing repair
+  and confirmation policy, and no execution from the phrase POST;
+- phase 2 adds an explicit packaged `open`/`wake` setup choice, persisted
+  sanitized wake name, and one **Start first session** action that asks the
+  Tauri shell to start the existing TALK sidecar and open the existing Dad
+  Screen;
+- setup remains non-listening through request/start/error states. The shell
+  acknowledges listening only after local model/microphone preflight, a live
+  active TALK state, and Dad Screen open success;
+- Voice Practice remains the exclusive microphone owner while its window is
+  open. First-session start fails closed during Practice and offers explicit
+  one-click retry after close rather than inventing background auto-resume;
+- deterministic injected coverage proves TV-shaped ambient silence, an
+  addressed `Parker, remind me to water the plants`, invited bare `yes`, one
+  executed local reminder, one directed outcome, and no retained conversation
+  audio.
+
+Evidence boundary: this is a local, synthetic/injected, **tested-not-deployed**
+candidate. A new packaged Tauri/WKWebView microphone/TCC pass, real input-device
+startup, TV/room acoustics, Dad's speech, beneficiary comfort/preference, and
+home installation are still unverified. The exact allow/deny/contention/
+failure/relaunch checks are in
+[`living-room-first-session-smoke-checklist.md`](living-room-first-session-smoke-checklist.md).
+Do not call the candidate home-deployed, first-user-tested, or clinically
+validated until those human/device gates actually run.
+
+## 2026-08-29 — Patient Curiosity Loop (browser harness) — SHIPPED
+
+Executed from `docs/plans/2026-08-29-patient-curiosity-loop-execution.md`
+(the repo-grounded revision of the codex handoff), against the first-user
+strategy in `docs/strategy/2026-08-29-problem-first-value-proposition.md`.
+
+Shipped:
+
+- `/parker/converse` — the laptop/browser harness: manual Start/Done capture
+  (browser-encoded 16 kHz WAV, no VAD cutoff — only Done ends a turn), the
+  transcript shown before the answer, tappable repair choices and yes/no
+  confirmations backed by the same pipeline, browser-TTS speech with an
+  immediate Stop, and a typing fallback.
+- `ConverseStore` (`backend/app/parker/converse.py`) — one persistent
+  `TextSession` per browser session, one warmed shared transcriber, a
+  generation contract for Stop (late results discarded, transient prompts
+  dismissed via the new public `TextSession.dismiss_transient_state()`,
+  screen row overwritten; 100 stop-vs-response races pinned stale-free),
+  temp-audio deletion on every path, TTL/cap lifecycle.
+- `CuriosityBrain` (`backend/app/brain/curiosity.py`) — keyless live
+  weather (Open-Meteo; `PARKER_HOME_PLACE` or the spoken place, one bounded
+  question when neither exists) and league scores (ESPN scoreboard,
+  `PARKER_SPORTS_LEAGUES`) in front of the configured inner brain, with
+  follow-up continuity from per-session cache and honest one-sentence
+  failure. `BrainReply` gained `sources` (label/url/freshness) — shown on
+  screen, never spoken, dropped whole on a medical trip.
+- Latency as an observable contract: per-stage timings in every turn
+  response, aggregate-only JSONL receipts under `PARKER_HOME/receipts`,
+  `benchmark/curiosity_latency_report.py` scoring against the budgets.
+- `make eval-curiosity-loop` — six Dad-shaped scripted traces, failure
+  containment, and stop races through the real harness path (gate PASS);
+  `scripts/converse_smoke.py` — the pre-Dad rehearsal on the actual laptop.
+
+Measured on the dev laptop (2026-08-29): warmed whisper-base median
+~440 ms after Done; live Open-Meteo Melbourne answer with source+freshness
+chip; live ESPN AFL final ("Did Collingwood win?" → the real 96–93 result)
+in 541 ms server total; browser drive verified idle → answer → follow-up →
+Stop → confirmation flows with zero console errors.
+
+Evidence boundary: laptop-verified with synthesized speech and typed turns;
+Dad's own speech, the real-microphone browser session (TCC prompt on the
+demo browser), room acoustics, and voluntary return use are still
+unverified. Decisions still Pras's: exact leagues/teams (decision 5), the
+OpenClaw-gateway A/B when a real gateway exists, and whether browser TTS
+quality is acceptable long-term versus an interruptible `say` subprocess.
+
+### Verification round (same day)
+
+Two fresh-context verifier sessions ran against the shipped slice — one
+adversarial (executes probes), one first-user UX critic (drives the real
+API). The UX critic's blocking findings were all reproduced live, fixed,
+and re-verified live the same evening (commit `0a8cbe7`): sports
+follow-ups retracting sourced answers, unknown days answering today under
+a source chip, errand choices offered to trailing-off questions, the
+"Just say the number" loop, tremor double-tap on swapped controls, raw
+error strings on the patient screen, and Stop erasing the answer it was
+silencing.
+
+Deliberately NOT changed, with reasons:
+
+- Interest-lane answers carry no source chip. Claude's answers are not
+  current-information claims; a "Parker's own knowledge" chip on every
+  conversational reply would be noise, and the brain already says so when
+  live data would be needed. The visible source/freshness cue remains a
+  live-data (weather/scores) contract.
+- Interest-lane length keeps the shipped `trim_for_speech` contract
+  (3 sentences / 360 chars + "Want more detail?") rather than the
+  handoff's 1–2 sentences; tightening it is a product decision for Pras
+  since it changes every brain surface, not just the harness.
+- Voice "stop" mid-answer stays impossible by design in this harness (the
+  microphone is closed while Parker speaks); the runbook now says so
+  explicitly so nobody coaches the first user into a failure.

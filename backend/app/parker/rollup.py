@@ -17,6 +17,10 @@ describing someone's week.
 
 Metric definitions (the source of truth; docs quote these):
 
+- Protocolized Functional Phrase practice rows remain in local SQLite with
+  ``source=functional_phrase_practice`` but are excluded from this natural-use
+  EXP-001 rollup so rehearsed attempts cannot inflate daily-use rates.
+
 - A *request* is an interaction whose outcome is one of
   understood_first_try, repaired_success, repair_abandoned, wrong_action.
 - unassisted_success_rate = (understood_first_try + repaired_success)
@@ -137,6 +141,7 @@ def build_weekly_rollup(
         db.query(InteractionOutcome)
         .filter(InteractionOutcome.opened_at >= lower)
         .filter(InteractionOutcome.opened_at < upper)
+        .filter(InteractionOutcome.source != "functional_phrase_practice")
         .order_by(InteractionOutcome.opened_at, InteractionOutcome.id)
         .all()
     )
@@ -180,6 +185,7 @@ def build_weekly_rollup(
             "Aggregates only — no transcript text; details live in Parker's local review surfaces.",
             "Outcomes are engineering signals about Parker, never health observations.",
             "Interactions the microphone/ASR never delivered are invisible to this layer.",
+            "Protocolized Functional Phrase practice is stored locally but excluded from natural-use rates.",
         ],
     }
 

@@ -1,0 +1,204 @@
+{
+  "summary": {
+    "date": "2026-08-29",
+    "scripted_turns": 6,
+    "failure_cases": 8,
+    "stop_races": {
+      "rounds": 20,
+      "stale_results": 0,
+      "ok": true
+    },
+    "failed_ids": [],
+    "live_probe": null,
+    "gate": "PASS",
+    "note": "Deterministic harness-path eval with fake providers; the live probe is reachability evidence only. Real-latency receipts come from the laptop smoke (PARKER_HOME/receipts/converse_latency.jsonl)."
+  },
+  "scripted": [
+    {
+      "id": "weather-today-tomorrow.0",
+      "utterance": "What is the weather today?",
+      "kind": "answer",
+      "speech": "It's 14 and partly cloudy in Fitzroy right now. Today looks partly cloudy with a top of 16, down to 8 overnight.",
+      "sources": [
+        {
+          "label": "Open-Meteo \u2014 Fitzroy",
+          "url": "https://open-meteo.com/",
+          "fresh_as_of": "as of 3:00 PM today"
+        }
+      ],
+      "missing_substrings": [],
+      "sources_ok": true,
+      "freshness_ok": true,
+      "tts_ok": true,
+      "followup": false,
+      "timings_ms": {
+        "decode": 0,
+        "asr": 0,
+        "route": 48,
+        "provider": 0,
+        "total_after_done": 48
+      },
+      "ok": true
+    },
+    {
+      "id": "weather-today-tomorrow.1",
+      "utterance": "What about tomorrow?",
+      "kind": "answer",
+      "speech": "Tomorrow looks lightly rainy with a top of 19, down to 9 overnight and a 65 percent chance of rain in Fitzroy.",
+      "sources": [
+        {
+          "label": "Open-Meteo \u2014 Fitzroy",
+          "url": "https://open-meteo.com/",
+          "fresh_as_of": "as of 3:00 PM today"
+        }
+      ],
+      "missing_substrings": [],
+      "sources_ok": true,
+      "freshness_ok": true,
+      "tts_ok": true,
+      "followup": true,
+      "timings_ms": {
+        "decode": 0,
+        "asr": 0,
+        "route": 2,
+        "provider": 0,
+        "total_after_done": 2
+      },
+      "ok": true
+    },
+    {
+      "id": "score-then-followup.0",
+      "utterance": "Did the Celtics win last night?",
+      "kind": "answer",
+      "speech": "Yes \u2014 Celtics won, 112 to 104 over Lakers.",
+      "sources": [
+        {
+          "label": "ESPN \u2014 NBA",
+          "url": "https://www.espn.com/game/401",
+          "fresh_as_of": "Final"
+        }
+      ],
+      "missing_substrings": [],
+      "sources_ok": true,
+      "freshness_ok": true,
+      "tts_ok": true,
+      "followup": false,
+      "timings_ms": {
+        "decode": 0,
+        "asr": 0,
+        "route": 3,
+        "provider": 0,
+        "total_after_done": 3
+      },
+      "ok": true
+    },
+    {
+      "id": "score-then-followup.1",
+      "utterance": "Who did they play?",
+      "kind": "answer",
+      "speech": "Celtics played Lakers. Celtics won \u2014 112 to 104 over Lakers.",
+      "sources": [
+        {
+          "label": "ESPN \u2014 NBA",
+          "url": "https://www.espn.com/game/401",
+          "fresh_as_of": "Final"
+        }
+      ],
+      "missing_substrings": [],
+      "sources_ok": true,
+      "freshness_ok": true,
+      "tts_ok": true,
+      "followup": true,
+      "timings_ms": {
+        "decode": 0,
+        "asr": 0,
+        "route": 1,
+        "provider": 0,
+        "total_after_done": 1
+      },
+      "ok": true
+    },
+    {
+      "id": "interest-then-followup.0",
+      "utterance": "Tell me about Uri Levine",
+      "kind": "answer",
+      "speech": "Uri Levine is an entrepreneur best known for co-founding Waze.",
+      "sources": [],
+      "missing_substrings": [],
+      "sources_ok": true,
+      "freshness_ok": true,
+      "tts_ok": true,
+      "followup": false,
+      "timings_ms": {
+        "decode": 0,
+        "asr": 0,
+        "route": 3,
+        "provider": 0,
+        "total_after_done": 3
+      },
+      "ok": true
+    },
+    {
+      "id": "interest-then-followup.1",
+      "utterance": "What is he known for?",
+      "kind": "answer",
+      "speech": "He co-founded Waze and urges founders to fall in love with the problem.",
+      "sources": [],
+      "missing_substrings": [],
+      "sources_ok": true,
+      "freshness_ok": true,
+      "tts_ok": true,
+      "followup": true,
+      "timings_ms": {
+        "decode": 0,
+        "asr": 0,
+        "route": 1,
+        "provider": 0,
+        "total_after_done": 1
+      },
+      "ok": true
+    }
+  ],
+  "failure_cases": [
+    {
+      "id": "provider-down-then-recovers",
+      "ok": true,
+      "detail": "down='I couldn't reach the weather service just now. Try me again ' recovered='It's 14 and partly cloudy in Fitzroy rig'"
+    },
+    {
+      "id": "silence-gentle-retry",
+      "ok": true,
+      "detail": "I didn't catch anything that time \u2014 take your time and try a"
+    },
+    {
+      "id": "unknown-place-honest",
+      "ok": true,
+      "detail": "I couldn't find a town called Zzyzxq. Could you say the town"
+    },
+    {
+      "id": "refusal-before-provider",
+      "ok": true,
+      "detail": "kind=refused provider_calls=0"
+    },
+    {
+      "id": "purchase-held-at-human-gate",
+      "ok": true,
+      "detail": "needs_human_approval"
+    },
+    {
+      "id": "sports-followup-never-retracts",
+      "ok": true,
+      "detail": "Celtics won \u2014 112 to 104 over Lakers."
+    },
+    {
+      "id": "unknown-day-asks-not-guesses",
+      "ok": true,
+      "detail": "I can see about a week ahead for Fitzroy. Which day should I"
+    },
+    {
+      "id": "vague-question-reasks",
+      "ok": true,
+      "detail": "kind=retry"
+    }
+  ]
+}

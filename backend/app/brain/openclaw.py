@@ -253,6 +253,7 @@ class FallbackBrain:
                 return BrainReply(
                     speech=f"{notice} {reply.speech}".strip(),
                     proposed_actions=reply.proposed_actions,
+                    sources=reply.sources,
                 )
             return reply
 
