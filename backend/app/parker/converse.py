@@ -352,7 +352,7 @@ class ConverseStore:
 
         from app.brain.guard import speech_violates_medical_boundary
 
-        state = {"accumulated": "", "count": 0, "blocked": False}
+        state = {"accumulated": "", "spoken": "", "count": 0, "blocked": False}
 
         def on_sentence(sentence: str) -> None:
             if state["blocked"] or state["count"] >= 3:
@@ -365,6 +365,15 @@ class ConverseStore:
             if speech_violates_medical_boundary(state["accumulated"]):
                 state["blocked"] = True  # the final guard speaks the redirect
                 return
+            # Mirror trim_for_speech exactly (3 sentences AND 360 chars), so
+            # what streams is always a prefix of the final screened speech —
+            # the page speaks the final's remainder ("Want more detail?"),
+            # never characters the trim withheld.
+            would_speak = f"{state['spoken']} {sentence}".strip()
+            if state["spoken"] and len(would_speak) > 360:
+                state["blocked"] = True
+                return
+            state["spoken"] = would_speak
             state["count"] += 1
             try:
                 emit({"event": "speech", "text": sentence})

@@ -801,3 +801,33 @@ def test_converse_page_offers_the_live_lane_behind_availability(db):
     assert "realtime_available" in html   # server decides; the page just shows
     assert "/parker/converse/realtime" in html
     assert "talk over Parker any time" in html  # barge-in is part of the promise
+
+
+def test_streamed_speech_is_always_a_prefix_of_the_final_speech(db):
+    """The page speaks the final's REMAINDER after streamed sentences (the
+    confirmation question, 'Want more detail?'). That only works if what
+    streams is a strict prefix of the final guard-screened speech — the
+    char cap must mirror trim_for_speech, not just the sentence cap."""
+
+    long_sentences = [f"This is quite a long sentence number {i} with plenty of words in it." for i in range(1, 7)]
+    brain = StreamingBrain(long_sentences)
+    store = make_store(db, brain=brain)
+    session_id = store.create_session()["session_id"]
+
+    events = []
+    result = store.run_turn(session_id, turn_id=1, text="What day is it?", emit=events.append)
+
+    streamed = " ".join(e["text"] for e in events if e["event"] == "speech")
+    assert result["speech"].startswith(streamed)
+    assert len(streamed) <= 360  # the trim cap holds on the streamed path too
+
+
+def test_converse_page_speaks_the_final_remainder_and_live_redirect(db):
+    html = client.get("/parker/converse").text
+    # the confirmation question / 'Want more detail?' remainder is spoken
+    assert "finalSpeech.slice(spokenSoFar.length)" in html
+    assert "startsWith(spokenSoFar)" in html
+    # the live-lane medical redirect bypasses the turn-generation queue
+    assert "speakNow(" in html
+    # one live line, one opening at a time — and Stop covers a mic mid-open
+    assert "startingLive" in html

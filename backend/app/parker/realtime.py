@@ -52,10 +52,31 @@ _REALTIME_ADDENDUM = """
 
 You are in live spoken conversation. Keep replies to one or two short
 sentences unless asked for more; it is fine to be interrupted — stop and
-listen. When you call propose_action, tell {patient_name} the action is
-written on the screen waiting for their confirmation — never that it is
-done. If anything sounds urgent, say to call emergency services or get a
-family member right away."""
+listen. In this live mode you do NOT have web search or any live data —
+answer from what you know, say plainly when something would need checking,
+and never claim to have looked something up. When you call propose_action,
+tell {patient_name} the action is written on the screen waiting for their
+confirmation — never that it is done, and if Parker replies that it could
+not be saved, say so honestly. If anything sounds urgent, say to call
+emergency services or get a family member right away."""
+
+# A small cap on simultaneous live lines: this is a single-household
+# surface, and each bridge holds an upstream (billed) OpenAI socket.
+MAX_LIVE_BRIDGES = 2
+_active_bridges = 0
+
+
+def try_acquire_bridge_slot() -> bool:
+    global _active_bridges
+    if _active_bridges >= MAX_LIVE_BRIDGES:
+        return False
+    _active_bridges += 1
+    return True
+
+
+def release_bridge_slot() -> None:
+    global _active_bridges
+    _active_bridges = max(0, _active_bridges - 1)
 
 
 def realtime_available() -> bool:
@@ -160,46 +181,79 @@ def _record_exchange_sync(heard: str, speech: str) -> None:
         logger.debug("realtime screen mirror skipped", exc_info=True)
 
 
-def _stage_proposal_sync(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Capture + stage one proposed action through the normal pipeline."""
+def _stage_proposal_sync(arguments: dict[str, Any], call_sid: str) -> dict[str, Any]:
+    """Capture + stage one proposed action through the normal pipeline.
 
-    from app.brain.adapter import PROPOSABLE_ACTION_TYPES
+    Same screening as the text lane (verified against it, 2026-08-30):
+    the EFFECTIVE proposable set (gateway-backed types need an enabled
+    skill), lexicon-canonicalized recipients for messages, bounded field
+    lengths, a per-conversation call log so stale intents from earlier
+    sessions can never ride along — and "staged" is only reported when a
+    StagedAction actually exists.
+    """
+
+    from app.conversation.textloop import canonicalize_recipient
     from app.conversation.tools import execute_tool
-    from app.db.models import CallLog
+    from app.db.models import CallLog, ResolutionResult, StagedAction
+    from app.parker.hands import effective_proposable_action_types
     from app.parker.pipeline import resolve_captured_intents, stage_resolved_actions
 
+    if not isinstance(arguments, dict):
+        return {"status": "rejected", "detail": "The proposal was malformed."}
     action_type = str(arguments.get("action_type", ""))
-    if action_type not in PROPOSABLE_ACTION_TYPES:
+    if action_type not in effective_proposable_action_types():
         return {"status": "rejected", "detail": "That action type is not allowed."}
-    subject = str(arguments.get("subject", "")).strip()
-    intent_text = str(arguments.get("intent_text", "")).strip()
+    subject = str(arguments.get("subject", "")).strip()[:200]
+    intent_text = str(arguments.get("intent_text", "")).strip()[:500]
     if not subject or not intent_text:
         return {"status": "rejected", "detail": "The proposal was incomplete."}
 
-    requested = {"reminder": "remind", "family_message": "message", "exercise_start": "exercise"}.get(
-        action_type, action_type
-    )
+    payload: dict[str, Any] = {
+        "intent_text": intent_text,
+        "requested_action": {
+            "reminder": "remind",
+            "family_message": "message",
+            "exercise_start": "exercise",
+        }.get(action_type, action_type),
+        "subject": subject,
+    }
+    if action_type == "family_message":
+        recipient, known = canonicalize_recipient(str(arguments.get("recipient") or ""))
+        if not recipient or not known:
+            return {
+                "status": "rejected",
+                "detail": "That name is not in the family's contact list.",
+            }
+        payload["recipient"] = recipient
+    elif arguments.get("recipient"):
+        payload["recipient"] = str(arguments["recipient"])[:80]
+
     db = _make_db()
     try:
-        call = db.query(CallLog).filter(CallLog.call_sid == "REALTIME-LIVE").first()
+        call = db.query(CallLog).filter(CallLog.call_sid == call_sid).first()
         if call is None:
-            call = CallLog(call_sid="REALTIME-LIVE", call_type="realtime")
+            call = CallLog(call_sid=call_sid, call_type="realtime")
             db.add(call)
             db.commit()
             db.refresh(call)
-        payload: dict[str, Any] = {
-            "intent_text": intent_text,
-            "requested_action": requested,
-            "subject": subject,
-        }
-        recipient = arguments.get("recipient")
-        if recipient:
-            payload["recipient"] = str(recipient)
         result = execute_tool(db, call.id, "capture_intent", payload)
         if result.get("status") != "captured":
             return {"status": "rejected", "detail": "Parker could not save that."}
+        captured_id = result.get("captured_intent_id")
         resolve_captured_intents(db, call_log_id=call.id)
         stage_resolved_actions(db, call_log_id=call.id)
+        staged = (
+            db.query(StagedAction)
+            .join(StagedAction.resolution_result)
+            .filter(ResolutionResult.captured_intent_id == captured_id)
+            .first()
+        )
+        if staged is None:
+            # Never claim something exists on the screen when it doesn't.
+            return {
+                "status": "rejected",
+                "detail": "Parker could not stage that one — nothing is waiting.",
+            }
         return {
             "status": "staged",
             "detail": (
@@ -227,6 +281,11 @@ class RealtimeBridge:
         # connect_openai without touching every construction site.
         self._upstream_connect = upstream_connect
         self._upstream: Any = None
+        # Per-conversation call log: stale intents from an earlier live
+        # session must never ride onto this one's confirm screen.
+        import secrets as _secrets
+
+        self._call_sid = f"REALTIME-{_secrets.token_hex(6)}"
         # Per-response transcript accumulation for the post-hoc guard.
         self._assistant_transcript = ""
         self._guard_tripped = False
@@ -263,6 +322,8 @@ class RealtimeBridge:
     async def _pump_browser(self) -> None:
         while True:
             message = await self._browser_receive()
+            if not isinstance(message, dict):
+                continue  # a junk frame must not kill the call
             kind = message.get("type")
             if kind == "audio":
                 encoded = str(message.get("data", ""))
@@ -290,7 +351,12 @@ class RealtimeBridge:
                 event = json.loads(raw)
             except (TypeError, ValueError):
                 continue
-            await self._handle_upstream_event(event)
+            if not isinstance(event, dict):
+                continue
+            try:
+                await self._handle_upstream_event(event)
+            except Exception:  # noqa: BLE001 — one hostile frame must not end the call
+                logger.warning("realtime event handling failed", exc_info=True)
 
     async def _handle_upstream_event(self, event: dict[str, Any]) -> None:
         etype = str(event.get("type", ""))
@@ -325,14 +391,17 @@ class RealtimeBridge:
         elif etype == "response.done":
             await self._on_response_done(event)
         elif etype == "error":
-            detail = (event.get("error") or {}).get("message", "")
+            error = event.get("error")
+            detail = error.get("message", "") if isinstance(error, dict) else str(error)
             logger.warning("realtime upstream error: %s", detail)
             await self._browser_send(
                 {"type": "notice", "text": "Parker's live line hiccuped — keep talking."}
             )
 
     async def _on_response_done(self, event: dict[str, Any]) -> None:
-        response = event.get("response") or {}
+        response = event.get("response")
+        if not isinstance(response, dict):
+            response = {}
         speech = (
             self._assistant_transcript
             if not self._guard_tripped
@@ -353,7 +422,11 @@ class RealtimeBridge:
                 arguments = json.loads(item.get("arguments") or "{}")
             except (TypeError, ValueError):
                 arguments = {}
-            outcome = await run_in_threadpool(_stage_proposal_sync, arguments)
+            if not isinstance(arguments, dict):
+                arguments = {}  # a JSON scalar/list is a malformed proposal
+            outcome = await run_in_threadpool(
+                _stage_proposal_sync, arguments, self._call_sid
+            )
             await self._upstream.send(
                 json.dumps(
                     {
@@ -369,5 +442,5 @@ class RealtimeBridge:
             await self._upstream.send(json.dumps({"type": "response.create"}))
             if outcome.get("status") == "staged":
                 await self._browser_send(
-                    {"type": "proposal_staged", "label": str(arguments.get("label", ""))}
+                    {"type": "proposal_staged", "label": str(arguments.get("label", ""))[:80]}
                 )

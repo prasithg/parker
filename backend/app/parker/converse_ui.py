@@ -666,6 +666,7 @@ async function sendTurn(body, marks) {
   let errorEvent = null;
   let streamed = false;
   let retried = false;
+  const streamedParts = [];
 
   const handleEvent = (event) => {
     if (myGen !== clientGen) return;
@@ -674,6 +675,7 @@ async function sendTurn(body, marks) {
     } else if (event.event === 'speech') {
       clearTimeout(cueTimer);
       streamed = true;
+      streamedParts.push(event.text);
       appendSpeechText(event.text);
       speakText(event.text);
     } else if (event.event === 'final') {
@@ -736,18 +738,31 @@ async function sendTurn(body, marks) {
   receipt.outcome = finalEvent.kind || finalEvent.state;
   receipt.done_to_response_ms = Math.round(performance.now() - doneAt);
   renderResult(finalEvent);
-  if (finalEvent.kind === 'refused' && streamed) {
-    // The guard replaced a partially-streamed reply: silence it and speak
-    // the redirect instead.
+  const finalSpeech = finalEvent.speech || '';
+  const spokenSoFar = streamedParts.join(' ');
+  if (!streamed) {
+    tts.turnComplete = true;
+    if (!speakText(finalSpeech)) finishSpeechTurn();
+  } else if (finalEvent.kind === 'refused' || !finalSpeech.startsWith(spokenSoFar)) {
+    // The final reply DIVERGED from what streamed (guard redirect, an
+    // honest brain-failure line, a re-trimmed answer): silence the stream
+    // and speak the authoritative version instead.
     speechSynthesis.cancel();
     beginSpeechTurn(myGen, doneAt, receipt);
-    streamed = false;
-  }
-  tts.turnComplete = true;
-  if (!streamed) {
-    if (!speakText(finalEvent.speech)) finishSpeechTurn();
-  } else if (tts.outstanding <= 0) {
-    finishSpeechTurn();
+    tts.turnComplete = true;
+    if (!speakText(finalSpeech)) finishSpeechTurn();
+  } else {
+    // What streamed is a strict prefix: speak only the remainder — this is
+    // where the confirmation question and 'Want more detail?' live, and a
+    // question Parker never asks aloud is a broken loop for a voice-first
+    // user (found by the adversarial verifier).
+    const remainder = finalSpeech.slice(spokenSoFar.length).trim();
+    tts.turnComplete = true;
+    if (remainder) {
+      speakText(remainder);
+    } else if (tts.outstanding <= 0) {
+      finishSpeechTurn();
+    }
   }
 }
 
@@ -768,11 +783,13 @@ function sendText(text) {
 const LIVE_RATE = 24000;
 const live = {ws: null, micCtx: null, micStream: null, proc: null, gain: null,
               playCtx: null, nextTime: 0, sources: []};
+let startingLive = false;
 
 function liveActive() { return !!live.ws; }
 
 async function startLive() {
-  if (liveActive() || capture || startingCapture) return;
+  if (liveActive() || startingLive || capture || startingCapture) return;
+  startingLive = true; // one live line, one opening at a time
   window.speechSynthesis && speechSynthesis.cancel();
   clearResult();
   setState('preparing');
@@ -782,8 +799,13 @@ async function startLive() {
       audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
     });
   } catch (err) {
+    startingLive = false;
     setNotice('Parker can\\u2019t use the microphone (permission needed).');
     setState('idle');
+    return;
+  }
+  if (!startingLive) { // Stop was tapped while the mic was opening
+    try { stream.getTracks().forEach((track) => track.stop()); } catch (err) {}
     return;
   }
   const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
@@ -805,8 +827,14 @@ async function startLive() {
   live.proc.connect(live.gain);
   live.gain.connect(live.micCtx.destination);
 
+  startingLive = false;
   ws.onopen = () => { earcon('listen'); setState('live'); };
-  ws.onmessage = (message) => handleLiveEvent(JSON.parse(message.data));
+  ws.onmessage = (message) => {
+    let event;
+    try { event = JSON.parse(message.data); } catch (err) { return; }
+    if (!event || typeof event !== 'object') return;
+    handleLiveEvent(event);
+  };
   ws.onclose = () => { if (liveActive()) endLive('The live line closed.'); };
   ws.onerror = () => { if (liveActive()) endLive('The live line dropped.'); };
 }
@@ -826,7 +854,11 @@ function handleLiveEvent(event) {
     flushLivePlayback();
     $('speech').textContent = event.text;
     $('answer-block').hidden = false;
-    speakText(event.text); // the model's audio was cancelled server-side
+    // The model's audio was cancelled server-side; the redirect must be
+    // HEARD, not just shown — speakNow bypasses the turn-generation queue
+    // (found by the adversarial verifier: speakText's stale-gen check
+    // silently cancelled it on a fresh page).
+    speakNow(event.text);
   } else if (event.type === 'proposal_staged') {
     setNotice('On the screen to confirm: ' + (event.label || 'a suggested action'));
   } else if (event.type === 'notice' || event.type === 'unavailable') {
@@ -868,7 +900,16 @@ function flushLivePlayback() {
   live.nextTime = 0;
 }
 
+function speakNow(text) {
+  // Immediate speech outside the turn lifecycle (live-lane guard redirect).
+  if (!text || !window.speechSynthesis) return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 0.95;
+  speechSynthesis.speak(utterance);
+}
+
 function endLive(noticeText) {
+  startingLive = false;
   const ws = live.ws;
   live.ws = null;
   flushLivePlayback();
@@ -890,8 +931,9 @@ function endLive(noticeText) {
 // ---------------------------------------------------------------------------
 
 function stopParker() {
-  if (liveActive()) {
-    // In live mode there is one big way out: silence now, line closed.
+  if (liveActive() || startingLive) {
+    // In live mode there is one big way out: silence now, line closed —
+    // including a microphone that is still opening.
     earcon('stop');
     endLive('');
     return;

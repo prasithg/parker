@@ -120,7 +120,10 @@ class Settings(BaseSettings):
     # Brain (conversational answers behind the policy gate; docs/brain-adapters.md).
     # Without ANTHROPIC_API_KEY the answer lane stays the deterministic stub.
     parker_brain_model: str = "claude-sonnet-5"
-    parker_brain_max_tokens: int = 300
+    # Headroom matters: adaptive thinking counts against max_tokens, and a
+    # silent max_tokens stop would be spoken as a complete answer. The
+    # guard still trims speech to 3 sentences either way.
+    parker_brain_max_tokens: int = 700
     # Server-side web search for the Claude brain: the long tail of curiosity
     # (news, people, prices, events) answers with real citations instead of
     # hand-built provider lanes. Costs per search; family-administered.

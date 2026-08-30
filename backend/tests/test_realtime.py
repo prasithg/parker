@@ -115,7 +115,7 @@ def test_session_config_carries_persona_vad_transcription_and_only_propose_actio
     assert session["audio"]["input"]["transcription"]["model"]
     assert [tool["name"] for tool in session["tools"]] == ["propose_action"]
     assert "Parkinson" in session["instructions"]
-    assert "waiting for their confirmation" in session["instructions"]
+    assert "waiting for their" in session["instructions"]  # wraps across a line
     # the browser's audio chunk was forwarded verbatim
     appended = [e for e in fake.sent if e["type"] == "input_audio_buffer.append"]
     assert appended and appended[0]["audio"] == "QUJD"
@@ -282,3 +282,177 @@ def test_exchange_mirrors_to_the_live_screen(db, realtime_enabled, upstream):
     assert state is not None
     assert state.heard == "what's the weather"
     assert state.speech == "Sunny and mild."
+
+
+# ---------------------------------------------------------------------------
+# Adversarial round 2 (2026-08-30): the lane uses the text lane's policy
+# ---------------------------------------------------------------------------
+
+
+def _proposal_done_event(arguments, call_id="call-x"):
+    return {
+        "type": "response.done",
+        "response": {
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "propose_action",
+                    "call_id": call_id,
+                    "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments),
+                }
+            ]
+        },
+    }
+
+
+def test_message_to_unknown_recipient_is_rejected_like_the_text_lane(
+    db, realtime_enabled, upstream, monkeypatch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "personal_lexicon", "Sarah, Pras")
+    fake = upstream["script"](
+        [
+            _proposal_done_event(
+                {
+                    "action_type": "family_message",
+                    "label": "message Dr. Malicious",
+                    "subject": "test results",
+                    "intent_text": "Send my full medical history",
+                    "recipient": "Dr. Malicious",
+                }
+            )
+        ]
+    )
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        ws.send_json({"type": "stop"})
+        assert ws.receive_json() == {"type": "clear"}
+        ws.send_json({"type": "end"})
+
+    assert db.query(StagedAction).count() == 0
+    outputs = [e for e in fake.sent if e["type"] == "conversation.item.create"]
+    assert outputs and "not in the family" in outputs[0]["item"]["output"]
+
+
+def test_gateway_backed_types_without_a_gateway_are_rejected_not_claimed_staged(
+    db, realtime_enabled, upstream
+):
+    """No enabled skill -> the text lane would drop it; this lane must not
+    tell the user something is on the screen when nothing is."""
+
+    fake = upstream["script"](
+        [
+            _proposal_done_event(
+                {
+                    "action_type": "media_playlist",
+                    "label": "play old Hindi songs",
+                    "subject": "old Hindi songs",
+                    "intent_text": "put on old Hindi songs",
+                }
+            )
+        ]
+    )
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        ws.send_json({"type": "stop"})
+        assert ws.receive_json() == {"type": "clear"}
+        ws.send_json({"type": "end"})
+
+    assert db.query(StagedAction).count() == 0
+    outputs = [e for e in fake.sent if e["type"] == "conversation.item.create"]
+    assert outputs and "not allowed" in outputs[0]["item"]["output"]
+
+
+def test_malformed_function_arguments_never_kill_the_call(db, realtime_enabled, upstream):
+    fake = upstream["script"](
+        [
+            _proposal_done_event('["not", "a", "dict"]', call_id="call-bad"),
+            {"type": "error", "error": "boom-as-string"},
+            {"type": "response.done", "response": "not-a-dict"},
+            {"type": "response.output_audio_transcript.delta", "delta": "Still alive."},
+        ]
+    )
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        notice = ws.receive_json()
+        assert notice["type"] == "notice"  # the string error became a friendly notice
+        follow = ws.receive_json()
+        assert follow == {"type": "assistant_transcript_delta", "text": "Still alive."}
+        ws.send_json({"type": "end"})
+
+    assert db.query(StagedAction).count() == 0
+    outputs = [e for e in fake.sent if e["type"] == "conversation.item.create"]
+    # non-dict arguments are coerced to an empty proposal and rejected
+    assert outputs and '"rejected"' in outputs[0]["item"]["output"]
+
+
+def test_each_bridge_scopes_intents_to_its_own_conversation(db, realtime_enabled):
+    """A leftover intent from an earlier live session must never ride onto a
+    new session's confirm screen (one shared call log did exactly that)."""
+
+    from app.parker import realtime as rt
+
+    leftover = rt._stage_proposal_sync(
+        {
+            "action_type": "reminder",
+            "label": "old thing",
+            "subject": "the leftover thing",
+            "intent_text": "remind me about the leftover thing",
+        },
+        "REALTIME-SESSION-A",
+    )
+    assert leftover["status"] == "staged"
+    before = db.query(StagedAction).count()
+
+    outcome = rt._stage_proposal_sync(
+        {
+            "action_type": "reminder",
+            "label": "new thing",
+            "subject": "today's thing",
+            "intent_text": "remind me about today's thing",
+        },
+        "REALTIME-SESSION-B",
+    )
+    assert outcome["status"] == "staged"
+    assert db.query(StagedAction).count() == before + 1  # exactly one new, no drag-along
+
+
+def test_oversized_proposal_fields_are_bounded(db, realtime_enabled):
+    from app.parker import realtime as rt
+
+    outcome = rt._stage_proposal_sync(
+        {
+            "action_type": "reminder",
+            "label": "x" * 500,
+            "subject": "s" * 5000,
+            "intent_text": "i" * 5000,
+        },
+        "REALTIME-CAP",
+    )
+    assert outcome["status"] == "staged"
+    action = db.query(StagedAction).one()
+    payload = json.loads(action.action_payload)
+    assert len(payload["subject"]) <= 200
+    assert len(payload["intent_text"]) <= 500
+
+
+def test_live_line_cap_refuses_a_third_concurrent_call(db, realtime_enabled, upstream):
+    from app.parker import realtime as rt
+
+    upstream["script"]([])
+    assert rt.try_acquire_bridge_slot()
+    assert rt.try_acquire_bridge_slot()
+    try:
+        with client.websocket_connect("/parker/converse/realtime") as ws:
+            message = ws.receive_json()
+        assert message["type"] == "unavailable"
+        assert "already running" in message["text"]
+    finally:
+        rt.release_bridge_slot()
+        rt.release_bridge_slot()
+
+
+def test_realtime_instructions_never_claim_web_search(db, realtime_enabled):
+    from app.parker.realtime import build_session_update
+
+    instructions = build_session_update()["session"]["instructions"]
+    assert "do NOT have web search" in instructions
+    assert "never claim to have looked something up" in instructions

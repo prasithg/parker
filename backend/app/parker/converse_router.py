@@ -91,6 +91,13 @@ async def converse_realtime(websocket: WebSocket) -> None:
         )
         await websocket.close()
         return
+    if not realtime_lane.try_acquire_bridge_slot():
+        # Each bridge holds a billed upstream socket; this is one household.
+        await websocket.send_json(
+            {"type": "unavailable", "text": "A live conversation is already running."}
+        )
+        await websocket.close()
+        return
     bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
     try:
         await bridge.run()
@@ -105,6 +112,8 @@ async def converse_realtime(websocket: WebSocket) -> None:
             await websocket.close()
         except Exception:  # noqa: BLE001
             pass
+    finally:
+        realtime_lane.release_bridge_slot()
 
 
 @router.post("/converse/sessions/{session_id}/turns")
