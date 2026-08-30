@@ -1213,3 +1213,31 @@ and no local-first data rule — best experience wins.
   Victorian pages, tomorrow follow-up 3.8 s, "Did Collingwood win?" →
   "No, sorry Dad. The Bulldogs won a tense three-point victory, 14.12
   (96) to 14.9 (93)…" 3.9 s with AFL sources.
+
+## 2026-08-30 — Presence, streaming, and the realtime lane — SHIPPED
+
+Greenlit by Pras ("this still runs a bit too slow and it doesn't say
+thinking or talking like the new chatgpt voice… I greenlight all of it"):
+
+- **Sentence streaming** (`POST …/turns/stream`, ndjson): heard →
+  guarded speech sentences → authoritative final. Per-sentence gate runs
+  the same medical detector on the accumulated text, honors the
+  3-sentence trim cap, and goes silent on Stop. Live: a searched turn was
+  talking at ~2 s (was 15–20 s of dead air pre-effort/streaming).
+- **Presence layer**: breathing state orb (listening/thinking/talking),
+  soft synthesized earcons, word-pulse from TTS boundary events, a
+  truthful spoken cue ("Let me check.") if nothing lands within 1.2 s,
+  `prefers-reduced-motion` respected.
+- **The realtime lane** (`app/parker/realtime.py` + `/parker/converse/
+  realtime` websocket + the page's Live conversation control): browser ↔
+  Parker ↔ gpt-realtime-2.1 server relay. Semantic VAD (low eagerness),
+  native barge-in, `propose_action` the only tool (stages through the
+  pipeline; the model announces on-screen confirmation), post-hoc
+  transcript guard cancelling violations mid-word, Dad-screen mirror.
+  Fully fake-upstream tested; **live verification pending `OPENAI_API_KEY`**
+  — one env var, then Live conversation appears on the page.
+
+Evidence boundary: patient-loop streaming/presence live-verified in the
+pane; the realtime lane's audio loop and voice quality are unverified
+until the key exists. A/B protocol: same page, same receipts, same
+outcome layer — patient loop vs live lane, Dad's preference decides.

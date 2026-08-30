@@ -234,6 +234,16 @@ never hears itself.
   `PARKER_HOME/receipts/converse_latency.jsonl`; aggregate them with
   `backend/.venv/bin/python benchmark/curiosity_latency_report.py`.
 
+**Live conversation (optional, needs `OPENAI_API_KEY`).** With a key
+configured the page offers a fifth control, Live conversation: full-duplex
+speech over gpt-realtime — no Start/Done at all, semantic end-pointing
+tuned patient, talking over Parker just works, and Stop is one big way
+out. Parker's server stays in the middle: same persona, `propose_action`
+staging only, the medical guard cancelling a bad reply mid-word, the Dad
+screen mirroring the conversation. Audio goes to OpenAI in this mode —
+the family's explicit choice of lane. A/B it against the patient loop
+with the same receipts before deciding which one Dad meets first.
+
 Before a first-user session, rehearse the exact machine once:
 
 ```bash

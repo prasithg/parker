@@ -179,11 +179,28 @@ server-side web search tool.
   sentence streaming starts TTS after the first sentence. Config:
   `PARKER_BRAIN_WEB_SEARCH` (default on), `PARKER_BRAIN_WEB_SEARCH_MAX_USES`.
 
-## Later: realtime speech models
+## The realtime lane: gpt-realtime full duplex (`backend/app/parker/realtime.py`)
 
-Families may opt into a frontier realtime speech model (OpenAI Realtime /
-gpt-realtime family) for the conversational loop as an explicit
-administrator choice. That is still just a `BrainAdapter`: the realtime
-session owns audio-in/audio-out, but proposals re-enter the same policy
-gate, and the pre-model guards still screen the transcript before the turn
-is committed. Local-first ASR remains the default.
+Shipped 2026-08-30 as the family opt-in the docs anticipated — and per
+Pras's same-day posture call, cloud audio is simply allowed when it makes
+the best experience (CLAUDE.md live-loop line). The browser holds one
+websocket to Parker; Parker holds one to the OpenAI Realtime API
+(`gpt-realtime-2.1`, semantic VAD at low eagerness — end-pointing that
+reads whether a thought is finished, with native barge-in) and stays the
+policy boundary in the middle:
+
+- **`propose_action` is the only tool** the realtime session gets. A call
+  is validated and staged through the same pipeline; the model is told to
+  say it's waiting for on-screen confirmation. Nothing executes from this
+  lane in v0.
+- **The guard runs post-hoc on the streamed transcript.** The model hears
+  audio directly (that is the point), so the deterministic guards cannot
+  run pre-model here; instead a medical-boundary violation in the
+  assistant's own transcript cancels the response mid-word, flushes
+  unplayed audio, and speaks the standard redirect. Pinned by tests.
+- **The screen mirror and outcome trail stay on** — user transcripts and
+  spoken replies land on the live Dad screen row like every other lane.
+- Enabled by `OPENAI_API_KEY` (+ `PARKER_REALTIME_ENABLED`, default on);
+  keyless, the page simply doesn't offer it and the patient loop is
+  unchanged. Real-key live verification is pending the key; the whole
+  bridge contract is fake-upstream tested (`backend/tests/test_realtime.py`).

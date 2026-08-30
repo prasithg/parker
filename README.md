@@ -123,7 +123,8 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 | Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer admin/skills dashboard |
 | Eval harness | real-audio harness + full synthetic suite (see above) | pilot-voice longitudinal tracking, human-graded repair quality |
 | Voice out / live loop | macOS `say` TTS + energy-VAD end-pointing in `make talk-loop`, per-turn latency line; no external send path exists | wake word, realtime models (gpt-realtime family) |
-| Curiosity loop | `/parker/converse` browser harness: manual Start/Done capture (16 kHz WAV in-browser), general web-search answers with on-screen sources, browser-TTS immediate Stop with a stale-result generation contract, local latency receipts | realtime speech lane, streaming ASR, OpenClaw-gateway A/B |
+| Curiosity loop | `/parker/converse` browser harness: manual Start/Done capture (16 kHz WAV in-browser), general web-search answers streamed sentence-by-sentence with on-screen sources, thinking/talking presence (orb, earcons, truthful latency cue), browser-TTS immediate Stop with a stale-result generation contract, local latency receipts | streaming ASR, OpenClaw-gateway A/B |
+| Live conversation (opt-in) | gpt-realtime full duplex behind Parker's server relay: semantic patient end-pointing, native barge-in, propose_action-only tool surface staged through the same pipeline, post-hoc transcript guard, Dad-screen mirror; needs `OPENAI_API_KEY` | spoken confirmation in-lane, response truncation sync |
 
 ## Parker as an app (beta)
 

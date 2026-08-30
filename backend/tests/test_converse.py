@@ -792,3 +792,12 @@ def test_converse_page_carries_the_presence_layer(db):
     assert "prefers-reduced-motion" in html
     assert "onboundary" in html         # word-pulse while talking
     assert "Thinking…" in html and "Parker is talking" in html
+
+
+def test_converse_page_offers_the_live_lane_behind_availability(db):
+    html = client.get("/parker/converse").text
+    assert 'id="btn-live"' in html
+    assert "Live conversation" in html
+    assert "realtime_available" in html   # server decides; the page just shows
+    assert "/parker/converse/realtime" in html
+    assert "talk over Parker any time" in html  # barge-in is part of the promise

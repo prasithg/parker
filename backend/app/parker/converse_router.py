@@ -14,12 +14,17 @@ import queue
 import threading
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+import logging
+
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.parker import realtime as realtime_lane
 from app.parker.converse import ConverseError, ConverseStore
 from app.parker.converse_ui import CONVERSE_PAGE_HTML
+
+logger = logging.getLogger("parker.converse")
 
 router = APIRouter()
 
@@ -60,7 +65,46 @@ def converse_page() -> str:
 def create_converse_session() -> dict[str, Any]:
     """Start one conversation session and warm the shared local model."""
 
-    return converse_store.create_session()
+    created = converse_store.create_session()
+    created["realtime_available"] = realtime_lane.realtime_available()
+    return created
+
+
+@router.websocket("/converse/realtime")
+async def converse_realtime(websocket: WebSocket) -> None:
+    """The live full-duplex lane: browser <-> Parker policy <-> gpt-realtime.
+
+    Parker stays the boundary in the middle — guards, the action pipeline,
+    and the screen mirror run server-side (app/parker/realtime.py).
+    """
+
+    await websocket.accept()
+    if not realtime_lane.realtime_available():
+        await websocket.send_json(
+            {
+                "type": "unavailable",
+                "text": (
+                    "Live conversation needs the family to add an OpenAI key "
+                    "first. The patient loop still works."
+                ),
+            }
+        )
+        await websocket.close()
+        return
+    bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
+    try:
+        await bridge.run()
+    except WebSocketDisconnect:
+        pass
+    except Exception:  # noqa: BLE001 — never leak internals to the patient page
+        logger.exception("realtime bridge failed")
+        try:
+            await websocket.send_json(
+                {"type": "notice", "text": "The live line dropped — tap Live conversation to reconnect."}
+            )
+            await websocket.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @router.post("/converse/sessions/{session_id}/turns")

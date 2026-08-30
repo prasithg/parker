@@ -91,10 +91,12 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str = ""  # cloned voice ID
     voice_clone_consented: bool = False  # explicit family consent recorded
 
-    # OpenAI
+    # OpenAI — the realtime full-duplex lane (app/parker/realtime.py).
+    # Key present + enabled → the converse page offers Live conversation.
     openai_api_key: str = ""
-    openai_realtime_model: str = "gpt-4o-realtime-preview-2024-12-17"
-    openai_realtime_voice: str = "alloy"
+    openai_realtime_model: str = "gpt-realtime-2.1"
+    openai_realtime_voice: str = "marin"
+    parker_realtime_enabled: bool = True
 
     # Patient
     patient_phone_number: str = ""

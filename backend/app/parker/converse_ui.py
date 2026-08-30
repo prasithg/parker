@@ -147,6 +147,8 @@ CONVERSE_PAGE_HTML = """<!doctype html>
   }
   .big:disabled { opacity: .75; }
   #btn-start { background: #133c1f; color: #7fe3a1; border-color: #2e6b2e; }
+  #btn-live  { background: #0c1b2a; color: #9fd8ff; border-color: #1f3a55; }
+  body[data-state="live"] #orb { background: #6db3ff; box-shadow: 0 0 44px 6px rgba(109,179,255,.4); animation: breathe 2s ease-in-out infinite; }
   #btn-done  { background: #4a3a08; color: #ffd166; border-color: #8a6d1a; }
   #btn-stop  { background: #431a1f; color: #ff9aa4; border-color: #a33; }
   #btn-again { background: #1a2432; color: #b9c6d8; border-color: #34435c; }
@@ -203,6 +205,7 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 
 <div id="controls">
   <button class="big" id="btn-start">Start listening</button>
+  <button class="big" id="btn-live" hidden>Live conversation</button>
   <button class="big" id="btn-done" hidden>Done talking</button>
   <button class="big" id="btn-stop" hidden>Stop Parker</button>
   <button class="big" id="btn-again" hidden>Try again</button>
@@ -242,6 +245,7 @@ let startingCapture = false;
 let lastTimings = null;
 let pendingAwaiting = '';
 let cueTimer = null;
+let realtimeAvailable = false;
 
 const $ = (id) => document.getElementById(id);
 const statusText = $('status-text');
@@ -256,6 +260,7 @@ const STATE_TEXT = {
   speaking: 'Parker is talking. Stop any time.',
   stopped: 'Stopped. Nothing else will happen until you start again.',
   error: 'Parker hit a snag on this laptop. Tap Start listening to try again.',
+  live: 'Live — just talk, and talk over Parker any time. Stop ends it.',
 };
 
 // Controls swap identity in the same screen footprint on state change; a
@@ -271,9 +276,11 @@ function setState(state, text) {
   const previous = document.body.dataset.state;
   document.body.dataset.state = state;
   statusText.textContent = text || STATE_TEXT[state] || '';
-  $('btn-start').hidden = !(state === 'idle' || state === 'stopped' || state === 'error');
+  const resting = state === 'idle' || state === 'stopped' || state === 'error';
+  $('btn-start').hidden = !resting;
+  $('btn-live').hidden = !(resting && realtimeAvailable);
   $('btn-done').hidden = state !== 'listening';
-  $('btn-stop').hidden = !(state === 'preparing' || state === 'listening' || state === 'thinking' || state === 'speaking');
+  $('btn-stop').hidden = !(state === 'preparing' || state === 'listening' || state === 'thinking' || state === 'speaking' || state === 'live');
   $('btn-again').hidden = !(state === 'stopped' || state === 'error');
   if (previous !== state) guardButtons();
 }
@@ -397,6 +404,7 @@ async function createSession() {
     if (!res.ok) throw new Error('session create failed: ' + res.status);
     const data = await res.json();
     sessionId = data.session_id;
+    realtimeAvailable = !!data.realtime_available;
     if (!data.asr_ready) {
       setNotice('Voice recognition is not ready on this laptop — typing still works.');
       showTypeRow(true);
@@ -496,7 +504,7 @@ function mergeAndEncode(held) {
   return encodeWav(all, held.rate, TARGET_RATE);
 }
 
-function encodeWav(float32, inRate, outRate) {
+function resamplePCM16(float32, inRate, outRate) {
   const ratio = inRate / outRate;
   const outLen = Math.max(1, Math.floor(float32.length / ratio));
   const pcm = new Int16Array(outLen);
@@ -509,6 +517,11 @@ function encodeWav(float32, inRate, outRate) {
     sample = Math.max(-1, Math.min(1, sample));
     pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
   }
+  return pcm;
+}
+
+function encodeWav(float32, inRate, outRate) {
+  const pcm = resamplePCM16(float32, inRate, outRate);
   const buffer = new ArrayBuffer(44 + pcm.length * 2);
   const view = new DataView(buffer);
   const writeString = (at, text) => { for (let i = 0; i < text.length; i++) view.setUint8(at + i, text.charCodeAt(i)); };
@@ -747,10 +760,142 @@ function sendText(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Live conversation: full-duplex over the server relay (gpt-realtime).
+// Parker's server stays the policy boundary; this side is mic in, audio out,
+// live captions, and one big way out.
+// ---------------------------------------------------------------------------
+
+const LIVE_RATE = 24000;
+const live = {ws: null, micCtx: null, micStream: null, proc: null, gain: null,
+              playCtx: null, nextTime: 0, sources: []};
+
+function liveActive() { return !!live.ws; }
+
+async function startLive() {
+  if (liveActive() || capture || startingCapture) return;
+  window.speechSynthesis && speechSynthesis.cancel();
+  clearResult();
+  setState('preparing');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
+    });
+  } catch (err) {
+    setNotice('Parker can\\u2019t use the microphone (permission needed).');
+    setState('idle');
+    return;
+  }
+  const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const ws = new WebSocket(scheme + location.host + '/parker/converse/realtime');
+  live.ws = ws;
+  live.micStream = stream;
+  live.playCtx = new (window.AudioContext || window.webkitAudioContext)();
+  live.micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = live.micCtx.createMediaStreamSource(stream);
+  live.proc = live.micCtx.createScriptProcessor(4096, 1, 1);
+  live.gain = live.micCtx.createGain();
+  live.gain.gain.value = 0;
+  live.proc.onaudioprocess = (event) => {
+    if (!live.ws || live.ws.readyState !== 1) return;
+    const pcm = resamplePCM16(event.inputBuffer.getChannelData(0), live.micCtx.sampleRate, LIVE_RATE);
+    live.ws.send(JSON.stringify({type: 'audio', data: bufferToBase64(pcm.buffer)}));
+  };
+  source.connect(live.proc);
+  live.proc.connect(live.gain);
+  live.gain.connect(live.micCtx.destination);
+
+  ws.onopen = () => { earcon('listen'); setState('live'); };
+  ws.onmessage = (message) => handleLiveEvent(JSON.parse(message.data));
+  ws.onclose = () => { if (liveActive()) endLive('The live line closed.'); };
+  ws.onerror = () => { if (liveActive()) endLive('The live line dropped.'); };
+}
+
+function handleLiveEvent(event) {
+  if (event.type === 'audio') {
+    playLivePcm(event.data);
+  } else if (event.type === 'user_transcript') {
+    renderHeard(event.text);
+    $('speech').textContent = '';
+    $('answer-block').hidden = true;
+  } else if (event.type === 'assistant_transcript_delta') {
+    appendSpeechText(event.text);
+  } else if (event.type === 'clear') {
+    flushLivePlayback();
+  } else if (event.type === 'guard_redirect') {
+    flushLivePlayback();
+    $('speech').textContent = event.text;
+    $('answer-block').hidden = false;
+    speakText(event.text); // the model's audio was cancelled server-side
+  } else if (event.type === 'proposal_staged') {
+    setNotice('On the screen to confirm: ' + (event.label || 'a suggested action'));
+  } else if (event.type === 'notice' || event.type === 'unavailable') {
+    setNotice(event.text || '');
+    if (event.type === 'unavailable') endLive('');
+  }
+}
+
+function playLivePcm(encoded) {
+  try {
+    if (!live.playCtx) return;
+    const raw = atob(encoded);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    const usable = bytes.length - (bytes.length % 2);
+    if (!usable) return;
+    const pcm = new Int16Array(bytes.buffer, 0, usable / 2);
+    const floats = new Float32Array(pcm.length);
+    for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
+    const buffer = live.playCtx.createBuffer(1, floats.length, LIVE_RATE);
+    buffer.getChannelData(0).set(floats);
+    const src = live.playCtx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(live.playCtx.destination);
+    const at = Math.max(live.playCtx.currentTime + 0.05, live.nextTime);
+    src.start(at);
+    live.nextTime = at + buffer.duration;
+    live.sources.push(src);
+    src.onended = () => { live.sources = live.sources.filter((s) => s !== src); };
+    const orb = $('orb');
+    orb.classList.add('pulse');
+    setTimeout(() => orb.classList.remove('pulse'), 90);
+  } catch (err) { /* one bad chunk must not end the call */ }
+}
+
+function flushLivePlayback() {
+  for (const src of live.sources) { try { src.stop(); } catch (err) {} }
+  live.sources = [];
+  live.nextTime = 0;
+}
+
+function endLive(noticeText) {
+  const ws = live.ws;
+  live.ws = null;
+  flushLivePlayback();
+  if (ws) {
+    try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
+    try { ws.close(); } catch (err) {}
+  }
+  try { live.proc && live.proc.disconnect(); live.gain && live.gain.disconnect(); } catch (err) {}
+  try { live.micStream && live.micStream.getTracks().forEach((track) => track.stop()); } catch (err) {}
+  try { live.micCtx && live.micCtx.close(); } catch (err) {}
+  try { live.playCtx && live.playCtx.close(); } catch (err) {}
+  live.micCtx = null; live.micStream = null; live.proc = null; live.gain = null; live.playCtx = null;
+  if (noticeText) setNotice(noticeText);
+  setState('stopped');
+}
+
+// ---------------------------------------------------------------------------
 // Stop: cancel speech, abort the request, invalidate both generations.
 // ---------------------------------------------------------------------------
 
 function stopParker() {
+  if (liveActive()) {
+    // In live mode there is one big way out: silence now, line closed.
+    earcon('stop');
+    endLive('');
+    return;
+  }
   const tapped = performance.now();
   clientGen++;
   startingCapture = false; // discard a microphone that is still opening
@@ -781,6 +926,7 @@ function tryAgain() { clearResult(); startListening(); }
 function showTypeRow(show) { $('type-row').hidden = !show; if (show) $('type-input').focus(); }
 
 $('btn-start').addEventListener('click', startListening);
+$('btn-live').addEventListener('click', startLive);
 $('btn-done').addEventListener('click', doneTalking);
 $('btn-stop').addEventListener('click', stopParker);
 $('btn-again').addEventListener('click', tryAgain);
