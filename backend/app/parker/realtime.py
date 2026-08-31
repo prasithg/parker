@@ -48,6 +48,7 @@ import binascii
 import hashlib
 import json
 import logging
+import threading as _threading
 import time
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional
@@ -313,6 +314,54 @@ def _make_db() -> Any:
     return SessionLocal()
 
 
+_db_thread_lock = _threading.Lock()
+_inflight_db_threads = 0
+
+
+async def _tracked_thread(fn: Callable[[], Any]) -> Any:
+    """Run a DB job on the threadpool, counted while it could hold the DB.
+
+    The bridge slot only tracks the handler task, and a cancelled
+    threadpool await ABANDONS its thread (measured: anyio's to_thread
+    under plain asyncio returns from cancellation immediately while the
+    thread runs on) — so a thread can still hold the database when every
+    task observable reads done. Test teardowns wait for
+    `_active_bridges == 0 and _inflight_db_threads == 0` so drop_all
+    never races a live thread ("database table is locked").
+
+    The count must survive abandonment, so the decrement belongs to
+    whoever actually owns the job at the end: the thread's finally once
+    it has started, or the cancelled awaiter when the job was aborted
+    before its thread ran. The lock arbitrates that handoff atomically.
+    """
+
+    global _inflight_db_threads
+    box = {"state": "pending"}
+
+    def wrapped() -> Any:
+        global _inflight_db_threads
+        with _db_thread_lock:
+            if box["state"] == "aborted":
+                return None  # the awaiter already released the count
+            box["state"] = "running"
+        try:
+            return fn()
+        finally:
+            with _db_thread_lock:
+                _inflight_db_threads -= 1
+
+    with _db_thread_lock:
+        _inflight_db_threads += 1
+    try:
+        return await run_in_threadpool(wrapped)
+    except asyncio.CancelledError:
+        with _db_thread_lock:
+            if box["state"] == "pending":
+                box["state"] = "aborted"
+                _inflight_db_threads -= 1
+        raise
+
+
 def _with_local_write_retries(label: str, write: Callable[[], None]) -> None:
     """Run one best-effort local write, retrying transient refusals.
 
@@ -341,11 +390,21 @@ def _record_exchange_sync(heard: str, speech: str) -> None:
     from app.parker.screen import publish_screen_state
 
     def write() -> None:
+        from app.parker.screen import get_screen_state
+
         db = _make_db()
         try:
             publish_screen_state(
                 db, heard=heard, speech=speech, kind="answer", choices=None, awaiting=""
             )
+            # Verify-after-commit (shared-connection rollback artifact —
+            # see _with_local_write_retries). A later legitimate overwrite
+            # by another live line also fails this check; the retry then
+            # rewrites this exchange, which last-writer-wins tolerates.
+            db.expire_all()
+            state = get_screen_state(db)
+            if state is None or state.heard != heard or state.speech != speech:
+                raise RuntimeError("screen mirror write was rolled back")
         finally:
             db.close()
 
@@ -431,6 +490,25 @@ def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> N
                 )
             else:
                 db.commit()
+            # Verify-after-commit: a concurrent session's rollback on a
+            # shared connection can silently discard the whole transaction
+            # (test-harness StaticPool artifact). Raise so the retry
+            # wrapper re-runs the idempotent write instead of losing the
+            # session's only durable record.
+            db.expire_all()
+            landed = (
+                db.query(ConversationMemory)
+                .filter(
+                    ConversationMemory.call_log_id == call.id,
+                    ConversationMemory.source == "realtime",
+                )
+                .first()
+                is not None
+                if substantive
+                else True
+            )
+            if call.ended_at is None or not landed:
+                raise RuntimeError("realtime finalize write was rolled back")
         finally:
             db.close()
 
@@ -586,13 +664,53 @@ class RealtimeBridge:
         self._wrapup_asked = False
         self._goodbye_requested = False
         self._closing_sent = False
+        # Session journal (the human-testing flywheel): every turn,
+        # injection, ack, and proposal lands in realtime_session_events so
+        # the review surface can show the finished session back to a human.
+        self._event_seq = 0
+        self._opened_mono = time.monotonic()
+        self._lookup_asked: dict[str, float] = {}
+
+    def _event_writer(
+        self,
+        kind: str,
+        heard: str = "",
+        said: str = "",
+        detail: Optional[dict[str, Any]] = None,
+    ) -> Callable[[], None]:
+        """One journal row as a sync closure (seq allocated on the loop)."""
+
+        self._event_seq += 1
+        seq = self._event_seq
+        payload = dict(detail or {})
+        payload.setdefault("t_ms", int((time.monotonic() - self._opened_mono) * 1000))
+        call_sid = self._call_sid
+
+        def write() -> None:
+            from app.parker import session_review
+
+            session_review.record_event_sync(
+                _make_db, call_sid, seq, kind, heard, said, payload
+            )
+
+        return write
+
+    async def _journal(
+        self,
+        kind: str,
+        heard: str = "",
+        said: str = "",
+        detail: Optional[dict[str, Any]] = None,
+    ) -> None:
+        writer = self._event_writer(kind, heard=heard, said=said, detail=detail)
+        await _tracked_thread(lambda: _with_local_write_retries("session event", writer))
 
     async def run(self) -> None:
         connect = self._upstream_connect or globals()["connect_openai"]
         self._upstream = await connect()
         try:
             await self._upstream.send(json.dumps(build_session_update()))
-            await run_in_threadpool(_ensure_call_log_sync, self._call_sid)
+            await _tracked_thread(lambda: _ensure_call_log_sync(self._call_sid))
             # The greeting never waits for context: speak first, load behind.
             await self._send_system_item(self._greeting_instruction())
             await self._request_nudge()
@@ -633,7 +751,17 @@ class RealtimeBridge:
             # A turn he spoke but the model never answered (stalled upstream,
             # abrupt drop) must not vanish from the record (gauntlet find S09).
             self._exchanges.append((self._user_transcript, ""))
+            dangling = self._event_writer(
+                "turn", heard=self._user_transcript, detail={"dangling": True}
+            )
             self._user_transcript = ""
+            await _await_despite_cancel(
+                asyncio.ensure_future(
+                    _tracked_thread(
+                        lambda: _with_local_write_retries("session event", dangling)
+                    )
+                )
+            )
         for task in self._worker_tasks:
             task.cancel()
         if self._worker_tasks:
@@ -642,8 +770,9 @@ class RealtimeBridge:
                     asyncio.wait(set(self._worker_tasks), timeout=1.0)
                 )
             )
+        exchanges = list(self._exchanges)
         finalize = asyncio.ensure_future(
-            run_in_threadpool(_finalize_session_sync, self._call_sid, list(self._exchanges))
+            _tracked_thread(lambda: _finalize_session_sync(self._call_sid, exchanges))
         )
         await _await_despite_cancel(finalize)
         if not finalize.cancelled() and finalize.exception() is not None:
@@ -725,7 +854,7 @@ class RealtimeBridge:
             try:
                 try:
                     result = await asyncio.wait_for(
-                        run_in_threadpool(work), WORKER_TIMEOUT_SECONDS
+                        _tracked_thread(work), WORKER_TIMEOUT_SECONDS
                     )
                 except asyncio.TimeoutError:
                     result = WorkerResult(kind=kind, question=question, error="it took too long")
@@ -758,6 +887,11 @@ class RealtimeBridge:
             # of its own (the model must not narrate the card).
             await self._send_system_item(realtime_workers.render_context_item(result))
             logger.info("realtime receipt kind=context worker_ms=%d", worker_ms)
+            await self._journal(
+                "injection",
+                said=result.speech,
+                detail={"worker": "context", "worker_ms": worker_ms},
+            )
             return
         age_seconds = max(0.0, time.time() - result.started_at)
         await self._send_system_item(
@@ -781,6 +915,23 @@ class RealtimeBridge:
             result.error or "none",
         )
         await self._request_nudge()
+        asked = self._lookup_asked.pop(" ".join(result.question.lower().split()), None)
+        await self._journal(
+            "injection",
+            said=result.speech,
+            detail={
+                "worker": "search",
+                "question": result.question,
+                "worker_ms": worker_ms,
+                "age_s": int(age_seconds),
+                "since_ask_ms": (
+                    int((time.monotonic() - asked) * 1000) if asked is not None else None
+                ),
+                "error": result.error or "",
+                "guard_tripped": result.guard_tripped,
+                "sources": len(result.sources),
+            },
+        )
 
     # ------------------------------------------------------------------
     # Idle watchdog: quiet → wrap-up question → goodbye → graceful close.
@@ -898,6 +1049,9 @@ class RealtimeBridge:
                 await self._browser_send(
                     {"type": "guard_redirect", "text": MEDICAL_BOUNDARY_REDIRECT}
                 )
+                # The record keeps the redirect as what was SAID; the journal
+                # keeps what the guard caught, so the tester can judge the trip.
+                await self._journal("guard_trip", said=self._assistant_transcript)
             elif not self._guard_tripped:
                 await self._browser_send({"type": "assistant_transcript_delta", "text": delta})
         elif etype.endswith("input_audio_transcription.completed"):
@@ -953,13 +1107,25 @@ class RealtimeBridge:
             if not self._guard_tripped
             else MEDICAL_BOUNDARY_REDIRECT
         )
-        if self._user_transcript or speech:
-            await run_in_threadpool(_record_exchange_sync, self._user_transcript, speech)
-            if len(self._exchanges) < _MAX_TRACKED_EXCHANGES:
-                self._exchanges.append((self._user_transcript, speech))
+        # Consume the turn synchronously BEFORE any await: cancellation can
+        # land on any await below, and a turn that is mid-recording must not
+        # still look unanswered to shutdown's dangling-turn capture (S09) —
+        # that double-counts the exchange.
+        heard_now = self._user_transcript
+        guard_tripped = self._guard_tripped
         self._assistant_transcript = ""
         self._guard_tripped = False
         self._user_transcript = ""
+        if heard_now or speech:
+            if len(self._exchanges) < _MAX_TRACKED_EXCHANGES:
+                self._exchanges.append((heard_now, speech))
+            await _tracked_thread(lambda: _record_exchange_sync(heard_now, speech))
+            await self._journal(
+                "turn",
+                heard=heard_now,
+                said=speech,
+                detail={"guard_tripped": guard_tripped},
+            )
 
         for item in response.get("output") or []:
             if not isinstance(item, dict) or item.get("type") != "function_call":
@@ -988,8 +1154,8 @@ class RealtimeBridge:
         self, item: dict[str, Any], arguments: dict[str, Any]
     ) -> None:
         try:
-            outcome = await run_in_threadpool(
-                _stage_proposal_sync, arguments, self._call_sid
+            outcome = await _tracked_thread(
+                lambda: _stage_proposal_sync(arguments, self._call_sid)
             )
         except Exception:  # noqa: BLE001 — a dead store must not strand the tool call
             # The model is waiting on this call_id; silence would leave it
@@ -1016,10 +1182,20 @@ class RealtimeBridge:
             await self._browser_send(
                 {"type": "proposal_staged", "label": str(arguments.get("label", ""))[:80]}
             )
+        await self._journal(
+            "proposal",
+            detail={
+                "label": str(arguments.get("label", ""))[:80],
+                "action_type": str(arguments.get("action_type", "")),
+                "status": str(outcome.get("status", "")),
+                "note": str(outcome.get("detail", ""))[:200],
+            },
+        )
 
     async def _handle_look_that_up(
         self, item: dict[str, Any], arguments: dict[str, Any]
     ) -> None:
+        asked = time.monotonic()
         question = str(arguments.get("question", "")).strip()[
             : realtime_workers.MAX_QUESTION_LENGTH
         ]
@@ -1042,6 +1218,7 @@ class RealtimeBridge:
             }
         else:
             self._inflight_lookups.add(key)
+            self._lookup_asked[key] = asked
             self._spawn_search_worker(question, key)
             ack = {
                 "status": "working",
@@ -1066,3 +1243,11 @@ class RealtimeBridge:
         )
         logger.info("realtime receipt kind=ack status=%s", ack["status"])
         await self._request_nudge()
+        await self._journal(
+            "lookup_ack",
+            detail={
+                "question": question,
+                "status": ack["status"],
+                "ack_ms": int((time.monotonic() - asked) * 1000),
+            },
+        )

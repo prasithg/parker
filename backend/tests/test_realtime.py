@@ -174,7 +174,12 @@ def realtime_db(db, monkeypatch):
     factory = sessionmaker(bind=db.get_bind())
     monkeypatch.setattr(realtime, "_db_session_factory", factory)
     yield db
-    _wait_until(lambda: realtime._active_bridges == 0, timeout=3.0)
+    # Quiescence, not just the slot: threadpool DB threads can outlive a
+    # cancelled worker task, and drop_all must never race one.
+    _wait_until(
+        lambda: realtime._active_bridges == 0 and realtime._inflight_db_threads == 0,
+        timeout=3.0,
+    )
 
 
 def _look_done_event(question, call_id="look-1"):

@@ -1349,3 +1349,44 @@ against the real gateway (the `/parker/v1/context` + skills endpoints
 need the harness-side plugin, filed above). The pytest deck stays on
 mocks by design; a manual `make`-target smoke against the real gateway is
 the right shape when we swap.
+
+## 2026-08-31 — The human-testing flywheel: review-the-session — SHIPPED
+
+Branch `fable/human-testing-flywheel`. The seeing gap is closed: the
+bridge journals every session into `realtime_session_events`
+(`app/parker/session_review.py`) — each turn (heard/said, guard-trip
+flag), worker injections with the injected text, `look_that_up` acks
+with measured ack latency, asked→injected latency per search, proposal
+outcomes — and `/parker/sessions/ui` (dashboard-auth, caregiver-tier
+single-file page) shows a finished session back to the tester: the
+timeline, the staged actions, what the guard cancelled mid-word (journal
+only — the room still hears only the redirect), and what the NEXT
+session's context card now carries (computed live via the same builder,
+with the session's minted topic memory named). One tap files "that felt
+wrong because…" into `realtime_session_feedback` against the exact
+event. The converse page's family-details panel links to it. Journal
+writes are best-effort with bounded idempotent retries; nothing new
+crosses the browser frame vocabulary, so the pinned live contracts stand
+untouched. New deck dimension: `tests/test_scenarios_review.py` (5
+scenarios, auto-enrolled in `make eval-voice-scenarios`); route pins in
+`tests/test_session_review.py`.
+
+Hardened along the way (the review scenarios flushed three latent races
+in the shared-connection test harness — details in
+docs/personas/ravi-scenarios.md Round 4): verify-after-commit on the
+realtime local writers (a concurrent session's rollback on a shared
+SQLite connection could silently discard a committed-looking write — the
+CI flake class), an accurate in-flight DB-thread count for test
+teardowns (a cancelled threadpool await ABANDONS its thread — measured),
+and turn state is now consumed before any await in response handling so
+shutdown's dangling-turn capture (S09) can never double-count a
+mid-recording turn.
+
+Named follow-ups (deliberately not built):
+- **Feedback → learning loop**: filed feedback rows are stored and
+  surfaced, but nothing consumes them yet (rollup lane, prompt tuning,
+  eval fixtures mined from "felt wrong" moments).
+- **Realtime OutcomeRecorder** (still open from the orchestrator slice)
+  — the journal now provides the per-turn substrate for it.
+- **Browser-side latency marks** for the live lane (client-perceived
+  audio latency vs the server-side numbers the journal carries).

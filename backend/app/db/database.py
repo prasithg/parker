@@ -30,6 +30,7 @@ def create_tables(bind=None):
     import app.parker.loop_state  # noqa: F401
     import app.parker.research_handoff  # noqa: F401
     import app.parker.screen  # noqa: F401
+    import app.parker.session_review  # noqa: F401
 
     target = bind if bind is not None else engine
     if target is engine:
