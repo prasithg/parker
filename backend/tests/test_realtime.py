@@ -225,7 +225,7 @@ def test_session_config_carries_persona_vad_transcription_and_tools(
     # brainless -> propose_action stays the only tool
     assert [tool["name"] for tool in session["tools"]] == ["propose_action"]
     assert "Parkinson" in session["instructions"]
-    assert "waiting for their" in session["instructions"]  # wraps across a line
+    assert "waiting for him to confirm" in session["instructions"]  # he taps, nobody else
     assert "Right now it is" in session["instructions"]  # local clock grounding
     # the browser's audio chunk was forwarded verbatim
     appended = [e for e in fake.sent if e["type"] == "input_audio_buffer.append"]

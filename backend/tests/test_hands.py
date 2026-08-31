@@ -177,7 +177,9 @@ def test_proposable_types_require_an_enabled_skill():
     without = effective_proposable_action_types()
     assert "media_playlist" not in without
     assert "open_links" not in without
-    assert {"reminder", "family_message", "exercise_start", "appointment_note"} <= without
+    assert {"reminder", "family_message", "exercise_start"} <= without
+    # proposable-but-never-stageable types are no longer advertised at all
+    assert "appointment_note" not in without
 
     configure_hands(FakeHands(action_types=("media_playlist",)))
     with_playlist = effective_proposable_action_types()

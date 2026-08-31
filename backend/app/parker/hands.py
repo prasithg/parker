@@ -156,10 +156,16 @@ def gateway_executable_action_types() -> frozenset[str]:
 
 
 def effective_proposable_action_types() -> frozenset[str]:
-    """What brains may propose right now: base set minus skill-less gateway types."""
+    """What brains may propose right now: only what can actually stage.
 
-    from app.brain.adapter import OPENCLAW_BACKED_ACTION_TYPES, PROPOSABLE_ACTION_TYPES
+    A type that would die at the staging gate must not be offered at the
+    conversation seam — the model would promise "I'll write that down" and
+    the pipeline would answer "nothing is waiting", every time (found live:
+    appointment_note was proposable but had no resolution mapping and no
+    v0 execution, so it could never stage anywhere).
+    """
 
-    hands = configured_hands()
-    enabled = hands.enabled_action_types() if hands is not None else frozenset()
-    return PROPOSABLE_ACTION_TYPES - (OPENCLAW_BACKED_ACTION_TYPES - enabled)
+    from app.brain.adapter import PROPOSABLE_ACTION_TYPES
+    from app.parker.pipeline import currently_executable_action_types
+
+    return PROPOSABLE_ACTION_TYPES & currently_executable_action_types()

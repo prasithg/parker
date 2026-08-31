@@ -607,7 +607,7 @@ def test_he_speaks_up_just_as_parker_is_writing_it_down(voice_world, monkeypatch
             lambda: [t for t in _system_items(fake) if "anything else" in t]
         )
         assert _wait_until(
-            lambda: [t for t in _system_items(fake) if "about to close" in t]
+            lambda: [t for t in _system_items(fake) if "closes on its own" in t]
         )
         # this response.done IS the goodbye's own turn
         fake.feed(
@@ -670,7 +670,7 @@ def test_tuesdays_card_is_still_tuesdays_card(voice_world):
         assert _wait_until(lambda: _function_outputs(fake1))
         assert json.loads(_function_outputs(fake1)[0]["item"]["output"])["status"] == "staged"
         assert ws.receive_json() == {"type": "proposal_staged", "label": "walk"}
-        fake1.feed(user_said("thanks"))
+        fake1.feed(user_said("thanks for setting that up"))
         assert ws.receive_json()["type"] == "user_transcript"
         fake1.feed(done())
         # a visible event AFTER that response.done proves the exchange landed

@@ -134,7 +134,7 @@ def test_both_workers_crash_and_only_the_asked_for_one_speaks(voice_world, monke
         assert _wait_until(lambda: lookup_notes(fake))
         note = lookup_notes(fake)[0]
         assert "could not finish" in note
-        assert "it failed (RuntimeError)" in note  # the class name is the whole story
+        assert "it hit a problem partway" in note  # honest, class names stay in logs
 
         # the call survived both crashes
         fake.feed(model_said("Let me tell you what I can."))
@@ -316,6 +316,7 @@ def test_error_storm_never_double_fires_and_the_answer_still_lands(voice_world):
 
     from app.db.models import StagedAction
 
+    assert _wait_until(lambda: realtime._active_bridges == 0)  # finalize landed
     assert world.db.query(StagedAction).count() == 0
 
 
@@ -452,6 +453,7 @@ def test_malformed_response_done_shapes_never_crash_or_stage(voice_world):
 
     from app.db.models import StagedAction
 
+    assert _wait_until(lambda: realtime._active_bridges == 0)  # shutdown drained
     assert world.db.query(StagedAction).count() == 0
 
 
@@ -524,6 +526,16 @@ def test_answer_landing_in_an_empty_room_is_dropped_but_the_question_survives(
         return call is not None and call.ended_at is not None
 
     assert _wait_until(finalized)  # he HAD spoken, so finalize still ran
+    # the memory commit lags the ended_at commit — wait on the row itself
+    assert _wait_until(
+        lambda: world.db.query(ConversationMemory)
+        .filter(
+            ConversationMemory.memory_type == "topic",
+            ConversationMemory.source == "realtime",
+        )
+        .count()
+        == 1
+    )
     memories = (
         world.db.query(ConversationMemory)
         .filter(
@@ -686,6 +698,10 @@ def test_two_live_rooms_stay_isolated_and_the_third_tap_is_refused(
             assert _wait_until(lambda: len(fakes[1].sent) >= 3)
             fakes[0].feed(done())
             fakes[1].feed(done())
+            # both cards' DB reads done: the mirror writes below must not
+            # race either context worker on the one shared connection
+            assert _wait_until(lambda: context_cards(fakes[0]))
+            assert _wait_until(lambda: context_cards(fakes[1]))
 
             # serialize the two rooms' writes: one shared in-memory store
             fakes[0].feed(user_said("is it too hot for my walk?"))

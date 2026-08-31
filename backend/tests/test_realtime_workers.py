@@ -96,7 +96,7 @@ def test_search_worker_wraps_a_crash_into_an_error_envelope(monkeypatch):
 
     monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda: ExplodingBrain())
     result = realtime_workers.run_search_worker("what's the weather?")
-    assert result.error.startswith("the lookup failed")
+    assert result.error == "the lookup hit a problem partway"  # no class names
 
 
 def test_context_card_reads_memory_meds_doseless_and_survives_a_bad_source(db):

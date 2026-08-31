@@ -109,6 +109,48 @@ def get_context_for_next_call(db: Session) -> str:
     return "\n".join(lines) if lines else "No prior context yet."
 
 
+def get_balanced_context_lines(db: Session) -> list[str]:
+    """Context lines where curated facts survive daily chatter.
+
+    ``get_context_for_next_call`` is pure recency, so every live session's
+    topic note permanently evicted a family-curated fact or preference
+    from the five-slot window (scenario-gauntlet find M02). Here durable
+    rows (family/seed facts, preferences) hold up to four slots and
+    episodic realtime topics at most two — two evenings of tennis chat no
+    longer erase "walks in the morning". The header only exists when it
+    has bullets under it.
+    """
+
+    lines: list[str] = []
+    rows = get_recent_memories(db, limit=20)
+    durable = [row for row in rows if row.source != "realtime"][:4]
+    episodic = [row for row in rows if row.source == "realtime"][:2]
+    bullets = [f"- [{row.memory_type}] {row.content}" for row in durable + episodic]
+    if bullets:
+        lines.append("Recent memories:")
+        lines.extend(bullets)
+
+    last_call = db.query(CallLog).order_by(CallLog.started_at.desc()).first()
+    if last_call and last_call.patient_mood:
+        lines.append(f"Last recorded mood: {last_call.patient_mood}")
+
+    concerns = (
+        db.query(CallContext)
+        .filter(CallContext.key == "concerns_raised")
+        .order_by(CallContext.id.desc())
+        .limit(3)
+        .all()
+    )
+    if concerns:
+        lines.append("Ongoing concerns:")
+        lines.extend(f"- {concern.value}" for concern in concerns)
+
+    streak = _adherence_streak(db)
+    if streak > 0:  # a zero streak is absence of data, not a fact about him
+        lines.append(f"Medication adherence streak: {streak} confirmed recent dose(s).")
+    return lines
+
+
 def _adherence_streak(db: Session) -> int:
     recent = (
         db.query(DoseLog)

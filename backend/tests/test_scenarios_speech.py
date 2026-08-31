@@ -19,6 +19,7 @@ import threading
 import time
 
 from app.brain.adapter import Source
+from app.parker import realtime as realtime_module
 from scenario_harness import *  # noqa: F401,F403
 
 
@@ -56,6 +57,8 @@ def test_he_cuts_in_halfway_and_the_owed_nudge_waits_for_his_mouth(voice_world):
     fake = world.script([])
     with world.connect() as ws:
         fake.feed(done())  # settle the greeting
+        # card's DB read done: the mirror reads below must not race it
+        assert _wait_until(lambda: context_cards(fake))
         fake.feed(done(look_call("when does Alcaraz play next")))
         assert _wait_until(lambda: len(lookup_notes(fake)) == 1)
         note = lookup_notes(fake)[0]
@@ -122,10 +125,12 @@ def test_barge_in_over_the_wrapup_with_an_answer_already_queued(
     fake = world.script([])
     with world.connect() as ws:
         fake.feed(done())
+        assert _wait_until(lambda: context_cards(fake))  # card's DB read done
         fake.feed(done(look_call("what channel is the tennis on tonight")))
         assert _wait_until(lambda: _acks(fake))
         assert _acks(fake)[0]["status"] == "working"
-        assert _response_creates(fake) == 2  # greeting + ack nudge (active)
+        # the ack's nudge is sent right AFTER the ack — wait for it too
+        assert _wait_until(lambda: _response_creates(fake) == 2)
 
         monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 0.15)
         assert _wait_until(lambda: any("anything else" in t for t in _system_items(fake)))
@@ -191,9 +196,11 @@ def test_he_changes_the_subject_before_the_answer_lands(voice_world):
     fake = world.script([])
     with world.connect() as ws:
         fake.feed(done())
+        assert _wait_until(lambda: context_cards(fake))  # card's DB read done
         fake.feed(done(look_call("when does Alcaraz play his next match")))
         assert _wait_until(lambda: _acks(fake))
-        assert _response_creates(fake) == 2
+        # the ack's nudge is sent right AFTER the ack — wait for it too
+        assert _wait_until(lambda: _response_creates(fake) == 2)
 
         fake.feed(user_said("actually — is Sarah still coming Sunday?"))
         assert ws.receive_json() == {
@@ -267,7 +274,8 @@ def test_the_same_question_said_two_different_ways(voice_world):
         assert sorted(calls) == sorted(
             ["when does Alcaraz play", "what time is the Alcaraz match"]
         )
-        assert _response_creates(fake) == 3  # greeting + two ack nudges
+        # greeting + two ack nudges; the second nudge lags its ack slightly
+        assert _wait_until(lambda: _response_creates(fake) == 3)
 
         gate.set()
         assert _wait_until(lambda: len(lookup_notes(fake)) == 2)
@@ -323,6 +331,7 @@ def test_the_mumble_that_transcribes_to_nothing(voice_world):
         }
         ws.send_json({"type": "end"})
 
+    assert _wait_until(lambda: realtime_module._active_bridges == 0)  # drained
     time.sleep(0.25)  # let a wrong finalize every chance to write
     world.db.expire_all()
     assert world.db.query(ConversationMemory).count() == 0  # no user transcript, no memory
@@ -347,6 +356,8 @@ def test_stop_kills_the_ramble_but_not_the_answer_he_wanted(voice_world):
     fake = world.script([])
     with world.connect() as ws:
         fake.feed(done())
+        # card's DB read done: the mirror reads below must not race it
+        assert _wait_until(lambda: context_cards(fake))
         fake.feed(done(look_call("is it warm enough for my walk before ten")))
         assert _wait_until(lambda: _acks(fake))
         assert _acks(fake)[0]["status"] == "working"
@@ -431,6 +442,8 @@ def test_sunday_afternoon_sixty_questions_deep(voice_world):
         )
         ws.send_json({"type": "end"})
 
+    assert _wait_until(lambda: realtime_module._active_bridges == 0)  # drained cleanly
+
     def finalized():
         world.db.expire_all()
         call = world.db.query(CallLog).filter(CallLog.call_type == "realtime").first()
@@ -444,15 +457,13 @@ def test_sunday_afternoon_sixty_questions_deep(voice_world):
     for question in questions[:4]:
         assert question in topics  # the cap keeps the EARLIEST exchanges
 
+    # the memory commit lags the ended_at commit — wait on the row itself
+    assert _wait_until(lambda: world.db.query(ConversationMemory).count() == 1)
     memory = world.db.query(ConversationMemory).one()  # one memory, however long
     assert memory.memory_type == "topic"
     assert memory.source == "realtime"
     assert world.db.query(ScreenState).count() == 1  # one overwritten mirror row
     assert _screen(world.db).heard == questions[-1]
-
-    from app.parker import realtime
-
-    assert _wait_until(lambda: realtime._active_bridges == 0)  # drained cleanly
 
 
 def test_he_asks_it_again_an_hour_later(voice_world):
@@ -535,12 +546,14 @@ def test_a_stuttered_question_with_no_brain_to_ask(voice_world):
         assert _wait_until(lambda: len(_function_outputs(fake)) == 3)
         for ack in _acks(fake):
             assert ack["status"] == "unavailable"
-            assert "say so honestly" in ack["detail"]
+            assert "look that up today" in ack["detail"]
 
         assert world.search_calls == []  # nothing was ever spawned
         assert lookup_notes(fake) == []
+        # the first ack's nudge fired — wait for it, never sleep for it
+        assert _wait_until(lambda: _response_creates(fake) == 2)
         time.sleep(0.3)
-        # the first ack's nudge fired; the other two coalesced behind it
+        # ... and the other two coalesced behind it, no third nudge
         assert _response_creates(fake) == 2
 
         fake.feed(model_said("No tennis listings here, but I can ask Sarah."))

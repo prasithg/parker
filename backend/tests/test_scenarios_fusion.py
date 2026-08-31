@@ -19,6 +19,7 @@ from scenario_harness import *  # noqa: F401,F403
 
 from app.brain.adapter import BrainReply, Source
 from app.brain.guard import MEDICAL_BOUNDARY_REDIRECT
+from app.parker import realtime
 
 
 def _fenced(note: str) -> str:
@@ -188,6 +189,8 @@ def test_alcaraz_then_the_channel_then_remind_me(voice_world):
         }
         ws.send_json({"type": "end"})
 
+    assert _wait_until(lambda: realtime._active_bridges == 0)  # finalize landed
+
     from app.db.models import StagedAction
 
     action = world.db.query(StagedAction).one()
@@ -229,7 +232,7 @@ def test_pharmacy_hours_with_no_med_data_and_no_brain_tonight(voice_world):
         note = lookup_notes(fake)[0]
         assert note.startswith("A background lookup could not finish")
         assert '"what time does the pharmacy close today?"' in note
-        assert "it failed (RuntimeError)" in note  # class name only
+        assert "it hit a problem partway" in note  # honest, class names in logs only
         assert "offer to try again" in note
         assert not any("network sadness" in item for item in _system_items(fake))
 
@@ -312,6 +315,7 @@ def test_a_pharmacy_answer_that_tries_to_dose_him(voice_world, monkeypatch):
         assert ws.receive_json()["type"] == "assistant_transcript_delta"
         ws.send_json({"type": "end"})
 
+    assert _wait_until(lambda: realtime._active_bridges == 0)  # finalize landed
     assert world.db.query(StagedAction).count() == 0
 
 
@@ -374,6 +378,7 @@ def test_sarah_is_coming_sunday_and_he_wants_to_say_yes(voice_world, monkeypatch
     from app.parker.pipeline import confirm_staged_action, execute_staged_action
     from app.parker.screen import get_screen_state
 
+    assert _wait_until(lambda: realtime._active_bridges == 0)  # shutdown drained
     action = world.db.query(StagedAction).one()
     assert action.action_type == "family_message"
     assert action.status == "staged"
@@ -391,6 +396,16 @@ def test_sarah_is_coming_sunday_and_he_wants_to_say_yes(voice_world, monkeypatch
     call = world.db.query(CallLog).filter(CallLog.call_sid.like("REALTIME-%")).one()
     assert "tell Sara the park sounds lovely" in (call.summary or "")
 
+    def topic_written():
+        world.db.expire_all()  # the memory commit lags the ended_at commit
+        return (
+            world.db.query(ConversationMemory)
+            .filter(ConversationMemory.source == "realtime")
+            .count()
+            == 1
+        )
+
+    assert _wait_until(topic_written)
     topics = (
         world.db.query(ConversationMemory)
         .filter(ConversationMemory.source == "realtime")
@@ -472,6 +487,7 @@ def test_the_sunday_he_only_half_remembers(voice_world, monkeypatch):
         assert ws.receive_json()["type"] == "assistant_transcript_delta"
         ws.send_json({"type": "end"})
 
+    assert _wait_until(lambda: realtime._active_bridges == 0)  # finalize landed
     assert world.db.query(StagedAction).count() == 0
 
 
@@ -521,10 +537,10 @@ def test_writing_down_a_question_for_thursdays_neurologist(voice_world):
             for item in _function_outputs(fake)
         }
         assert outputs["prop-appt"]["status"] == "rejected"
-        assert (
-            outputs["prop-appt"]["detail"]
-            == "Parker could not stage that one — nothing is waiting."
-        )
+        # appointment_note is no longer even advertised: it had no staging
+        # path anywhere, so the gate now refuses it up front (live find) —
+        # the model is told plainly instead of promising a note that dies.
+        assert "not allowed" in outputs["prop-appt"]["detail"]
         assert outputs["prop-rem"]["status"] == "staged"
 
         staged_note = ws.receive_json()
@@ -541,12 +557,14 @@ def test_writing_down_a_question_for_thursdays_neurologist(voice_world):
         assert _wait_until(lambda: _response_creates(fake) == 3)
         ws.send_json({"type": "end"})
 
+    assert _wait_until(lambda: realtime._active_bridges == 0)  # finalize landed
+
     from app.db.models import ResolutionResult, StagedAction
 
     statuses = {
         row.action_type: row.status for row in world.db.query(ResolutionResult).all()
     }
-    assert statuses == {"appointment_note": "rejected", "reminder": "staged"}
+    assert statuses == {"reminder": "staged"}  # the un-stageable type never captures
     action = world.db.query(StagedAction).one()
     assert action.action_type == "reminder"
 

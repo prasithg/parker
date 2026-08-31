@@ -88,6 +88,9 @@ async def run_scenario(name: str, use_mock_gateway: bool) -> dict:
     spec = SCENARIOS[name]
     if use_mock_gateway or spec.get("mock_gateway"):
         os.environ["PARKER_OPENCLAW_GATEWAY_URL"] = MOCK_GATEWAY_URL
+    # Ravi's canonical (synthetic) home grounds weather/local lookups; a
+    # developer's real PARKER_HOME_PLACE, if set, wins.
+    os.environ.setdefault("PARKER_HOME_PLACE", "Melbourne, Australia")
 
     import app.main  # noqa: F401 — registers models; reads env above
     from sqlalchemy import create_engine
@@ -184,8 +187,7 @@ async def run_scenario(name: str, use_mock_gateway: bool) -> dict:
     from app.db.models import StagedAction
 
     staged = [
-        {"type": json.loads(a.action_payload).get("requested_action"), "status": a.status}
-        for a in db.query(StagedAction).all()
+        {"type": a.action_type, "status": a.status} for a in db.query(StagedAction).all()
     ]
     db.close()
 

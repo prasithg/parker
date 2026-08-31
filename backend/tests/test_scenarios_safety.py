@@ -18,6 +18,7 @@ import time
 
 from app.brain.adapter import Source
 from app.brain.guard import MEDICAL_BOUNDARY_REDIRECT
+from app.parker import realtime as realtime_module
 from scenario_harness import *  # noqa: F401,F403
 
 
@@ -386,7 +387,7 @@ def test_a_fall_reported_over_the_goodbye_keeps_the_line_open(
     with world.connect() as ws:
         fake.feed(done())  # settle the greeting; the ladder starts
         assert _wait_until(
-            lambda: any("about to close" in text for text in _system_items(fake))
+            lambda: any("closes on its own" in text for text in _system_items(fake))
         )
 
         fake.feed(speech_started())
@@ -415,12 +416,14 @@ def test_a_fall_reported_over_the_goodbye_keeps_the_line_open(
         assert len(items) == 3  # greeting, wrap-up, goodbye — nothing for a fall
         assert "line just opened" in items[0]
         assert "anything else" in items[1]
-        assert "about to close" in items[2]
+        assert "closes on its own" in items[2]
         ws.send_json({"type": "end"})
 
     from app.db.models import CallLog, StagedAction
     from app.escalation.models import Escalation
     from app.memory.models import ConversationMemory
+
+    assert _wait_until(lambda: realtime_module._active_bridges == 0)  # drained
 
     def finalized():
         world.db.expire_all()
@@ -434,6 +437,8 @@ def test_a_fall_reported_over_the_goodbye_keeps_the_line_open(
     assert _wait_until(finalized)
     call = world.db.query(CallLog).filter(CallLog.call_sid.like("REALTIME-%")).one()
     assert "I have fallen" in (call.summary or "")
+    # the memory commit lags the ended_at commit — wait on the row itself
+    assert _wait_until(lambda: world.db.query(ConversationMemory).count() == 1)
     memory = world.db.query(ConversationMemory).one()
     assert memory.memory_type == "topic"
     assert "I have fallen" in memory.content
@@ -475,6 +480,8 @@ def test_a_fall_with_no_model_reply_is_still_written_down(voice_world):
     from app.db.models import CallLog
     from app.memory.models import ConversationMemory
 
+    assert _wait_until(lambda: realtime_module._active_bridges == 0)  # drained
+
     def finalized():
         world.db.expire_all()
         call = world.db.query(CallLog).filter(CallLog.call_sid.like("REALTIME-%")).first()
@@ -484,6 +491,8 @@ def test_a_fall_with_no_model_reply_is_still_written_down(voice_world):
     world.db.expire_all()
     call = world.db.query(CallLog).filter(CallLog.call_sid.like("REALTIME-%")).one()
     assert "fallen in the hallway" in (call.summary or "")
+    # the memory commit lags the ended_at commit — wait on the row itself
+    assert _wait_until(lambda: world.db.query(ConversationMemory).count() == 1)
     memory = world.db.query(ConversationMemory).one()
     assert "fallen in the hallway" in memory.content
 
@@ -536,6 +545,10 @@ def test_misdirection_guard_is_inert_until_a_family_fills_in_the_lexicon(
         assert staged_note == {"type": "proposal_staged", "label": "message Dr. Patel"}
         ws.send_json({"type": "end"})
 
+    # session one's finalize must land before session two's staging shares
+    # the one in-memory connection
+    assert _wait_until(lambda: realtime_module._active_bridges == 0)
+
     monkeypatch.setattr(settings, "personal_lexicon", "Sarah, Anil, Meera")
     fake2 = world.script([])
     with world.connect() as ws:
@@ -551,6 +564,7 @@ def test_misdirection_guard_is_inert_until_a_family_fills_in_the_lexicon(
     # connection with this session
     from app.db.models import OutboxMessage, StagedAction
 
+    assert _wait_until(lambda: realtime_module._active_bridges == 0)
     world.db.expire_all()
     actions = world.db.query(StagedAction).all()
     assert len(actions) == 1  # the lexicon-configured proposal added nothing
