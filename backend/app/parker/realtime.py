@@ -521,6 +521,11 @@ class RealtimeBridge:
         shutdown (and test teardown) never races them.
         """
 
+        if self._user_transcript and len(self._exchanges) < _MAX_TRACKED_EXCHANGES:
+            # A turn he spoke but the model never answered (stalled upstream,
+            # abrupt drop) must not vanish from the record (gauntlet find S09).
+            self._exchanges.append((self._user_transcript, ""))
+            self._user_transcript = ""
         for task in self._worker_tasks:
             task.cancel()
         if self._worker_tasks:
@@ -874,7 +879,18 @@ class RealtimeBridge:
     async def _handle_propose_action(
         self, item: dict[str, Any], arguments: dict[str, Any]
     ) -> None:
-        outcome = await run_in_threadpool(_stage_proposal_sync, arguments, self._call_sid)
+        try:
+            outcome = await run_in_threadpool(
+                _stage_proposal_sync, arguments, self._call_sid
+            )
+        except Exception:  # noqa: BLE001 — a dead store must not strand the tool call
+            # The model is waiting on this call_id; silence would leave it
+            # hanging forever and Ravi's tap unexplained (gauntlet find D11).
+            logger.warning("realtime proposal staging crashed", exc_info=True)
+            outcome = {
+                "status": "rejected",
+                "detail": "Parker could not save that right now — say so honestly.",
+            }
         await self._upstream.send(
             json.dumps(
                 {

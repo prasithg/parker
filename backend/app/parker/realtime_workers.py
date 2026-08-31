@@ -33,6 +33,7 @@ DB seam to monkeypatch.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -69,6 +70,26 @@ LOOK_THAT_UP_TOOL: dict[str, Any] = {
         "required": ["question"],
     },
 }
+
+
+def _as_second_person(text: str) -> str:
+    """His first-person phrasing, rewritten to trip the second-person guard.
+
+    The directive phrases are written for screening Parker's own speech
+    ("double your ..."), so "should I double my levodopa" walked straight
+    past the search pre-check (gauntlet find S01). The answer guard still
+    held; this just stops spending a research call to find that out.
+    """
+
+    lowered = text.lower()
+    lowered = re.sub(r"\bmy\b", "your", lowered)
+    return re.sub(r"\bi\b", "you", lowered)
+
+
+def _question_is_guarded(question: str) -> bool:
+    return speech_violates_medical_boundary(question) or speech_violates_medical_boundary(
+        _as_second_person(question)
+    )
 
 
 def search_worker_available() -> bool:
@@ -114,7 +135,7 @@ def run_search_worker(question: str) -> WorkerResult:
             started_at=started,
             finished_at=time.time(),
         )
-    if speech_violates_medical_boundary(question):
+    if _question_is_guarded(question):
         # Don't spend a search on a question the answer guard would erase.
         return WorkerResult(
             kind="search",

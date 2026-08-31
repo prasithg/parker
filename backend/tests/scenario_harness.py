@@ -198,6 +198,20 @@ class ScenarioWorld:
 
         return client.websocket_connect("/parker/converse/realtime")
 
+    def settle_open(self, fake, *, expect_card: bool = True) -> None:
+        """Settle the session open: greeting done + context worker finished.
+
+        ALWAYS call this before feeding DB-touching events (propose_call)
+        in a seeded world: the test engine shares ONE SQLite connection
+        (StaticPool), so the context worker's session racing the staging
+        thread intermittently kills staging — a harness artifact, not a
+        product behavior (production sessions get their own connections).
+        """
+
+        fake.feed(done())
+        if expect_card:
+            assert _wait_until(lambda: context_cards(fake)), "context card never arrived"
+
     # -- his world -----------------------------------------------------
 
     def seed_ravi(self):
