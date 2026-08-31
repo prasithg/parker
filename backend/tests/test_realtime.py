@@ -732,6 +732,73 @@ def test_accidental_tap_leaves_no_memory_behind(
     assert call.summary is None  # the eager row exists; nothing was invented
 
 
+def test_cancellation_storm_never_outruns_the_finalize_write(
+    db, realtime_enabled, brainless, monkeypatch
+):
+    """The websocket layer (anyio) re-cancels at every await, so a one-shot
+    shielded await skips its shutdown step with the finalize write still in
+    flight — the bridge slot released while the write raced the assertions
+    (the gauntlet's "unreproduced full-suite blip", reproduced on CI
+    2026-08-31). Pin: when run() returns under a cancellation storm, a
+    deliberately slow finalize has already landed — ended_at, summary, and
+    the topic memory together (the finalize commit is atomic).
+    """
+
+    fake = FakeUpstream(
+        [
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "when does Alcaraz play next",
+            }
+        ]
+    )
+
+    async def connect():
+        return fake
+
+    monkeypatch.setattr(realtime, "connect_openai", connect)
+
+    real_finalize = realtime._finalize_session_sync
+
+    def slow_finalize(call_sid, exchanges):
+        time.sleep(0.25)  # a busy CI runner's threadpool lag
+        real_finalize(call_sid, exchanges)
+
+    monkeypatch.setattr(realtime, "_finalize_session_sync", slow_finalize)
+
+    async def scenario():
+        sent: list[dict] = []
+        browser_hung = asyncio.Event()
+
+        async def send_json(message):
+            sent.append(message)
+
+        async def receive_json():
+            await browser_hung.wait()  # the browser never speaks; we cancel
+            return {"type": "end"}
+
+        bridge = realtime.RealtimeBridge(send_json, receive_json)
+        task = asyncio.create_task(bridge.run())
+        deadline = time.monotonic() + 3.0
+        while not any(m.get("type") == "user_transcript" for m in sent):
+            assert time.monotonic() < deadline, "transcript never reached the browser"
+            await asyncio.sleep(0.01)
+        while not task.done():  # anyio-style: a fresh cancel at every await
+            task.cancel()
+            await asyncio.sleep(0)
+        assert task.cancelled()
+        return bridge
+
+    bridge = asyncio.run(scenario())
+    # No waiting here — run() returning IS the contract being pinned.
+    db.expire_all()
+    call = db.query(CallLog).filter(CallLog.call_sid == bridge._call_sid).one()
+    assert call.ended_at is not None
+    assert "Alcaraz" in (call.summary or "")
+    memory = db.query(ConversationMemory).one()
+    assert memory.source == "realtime"
+
+
 # ---------------------------------------------------------------------------
 # Adversarial round 2 (2026-08-30): the lane uses the text lane's policy
 # ---------------------------------------------------------------------------
