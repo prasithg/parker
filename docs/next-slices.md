@@ -1390,3 +1390,51 @@ Named follow-ups (deliberately not built):
   — the journal now provides the per-turn substrate for it.
 - **Browser-side latency marks** for the live lane (client-perceived
   audio latency vs the server-side numbers the journal carries).
+
+## Next: the face, the voice, and "yes one" (Pras, 2026-08-31 evening)
+
+Pras ran the first human-tester session and the trail told the story
+(CONVERSE-Ef8HsYes, 20:56; outcomes 9-10; receipts): he never reached
+the Live lane at all — the Start/Done fallback loop answered him in
+robotic browser TTS, offered numbered choices, refused "yes one" as a
+selection of choice 1, retried twice, and he tapped Stop. Recorded
+honestly as `repair_abandoned`. His verdict: "right now I don't even
+want to use it." The flywheel's first lap, working as designed.
+
+Three findings, one slice ("the product must feel alive before it can
+be tested for anything else"):
+
+1. **The Live lane must be the lane you meet.** The flagship experience
+   (gpt-realtime, natural voice, barge-in) is a buried fifth control;
+   the robotic voice was speechSynthesis on the fallback loop. Make
+   Live the default/primary entry when the key is configured, label the
+   fallback as the fallback, and set the realtime voice explicitly as a
+   family-administered setting (`PARKER_REALTIME_VOICE`; evaluate the
+   natural gpt-realtime voices, live-probe verified). Browser-TTS
+   polish is explicitly NOT the fix.
+2. **"Yes one" selects choice 1.** Spoken selection must accept the
+   phrases people actually say — "yes one", "one please", "the first
+   one", "number two", ordinals, trailing words — across both lanes'
+   choice/confirmation flows. New gauntlet dimension: spoken-selection
+   variants (the deck currently pins exact "1"/"2" taps and phrases).
+   This moves the ≥90% first-try/one-repair target directly; his
+   session's `repair_abandoned` row is the baseline metric.
+3. **A face that feels alive (the Reachy Mini bet).** Replace the
+   minimal orb with an EXPRESSION STATE MACHINE decoupled from its
+   renderer: real signals in (mic level, VAD speech_started/stopped,
+   worker/thinking state, talking audio energy, guard trip, staging/
+   confirmation, wrap-up/goodbye) → expression states (idle, listening,
+   hearing-you, thinking, talking, sorry/guard, waiting-on-screen) →
+   renderer out. Renderer v1: a stylized 2D vector Reachy Mini (head
+   tilt, antennas, gaze micro-behavior, spring motion) — more legible
+   than an abstract orb, and sim-first for a possible physical Reachy
+   Mini embodiment later (same state machine drives screen today,
+   hardware tomorrow). No 3D/WebGL; respect prefers-reduced-motion;
+   the orb remains the degraded fallback. Design note: a face raises
+   expectations — idle/gaze behavior is part of the design.
+
+Constraints: make eval-voice-scenarios stays green (new frames to the
+BROWSER are pinned by the deck — presence signals should ride existing
+events or new-page-side derivation, not new upstream contracts, unless
+scenarios are updated deliberately); the review surface should journal
+enough that the next tester session's presence behavior is reviewable.
