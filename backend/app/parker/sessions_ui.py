@@ -74,7 +74,8 @@ machine. Tap “Felt wrong…” on any moment to file why.</p>
   <div id="staged"></div>
 
   <h2>What tomorrow's card now carries</h2>
-  <p class="meta">Computed right now from the same builder the next session will use.
+  <p class="meta">Computed right now from the same builder the next session will use
+  (ambient gateway lines are only probed live, in-session, so they are absent here).
   Medication and streak lines follow the clock, so tomorrow's actual card can differ.</p>
   <div id="next-card"></div>
 </div>

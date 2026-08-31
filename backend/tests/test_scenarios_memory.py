@@ -239,7 +239,11 @@ def test_a_session_of_only_mumbles_changes_nothing_about_tomorrow(voice_world):
     assert _live_memories(world) == []  # no user transcript, no memory
     mumbled = _live_calls(world)[-1]
     assert mumbled.summary is None  # the eager row exists; nothing was invented
-    assert mumbled.ended_at is None
+    # The session still honestly ENDS (flywheel verifier find: the review
+    # feed's live flag derives from ended_at, and a mumbled evening must
+    # not read as a live conversation forever) — invisibility to TOMORROW
+    # is the summary/memory contract above, not a missing end time.
+    assert mumbled.ended_at is not None
 
     after = _card_of(world)
     assert _memory_card_lines(after) == _memory_card_lines(before)

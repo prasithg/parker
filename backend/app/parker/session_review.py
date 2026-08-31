@@ -102,6 +102,19 @@ def record_event_sync(
             call = CallLog(call_sid=call_sid, call_type="realtime")
             db.add(call)
             db.flush()
+        # Idempotent under retry: the verify SELECT below can itself fail
+        # transiently AFTER a successful commit, and the retry wrapper
+        # then re-runs this whole closure — the row must not double.
+        existing = (
+            db.query(RealtimeSessionEvent)
+            .filter(
+                RealtimeSessionEvent.call_log_id == call.id,
+                RealtimeSessionEvent.seq == seq,
+            )
+            .first()
+        )
+        if existing is not None:
+            return
         db.add(
             RealtimeSessionEvent(
                 call_log_id=call.id,
@@ -218,11 +231,13 @@ def _staged_actions_for(db: Session, call_log_id: int) -> list[dict[str, Any]]:
 def build_next_card_preview(db: Session) -> dict[str, Any]:
     """What the NEXT session's context card would carry, computed now.
 
-    `run_context_worker` is a pure read (DB + an optional read-only
-    gateway probe), so re-running it yields exactly the card a session
-    starting this moment would receive. Honest caveat carried to the
-    page: due-medication and streak lines depend on the clock, so
-    tomorrow's actual card can differ from this preview.
+    Runs the real card builder over the DB-backed sources only — the
+    live gateway probe is deliberately skipped so a review-page request
+    can never block on the family agent's network (its timeout is sized
+    for a background worker, not an HTTP handler). Honest caveats carried
+    to the page: ambient gateway lines are absent here, and the
+    due-medication/streak lines depend on the clock, so tomorrow's actual
+    card can differ from this preview.
     """
 
     from sqlalchemy.orm import sessionmaker
@@ -230,7 +245,12 @@ def build_next_card_preview(db: Session) -> dict[str, Any]:
     from app.parker import realtime_workers
 
     factory = sessionmaker(bind=db.get_bind())
-    result = realtime_workers.run_context_worker(lambda: factory())
+    db_sources = tuple(
+        (name, source)
+        for name, source in realtime_workers.CONTEXT_SOURCES
+        if name != "gateway"
+    )
+    result = realtime_workers.run_context_worker(lambda: factory(), sources=db_sources)
     lines = [line for line in (result.speech or "").splitlines() if line.strip()]
     return {"lines": lines, "error": result.error or ""}
 

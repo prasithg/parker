@@ -439,12 +439,35 @@ def _ensure_call_log_sync(call_sid: str) -> None:
 def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> None:
     """Persist the finished session: call log end + one topic memory.
 
-    Skipped entirely when no user transcript ever arrived — an accidental
-    Live tap must not pollute the next session's context card.
+    When no user transcript ever arrived (an accidental Live tap), only
+    the end time is written — no summary is invented and no memory is
+    minted, so the tap cannot pollute the next session's context card,
+    while the review feed still sees the session honestly closed.
     """
 
     heard_lines = [heard for heard, _ in exchanges if heard]
     if not heard_lines:
+        # An accidental Live tap must not pollute the record with an
+        # invented summary or a minted memory — but the session still
+        # ENDED, and the review feed's live flag derives from ended_at.
+        def close_only() -> None:
+            db = _make_db()
+            try:
+                call = _get_or_create_call(db, call_sid)
+                ended = datetime.utcnow()
+                call.ended_at = ended
+                if call.started_at:
+                    call.duration_seconds = max(
+                        0, int((ended - call.started_at).total_seconds())
+                    )
+                db.commit()
+                db.expire_all()
+                if call.ended_at is None:
+                    raise RuntimeError("realtime finalize write was rolled back")
+            finally:
+                db.close()
+
+        _with_local_write_retries("session finalize", close_only)
         return
     # "yeah" / "mm hm" evenings are real calls but not memories: a
     # filler-only session must not spend a context-card slot the family's
@@ -670,6 +693,7 @@ class RealtimeBridge:
         self._event_seq = 0
         self._opened_mono = time.monotonic()
         self._lookup_asked: dict[str, float] = {}
+        self._pending_turn_writer: Optional[Callable[[], None]] = None
 
     def _event_writer(
         self,
@@ -747,14 +771,31 @@ class RealtimeBridge:
         threads finish so shutdown never races them.
         """
 
-        if self._user_transcript and len(self._exchanges) < _MAX_TRACKED_EXCHANGES:
+        # A turn already consumed by _on_response_done but cancelled before
+        # its journal write must still reach the review timeline — the
+        # summary will count it, so the journal must too.
+        pending_turn = self._pending_turn_writer
+        self._pending_turn_writer = None
+        if pending_turn is not None:
+            await _await_despite_cancel(
+                asyncio.ensure_future(
+                    _tracked_thread(
+                        lambda: _with_local_write_retries("session event", pending_turn)
+                    )
+                )
+            )
+        if self._user_transcript:
             # A turn he spoke but the model never answered (stalled upstream,
             # abrupt drop) must not vanish from the record (gauntlet find S09).
-            self._exchanges.append((self._user_transcript, ""))
-            dangling = self._event_writer(
-                "turn", heard=self._user_transcript, detail={"dangling": True}
-            )
+            # The exchange list is a bounded memory cap; the journal is not —
+            # his unanswered last words are journaled even past the cap.
+            heard_last = self._user_transcript
             self._user_transcript = ""
+            if len(self._exchanges) < _MAX_TRACKED_EXCHANGES:
+                self._exchanges.append((heard_last, ""))
+            dangling = self._event_writer(
+                "turn", heard=heard_last, detail={"dangling": True}
+            )
             await _await_despite_cancel(
                 asyncio.ensure_future(
                     _tracked_thread(
@@ -779,7 +820,8 @@ class RealtimeBridge:
             logger.debug("realtime finalize failed", exc_info=finalize.exception())
         close = getattr(self._upstream, "close", None)
         if close is not None:
-            closing = asyncio.ensure_future(close())
+            # Bounded: a wedged socket must never pin the bridge slot open.
+            closing = asyncio.ensure_future(asyncio.wait_for(close(), timeout=5.0))
             await _await_despite_cancel(closing)
             if not closing.cancelled():
                 closing.exception()  # best-effort close; retrieve, never raise
@@ -1119,13 +1161,21 @@ class RealtimeBridge:
         if heard_now or speech:
             if len(self._exchanges) < _MAX_TRACKED_EXCHANGES:
                 self._exchanges.append((heard_now, speech))
-            await _tracked_thread(lambda: _record_exchange_sync(heard_now, speech))
-            await self._journal(
-                "turn",
-                heard=heard_now,
-                said=speech,
+            # Stash the turn's journal write before the awaits: cancellation
+            # can land on either one, and a turn the summary counts must
+            # reach the review timeline too — shutdown flushes the stash.
+            # (record_event_sync is idempotent per (call, seq), so a write
+            # that completed just before cancellation is not doubled.)
+            turn_writer = self._event_writer(
+                "turn", heard=heard_now, said=speech,
                 detail={"guard_tripped": guard_tripped},
             )
+            self._pending_turn_writer = turn_writer
+            await _tracked_thread(lambda: _record_exchange_sync(heard_now, speech))
+            await _tracked_thread(
+                lambda: _with_local_write_retries("session event", turn_writer)
+            )
+            self._pending_turn_writer = None
 
         for item in response.get("output") or []:
             if not isinstance(item, dict) or item.get("type") != "function_call":

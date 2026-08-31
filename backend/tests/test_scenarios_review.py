@@ -274,4 +274,5 @@ def test_an_accidental_tap_leaves_an_empty_journal(voice_world):
     assert len(sessions) == 1
     assert sessions[0]["turn_count"] == 0
     assert sessions[0]["summary"] == ""
+    assert sessions[0]["live"] is False  # honestly ended, never "live" forever
     assert _events(world, sessions[0]["call_sid"], "turn") == []

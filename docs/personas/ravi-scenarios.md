@@ -164,4 +164,31 @@ fixed and pinned):
   synchronously before any await; a mid-recording turn can never look
   unanswered to shutdown.
 
+### Round 4's verify round (four fresh-context attackers, executed repros)
+
+- 🐛 **Duplicate journal rows under retry** — a transient failure of the
+  verify-after-commit READ, after a successful commit, made the retry
+  re-insert the same (call, seq) row (executed repro: two identical turn
+  rows). `record_event_sync` is now idempotent per (call, seq).
+- 🐛 **The last answered turn could vanish from the timeline** — a
+  hang-up cancelling the screen-mirror await ate the turn's journal
+  write while the summary still counted the exchange (executed repro:
+  "1 exchange(s)" beside an empty timeline). The turn's journal writer
+  is now stashed before any await and flushed by shutdown.
+- 🐛 **The dangling-turn journal was gated behind the 50-exchange cap**
+  — in long sessions, his unanswered last words were exactly the record
+  that got dropped. The journal write now runs outside the cap.
+- 🐛 **"Live" forever** — accidental-tap/mumble-only sessions never got
+  an `ended_at`, so the feed badged them live permanently. Finalize now
+  always closes the session; it still invents no summary and mints no
+  memory (the two cross-session invisibility pins updated to say so).
+- 🐛 **The detail endpoint could block ~30 s** on the inline gateway
+  probe; the next-card preview now runs the same builder over the
+  DB-backed sources only, and says so on the page.
+- Accepted, not fixed: past the cap the feed's turn count (uncapped
+  journal) sits beside the summary's "50 exchange(s)" (capped memory
+  bound) — both numbers are honest about different things; and `ack_ms`
+  measures function-call→ack-item (sub-ms by design) — "asked →
+  injected" is the number that means something to a human.
+
 ## Rounds 5+ (appended by the gauntlet)

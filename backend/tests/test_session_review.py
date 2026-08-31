@@ -125,6 +125,19 @@ def test_next_card_preview_reflects_current_memories(db):
     assert any("Sarah visits on Thursdays." in line for line in detail["next_card"]["lines"])
 
 
+def test_record_event_sync_is_idempotent_per_call_and_seq(db):
+    """The retry wrapper re-runs the whole closure when the post-commit
+    verify read fails transiently — a write that already landed must not
+    double (verifier find: duplicate (call, seq) rows inflated the
+    timeline)."""
+
+    make_db = _factory(db)
+    record_event_sync(make_db, "REALTIME-idem", 7, "turn", "hello there parker")
+    record_event_sync(make_db, "REALTIME-idem", 7, "turn", "hello there parker")
+    db.expire_all()
+    assert db.query(RealtimeSessionEvent).count() == 1
+
+
 def test_record_event_sync_creates_the_call_log_when_missing(db):
     record_event_sync(_factory(db), "REALTIME-fresh", 1, "turn", "hello there parker")
     db.expire_all()

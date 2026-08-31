@@ -735,6 +735,116 @@ def test_accidental_tap_leaves_no_memory_behind(
     assert db.query(ConversationMemory).count() == 0
     call = db.query(CallLog).filter(CallLog.call_type == "realtime").one()
     assert call.summary is None  # the eager row exists; nothing was invented
+    assert call.ended_at is not None  # …but the session still honestly ENDED
+    # (verifier find: the review feed's live flag derives from ended_at, and
+    # an accidental tap must not read as a live conversation forever)
+
+
+def test_unanswered_last_word_is_journaled_past_the_exchange_cap(
+    db, realtime_enabled, brainless
+):
+    """The exchange list is a bounded memory cap; the journal is not. His
+    unanswered last words at hang-up must reach the review timeline even
+    when the session already filled all fifty tracked exchanges
+    (verifier find: the dangling journal was gated behind the cap).
+    """
+
+    async def scenario():
+        async def send_json(message):
+            pass
+
+        async def receive_json():
+            await asyncio.Event().wait()
+
+        bridge = realtime.RealtimeBridge(send_json, receive_json)
+        bridge._exchanges = [
+            (f"tell me about question {i}", "ok") for i in range(realtime._MAX_TRACKED_EXCHANGES)
+        ]
+        bridge._user_transcript = "these are my last words"
+        await bridge._shutdown()
+        return bridge
+
+    bridge = asyncio.run(scenario())
+    assert len(bridge._exchanges) == realtime._MAX_TRACKED_EXCHANGES  # cap held
+    from app.parker.session_review import RealtimeSessionEvent
+
+    db.expire_all()
+    event = db.query(RealtimeSessionEvent).one()
+    assert event.kind == "turn"
+    assert event.heard == "these are my last words"
+    assert json.loads(event.detail)["dangling"] is True
+
+
+def test_a_turn_cancelled_mid_mirror_still_reaches_the_journal(
+    db, realtime_enabled, brainless, monkeypatch
+):
+    """Cancellation landing on the screen-mirror await must not eat the
+    turn's journal row: the summary counts the exchange, so the review
+    timeline must show it too (verifier find, executed repro: summary said
+    '1 exchange(s)' while the timeline had zero turns). Shutdown flushes
+    the stashed turn writer; the (call, seq) idempotency guard keeps a
+    just-completed write from doubling.
+    """
+
+    mirror_started = threading.Event()
+
+    def slow_mirror(heard, speech):
+        mirror_started.set()
+        time.sleep(0.2)
+
+    monkeypatch.setattr(realtime, "_record_exchange_sync", slow_mirror)
+    monkeypatch.setattr(
+        realtime_workers,
+        "run_context_worker",
+        lambda make_db, sources=None: WorkerResult(kind="context", question="", speech=""),
+    )
+    fake = FakeUpstream(
+        [
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "what day is the tennis on this week",
+            },
+            {"type": "response.output_audio_transcript.delta", "delta": "Saturday."},
+            {"type": "response.done", "response": {"output": []}},
+        ]
+    )
+
+    async def connect():
+        return fake
+
+    monkeypatch.setattr(realtime, "connect_openai", connect)
+
+    async def scenario():
+        sent: list[dict] = []
+
+        async def send_json(message):
+            sent.append(message)
+
+        async def receive_json():
+            await asyncio.Event().wait()
+
+        bridge = realtime.RealtimeBridge(send_json, receive_json)
+        task = asyncio.create_task(bridge.run())
+        assert await asyncio.to_thread(mirror_started.wait, 3.0)
+        while not task.done():  # anyio-style cancel storm, mid-mirror
+            task.cancel()
+            await asyncio.sleep(0)
+        return bridge
+
+    bridge = asyncio.run(scenario())
+    from app.parker.session_review import RealtimeSessionEvent
+
+    db.expire_all()
+    turns = (
+        db.query(RealtimeSessionEvent)
+        .filter(RealtimeSessionEvent.kind == "turn")
+        .all()
+    )
+    assert len(turns) == 1  # journaled exactly once — flushed, not doubled
+    assert turns[0].heard == "what day is the tennis on this week"
+    assert turns[0].said == "Saturday."
+    call = db.query(CallLog).filter(CallLog.call_sid == bridge._call_sid).one()
+    assert "1 exchange(s)" in (call.summary or "")  # summary and journal agree
 
 
 def test_finalize_survives_a_transient_local_write_refusal(db, monkeypatch):
