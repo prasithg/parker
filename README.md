@@ -242,6 +242,7 @@ Synthetic and public-corpus data first. No real patient audio or private family 
 ## Where to start reading
 
 - [docs/strategy/](docs/strategy/) — the capability model, metric hierarchy, roadmap, and the active experiment.
+- [docs/voice-agent-architecture.md](docs/voice-agent-architecture.md) — the single-front-agent/distributed-worker direction, current realtime mapping, Pipecat/PhoneLLM evaluation path, and latency/interruption contracts.
 - [docs/runbook.md](docs/runbook.md) — scripted walkthrough of everything v0 does, plus pilot setup.
 - [docs/adaptation-ladder.md](docs/adaptation-ladder.md) — how Parker learns a person's voice, and what it refuses to collect.
 - [docs/next-slices.md](docs/next-slices.md) — the implementation log: every shipped slice with rationale and what was deliberately deferred.

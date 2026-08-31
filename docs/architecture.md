@@ -117,12 +117,19 @@ Parker follows the OpenClaw/Hermes pattern: **context** (memory + family model +
 Integration shape:
 
 - The conversational agent never executes side effects directly. Tools like `capture_intent` persist intent; the staged pipeline owns resolution, confirmation, and execution. This keeps the LLM at arm's length from side effects.
-- The conversational **brain is pluggable** behind the `BrainAdapter` contract (`backend/app/brain/adapter.py`, design doc: [brain-adapters.md](brain-adapters.md)). Parker is the brainstem: deterministic guards refuse *before* any model call, and a brain can only propose actions that re-enter the capture → confirm pipeline as choices. v0 is Claude over the direct Anthropic API; v1 is the OpenClaw/Hermes action backend (design only); realtime speech models are a later family opt-in — all behind the same contract and the same post-response guard.
+- The conversational **brain is pluggable** behind the `BrainAdapter` contract (`backend/app/brain/adapter.py`, design doc: [brain-adapters.md](brain-adapters.md)). Parker is the brainstem: deterministic guards refuse *before* any text-model call, and a brain can only propose actions that re-enter the capture → confirm pipeline as choices. v0 is Claude over the direct Anthropic API; v1 is the OpenClaw/Hermes action backend; the shipped live lane uses OpenAI Realtime behind Parker's policy relay. All share the action boundary even though direct speech-to-speech has different guard timing.
+- The live voice architecture is **one voice, many hands**: one front agent owns persona, turn-taking, repair, pacing, and spoken truth while invisible workers return typed context/search/reasoning results for guarded injection. The runtime-neutral decisions, Pipecat/PhoneLLM evaluation path, job lifecycle, latency budgets, and distribution thresholds are in [voice-agent-architecture.md](voice-agent-architecture.md).
 - Each executable action type in the policy taxonomy maps to a local artifact behind the `execute_staged_action` seam. v0 has reminders plus family-message outbox rows; both stay local, reversible, and confirmation-gated.
 - Future Hermes/OpenClaw interop (family agents coordinating, handoffs) happens at the staged-action boundary: an external agent can propose a staged action, but it goes through the same policy/confirmation gates as a voice intent.
 - Room/TV context (recliner, TV on, near medication area) enters as *resolution inputs* — signals that adjust timing, channel, and escalation candidacy — never as direct triggers for external actions.
 
-## 8. What not to build yet
+## 8. Voice orchestration
+
+Parker's accepted voice-agent shape is **one voice, many hands**: one person-facing front agent remains present and consistent while bounded context, search, reasoning/project, and action-broker workers operate invisibly behind it. Worker results are typed, correlated, policy-screened data; workers never speak directly or bypass staged confirmation. See [voice-agent-architecture.md](voice-agent-architecture.md) for the target planes, job/result lifecycle, interruption contract, client latency budgets, Pipecat distributed/proxy mapping, PhoneLLM evaluation criteria, and evidence-gated adoption sequence.
+
+The current in-process realtime workers are sufficient for one-family v0. Pipecat, PhoneLLM, Redis/PGMQ, remote accelerators, and open-model hosting remain measured spike candidates rather than production dependencies.
+
+## 9. What not to build yet
 
 - **Multi-tenant / enterprise healthcare infrastructure.** One family. SQLite. No Alembic until the schema stabilizes (`create_tables()` is fine for v0).
 - **Voice cloning as a feature track.** Optional, consent-gated, not the thesis. Don't expand `app/voice/clone.py`.
