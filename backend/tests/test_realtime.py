@@ -732,6 +732,121 @@ def test_accidental_tap_leaves_no_memory_behind(
     assert call.summary is None  # the eager row exists; nothing was invented
 
 
+def test_finalize_survives_a_transient_local_write_refusal(db, monkeypatch):
+    """The local SQLite is shared — other Parker processes hold the file DB,
+    and the test harness shares one in-memory connection across threads —
+    so a finalize can hit a transient refusal. It is the session's only
+    durable record: one refusal must cost a retry, never the record (CI
+    reproduced the silent loss on the shared connection, 2026-08-31).
+    """
+
+    factory = sessionmaker(bind=db.get_bind())
+    attempts = {"n": 0}
+
+    def flaky_factory():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("database is locked")
+        return factory()
+
+    monkeypatch.setattr(realtime, "_db_session_factory", flaky_factory)
+    realtime._finalize_session_sync(
+        "REALTIME-flaky", [("when does Alcaraz play next", "Friday night.")]
+    )
+    db.expire_all()
+    call = db.query(CallLog).filter(CallLog.call_sid == "REALTIME-flaky").one()
+    assert call.ended_at is not None  # the retry landed the record
+    assert db.query(ConversationMemory).count() == 1
+
+
+def test_finalize_rerun_never_mints_a_second_topic_memory(db):
+    """Retries reopen their own session, so a re-run after a committed
+    attempt must be idempotent — one session, one topic memory, always
+    (the deck pins the one-memory-per-session contract).
+    """
+
+    exchanges = [("when does Alcaraz play next", "Friday night.")]
+    realtime._finalize_session_sync("REALTIME-twice", exchanges)
+    realtime._finalize_session_sync("REALTIME-twice", exchanges)
+    db.expire_all()
+    assert db.query(ConversationMemory).count() == 1
+
+
+def test_cancellation_storm_never_outruns_the_finalize_write(
+    db, realtime_enabled, brainless, monkeypatch
+):
+    """The websocket layer (anyio) re-cancels at every await, so a one-shot
+    shielded await skips its shutdown step with the finalize write still in
+    flight — the bridge slot released while the write raced the assertions
+    (the gauntlet's "unreproduced full-suite blip", reproduced on CI
+    2026-08-31). Pin: when run() returns under a cancellation storm, a
+    deliberately slow finalize has already landed — ended_at, summary, and
+    the topic memory together (the finalize commit is atomic).
+    """
+
+    fake = FakeUpstream(
+        [
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "when does Alcaraz play next",
+            }
+        ]
+    )
+
+    async def connect():
+        return fake
+
+    monkeypatch.setattr(realtime, "connect_openai", connect)
+
+    real_finalize = realtime._finalize_session_sync
+
+    def slow_finalize(call_sid, exchanges):
+        time.sleep(0.25)  # a busy CI runner's threadpool lag
+        real_finalize(call_sid, exchanges)
+
+    monkeypatch.setattr(realtime, "_finalize_session_sync", slow_finalize)
+    # This test is about finalize, not context: a stubbed context worker
+    # leaves no DB-touching thread behind to race a later test's teardown
+    # (threadpool work outlives a cancelled task and this test's own loop).
+    monkeypatch.setattr(
+        realtime_workers,
+        "run_context_worker",
+        lambda make_db: WorkerResult(kind="context", question="", speech=""),
+    )
+
+    async def scenario():
+        sent: list[dict] = []
+        browser_hung = asyncio.Event()
+
+        async def send_json(message):
+            sent.append(message)
+
+        async def receive_json():
+            await browser_hung.wait()  # the browser never speaks; we cancel
+            return {"type": "end"}
+
+        bridge = realtime.RealtimeBridge(send_json, receive_json)
+        task = asyncio.create_task(bridge.run())
+        deadline = time.monotonic() + 3.0
+        while not any(m.get("type") == "user_transcript" for m in sent):
+            assert time.monotonic() < deadline, "transcript never reached the browser"
+            await asyncio.sleep(0.01)
+        while not task.done():  # anyio-style: a fresh cancel at every await
+            task.cancel()
+            await asyncio.sleep(0)
+        assert task.cancelled()
+        return bridge
+
+    bridge = asyncio.run(scenario())
+    # No waiting here — run() returning IS the contract being pinned.
+    db.expire_all()
+    call = db.query(CallLog).filter(CallLog.call_sid == bridge._call_sid).one()
+    assert call.ended_at is not None
+    assert "Alcaraz" in (call.summary or "")
+    memory = db.query(ConversationMemory).one()
+    assert memory.source == "realtime"
+
+
 # ---------------------------------------------------------------------------
 # Adversarial round 2 (2026-08-30): the lane uses the text lane's policy
 # ---------------------------------------------------------------------------

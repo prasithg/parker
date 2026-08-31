@@ -283,6 +283,27 @@ async def connect_openai() -> Any:
 _db_session_factory: Optional[Callable[[], Any]] = None
 
 
+async def _await_despite_cancel(future: "asyncio.Future") -> None:
+    """Wait for *future* even while the enclosing task is being cancelled.
+
+    asyncio.shield only protects the inner future: the moment the handler
+    task is cancelled, the OUTER await raises CancelledError and a
+    one-shot `await shield(...)` skips the step with its work still in
+    flight. The websocket layer (anyio cancel scopes) re-raises at every
+    await, so the only way to genuinely finish a shutdown step is to keep
+    re-awaiting until the future is done. A future that fails stores its
+    exception for the caller to inspect; nothing is raised from here.
+    """
+
+    while not future.done():
+        try:
+            await asyncio.shield(future)
+        except asyncio.CancelledError:
+            continue
+        except Exception:  # noqa: BLE001 — future is done; caller inspects it
+            break
+
+
 def _make_db() -> Any:
     if _db_session_factory is not None:
         return _db_session_factory()
@@ -292,12 +313,34 @@ def _make_db() -> Any:
     return SessionLocal()
 
 
+def _with_local_write_retries(label: str, write: Callable[[], None]) -> None:
+    """Run one best-effort local write, retrying transient refusals.
+
+    Local SQLite can refuse a write transiently: the file DB locked by
+    another Parker process (server, talk loop, digest share it), or the
+    test harness's single shared in-memory connection mid-query on
+    another thread. Each attempt opens its own session, so writers must
+    be idempotent. Never raises — but losing a write outright is a
+    warning, not a debug whisper.
+    """
+
+    for attempt in range(3):
+        try:
+            write()
+            return
+        except Exception:  # noqa: BLE001 — bookkeeping must never break the call
+            if attempt == 2:
+                logger.warning("realtime %s write lost after retries", label, exc_info=True)
+            else:
+                time.sleep(0.05 * (attempt + 1))
+
+
 def _record_exchange_sync(heard: str, speech: str) -> None:
     """Mirror one realtime exchange to the live screen row (best-effort)."""
 
     from app.parker.screen import publish_screen_state
 
-    try:
+    def write() -> None:
         db = _make_db()
         try:
             publish_screen_state(
@@ -305,8 +348,8 @@ def _record_exchange_sync(heard: str, speech: str) -> None:
             )
         finally:
             db.close()
-    except Exception:  # noqa: BLE001 — the mirror must never break the call
-        logger.debug("realtime screen mirror skipped", exc_info=True)
+
+    _with_local_write_retries("screen mirror", write)
 
 
 def _get_or_create_call(db: Any, call_sid: str) -> Any:
@@ -324,14 +367,14 @@ def _get_or_create_call(db: Any, call_sid: str) -> Any:
 def _ensure_call_log_sync(call_sid: str) -> None:
     """Eager call log at session open (best-effort; proposals also create it)."""
 
-    try:
+    def write() -> None:
         db = _make_db()
         try:
             _get_or_create_call(db, call_sid)
         finally:
             db.close()
-    except Exception:  # noqa: BLE001 — bookkeeping must never break the call
-        logger.debug("realtime eager call log skipped", exc_info=True)
+
+    _with_local_write_retries("eager call log", write)
 
 
 def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> None:
@@ -348,7 +391,9 @@ def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> N
     # filler-only session must not spend a context-card slot the family's
     # curated facts share (gauntlet find M03).
     substantive = [line for line in heard_lines if len(line.split()) >= 3]
-    try:
+
+    def write() -> None:
+        from app.memory.models import ConversationMemory
         from app.memory.store import save_memory
 
         db = _make_db()
@@ -362,8 +407,21 @@ def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> N
             call.summary = (
                 f"Live conversation, {len(exchanges)} exchange(s). Asked about: {topics}"
             )
-            db.commit()
-            if substantive:
+            # Idempotent under retry: a re-run after a committed-but-then-
+            # failed attempt must not mint a second topic memory.
+            already_minted = (
+                db.query(ConversationMemory)
+                .filter(
+                    ConversationMemory.call_log_id == call.id,
+                    ConversationMemory.source == "realtime",
+                )
+                .first()
+                is not None
+            )
+            if substantive and not already_minted:
+                # One transaction: save_memory's commit lands the call-log
+                # end and the topic memory together, so any reader that
+                # sees ended_at can trust the whole session record exists.
                 save_memory(
                     db,
                     content=f"In a live conversation he asked about: {topics}",
@@ -371,10 +429,12 @@ def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> N
                     call_log_id=call.id,
                     source="realtime",
                 )
+            else:
+                db.commit()
         finally:
             db.close()
-    except Exception:  # noqa: BLE001 — persistence must never break shutdown
-        logger.debug("realtime session finalize skipped", exc_info=True)
+
+    _with_local_write_retries("session finalize", write)
 
 
 def _stage_proposal_sync(arguments: dict[str, Any], call_sid: str) -> dict[str, Any]:
@@ -557,11 +617,16 @@ class RealtimeBridge:
         """Persist and close even when the whole handler is being cancelled.
 
         The websocket layer cancels the handler on abrupt disconnects, and
-        cancellation re-raises at every await — so each shutdown step runs
-        shielded and swallows its own CancelledError. Late worker results
-        are dropped by policy (Pras, 2026-08-30): tasks are cancelled, and
-        the bounded wait just lets in-flight threadpool threads finish so
-        shutdown (and test teardown) never races them.
+        cancellation re-raises at every await — a one-shot shield is not
+        enough, because the outer await raises immediately and the step is
+        skipped while its future is still running. Shutdown must actually
+        finish before run() returns: the route releases the bridge slot
+        right after, and the next session's context worker reads what this
+        one persisted (the tests' drained-teardown observable is that same
+        slot). So every step drains through _await_despite_cancel. Late
+        worker results are dropped by policy (Pras, 2026-08-30): tasks are
+        cancelled, and the bounded wait just lets in-flight threadpool
+        threads finish so shutdown never races them.
         """
 
         if self._user_transcript and len(self._exchanges) < _MAX_TRACKED_EXCHANGES:
@@ -572,25 +637,23 @@ class RealtimeBridge:
         for task in self._worker_tasks:
             task.cancel()
         if self._worker_tasks:
-            try:
-                await asyncio.shield(asyncio.wait(set(self._worker_tasks), timeout=1.0))
-            except asyncio.CancelledError:
-                pass
+            await _await_despite_cancel(
+                asyncio.ensure_future(
+                    asyncio.wait(set(self._worker_tasks), timeout=1.0)
+                )
+            )
         finalize = asyncio.ensure_future(
             run_in_threadpool(_finalize_session_sync, self._call_sid, list(self._exchanges))
         )
-        try:
-            await asyncio.shield(finalize)
-        except asyncio.CancelledError:
-            pass  # the write finishes in its thread regardless
-        except Exception:  # noqa: BLE001
-            logger.debug("realtime finalize failed", exc_info=True)
+        await _await_despite_cancel(finalize)
+        if not finalize.cancelled() and finalize.exception() is not None:
+            logger.debug("realtime finalize failed", exc_info=finalize.exception())
         close = getattr(self._upstream, "close", None)
         if close is not None:
-            try:
-                await asyncio.shield(close())
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+            closing = asyncio.ensure_future(close())
+            await _await_despite_cancel(closing)
+            if not closing.cancelled():
+                closing.exception()  # best-effort close; retrieve, never raise
 
     # ------------------------------------------------------------------
     # Instruction text (patient name resolved once per bridge)
