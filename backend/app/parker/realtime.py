@@ -192,12 +192,23 @@ def build_session_update() -> dict[str, Any]:
         search_paragraph=search_paragraph,
         clock_line=_local_clock_line(),
     )
+    import copy
+
+    from app.parker.hands import effective_proposable_action_types
+
+    # The schema's action_type enum must advertise only what can actually
+    # stage — a static enum let the model promise appointment notes that
+    # died at the gate every time (live-probe find).
+    propose_schema = copy.deepcopy(PROPOSE_ACTION_TOOL["input_schema"])
+    propose_schema["properties"]["action_type"]["enum"] = sorted(
+        effective_proposable_action_types()
+    )
     tools = [
         {
             "type": "function",
             "name": PROPOSE_ACTION_TOOL["name"],
             "description": PROPOSE_ACTION_TOOL["description"],
-            "parameters": PROPOSE_ACTION_TOOL["input_schema"],
+            "parameters": propose_schema,
         }
     ]
     if search_available:

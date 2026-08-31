@@ -240,6 +240,9 @@ def test_brained_session_offers_look_that_up_and_says_so(
         "propose_action",
         "look_that_up",
     ]
+    # only stageable types are advertised — never a promise that dies at the gate
+    enum = session["tools"][0]["parameters"]["properties"]["action_type"]["enum"]
+    assert "reminder" in enum and "appointment_note" not in enum
     assert "look_that_up" in session["instructions"]
     assert "do NOT have web search" not in session["instructions"]
     assert "read web addresses aloud" in session["instructions"]  # wraps lines

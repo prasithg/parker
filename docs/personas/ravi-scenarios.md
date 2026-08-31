@@ -58,4 +58,49 @@ Harness lesson (encoded as `world.settle_open()`): the test engine shares
 one SQLite connection, so DB-touching feeds must not race the context
 worker — a harness artifact, not a product behavior.
 
-## Rounds 2+ (appended by the gauntlet)
+## Round 2 — memory, concurrency, stress + the voice-UX audit (2026-08-31)
+
+Files: `test_scenarios_memory/concurrency/stress.py` (25 tests) plus a
+full audit of every model-facing template and a hygiene sweep hardening
+20 round-1 tests. Three live conversation probes ran the real lane
+(`scripts/live_conversation_probe.py`; transcripts in
+~/Operations/parker/live-probes/).
+
+Fixed this round (pinned by the deck):
+- 🐛 **M02** — the recency-blind five-slot card: two evenings of tennis
+  chat evicted "walks in the morning". The card now balances durable
+  family notes (≤4) against session topics (≤2) via
+  `get_balanced_context_lines`.
+- 🐛 **M07** — a guarded-out memory left its "Recent memories:" header
+  standing alone; headers now fall with their bullets, and a contentless
+  card is not injected.
+- 🐛 **M09** — an evening of "yeah" minted a topic memory and spent a
+  card slot; filler-only sessions now finalize without minting.
+- 🐛 **Fence hardening** — web text containing the fence marker could
+  close its own quotation; markers are stripped, and the context card
+  (which carries untrusted gateway lines) is now fenced too.
+- 🐛 **Prompt overhaul** (UX audit, 19 findings): base-persona
+  web-search instruction explicitly overridden (it contradicted the
+  orchestrator), repair guidance added (pauses are composition; echo the
+  caught part; never act on a guess), warmth bounded (no endearments, no
+  health check-ins), medical EDUCATION allowed while advice stays
+  guarded (live-probe find — the levodopa explanation now lands),
+  machinery words forbidden aloud, clock stamped as call-open time,
+  error envelopes stop leaking exception class names, wrap-up stops
+  pressuring, goodbye got a word budget, "waiting for him to confirm —
+  he taps it there".
+- 🐛 **Phantom action types** — `appointment_note` was proposable but
+  could never stage ("I tried to write a note but it couldn't be
+  saved", live find). Un-stageable types are no longer advertised: the
+  effective-proposable set intersects the stageable set, and BOTH lanes'
+  propose_action schema enums are built from it at request time.
+
+Filed as design questions (docs/next-slices.md):
+- 📋 **Screen identity** — with two live lines, the one-row Dad screen is
+  last-writer-wins: Sarah's phone conversation overwrites his tablet row.
+- 📋 **Lookup spend budget** — nothing caps how many billed searches one
+  session can fire (12 simultaneous ran fine; the contract held).
+- 📋 Honest drop: per-bridge store isolation is untestable by design (the
+  DB seam is process-global; a wedged store is household-wide).
+
+## Rounds 3+ (appended by the gauntlet)

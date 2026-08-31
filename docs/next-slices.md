@@ -1305,3 +1305,16 @@ behavior by a scenario test; none is an unguarded harm path):
    "what time is the Alcaraz match" as a repeat of "when does Alcaraz
    play" — semantic dedup would need a judgment the bridge deliberately
    doesn't make today.
+
+## 2026-08-31 — Scenario gauntlet round 2 — design questions for Pras
+
+(Context: docs/personas/ravi-scenarios.md, Round 2. Round 2's memory-model
+gaps were fixed the same night; these two remain open product calls.)
+
+5. **The Dad screen with two live lines**: the screen mirror is one
+   overwritten row, so while Sarah's phone session is live her words
+   overwrite Ravi's tablet row (`test_scenarios_concurrency.py`). Should
+   the screen belong to the patient's line only, or name its speaker?
+6. **Lookup spend budget**: one session can fire unlimited billed
+   searches on the model's judgment (12 simultaneous held up fine —
+   `test_scenarios_stress.py`). Cap per session? Per day? Or leave it?
