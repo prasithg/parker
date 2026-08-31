@@ -317,6 +317,14 @@ def _make_db() -> Any:
 _db_thread_lock = _threading.Lock()
 _inflight_db_threads = 0
 
+# One writer at a time, process-wide. SQLite serializes writes at the file
+# level anyway, so this costs production nothing — but on the test
+# harness's single shared connection it stops two writer sessions from
+# interleaving one transaction (the silent-rollback artifact that ate
+# finalizes and rejected stagings). Worker payloads (brain/network reads)
+# deliberately do NOT take it: the fast lane must never queue behind them.
+_db_write_lock = _threading.Lock()
+
 
 async def _tracked_thread(fn: Callable[[], Any]) -> Any:
     """Run a DB job on the threadpool, counted while it could hold the DB.
@@ -375,7 +383,8 @@ def _with_local_write_retries(label: str, write: Callable[[], None]) -> None:
 
     for attempt in range(3):
         try:
-            write()
+            with _db_write_lock:
+                write()
             return
         except Exception:  # noqa: BLE001 — bookkeeping must never break the call
             if attempt == 2:
@@ -591,40 +600,44 @@ def _stage_proposal_sync(arguments: dict[str, Any], call_sid: str) -> dict[str, 
     elif arguments.get("recipient"):
         payload["recipient"] = str(arguments["recipient"])[:80]
 
-    db = _make_db()
-    try:
-        call = _get_or_create_call(db, call_sid)
-        result = execute_tool(db, call.id, "capture_intent", payload)
-        if result.get("status") != "captured":
-            return {"status": "rejected", "detail": "Parker could not save that."}
-        captured_id = result.get("captured_intent_id")
-        resolve_captured_intents(db, call_log_id=call.id)
-        stage_resolved_actions(db, call_log_id=call.id)
-        staged = (
-            db.query(StagedAction)
-            .join(StagedAction.resolution_result)
-            .filter(ResolutionResult.captured_intent_id == captured_id)
-            .first()
-        )
-        if staged is None:
-            # Never claim something exists on the screen when it doesn't.
+    # The write lock keeps a concurrent journal/mirror/finalize writer from
+    # interleaving this multi-commit transaction on a shared connection —
+    # a lost staging here reads as an honest-but-wrong "rejected".
+    with _db_write_lock:
+        db = _make_db()
+        try:
+            call = _get_or_create_call(db, call_sid)
+            result = execute_tool(db, call.id, "capture_intent", payload)
+            if result.get("status") != "captured":
+                return {"status": "rejected", "detail": "Parker could not save that."}
+            captured_id = result.get("captured_intent_id")
+            resolve_captured_intents(db, call_log_id=call.id)
+            stage_resolved_actions(db, call_log_id=call.id)
+            staged = (
+                db.query(StagedAction)
+                .join(StagedAction.resolution_result)
+                .filter(ResolutionResult.captured_intent_id == captured_id)
+                .first()
+            )
+            if staged is None:
+                # Never claim something exists on the screen when it doesn't.
+                return {
+                    "status": "rejected",
+                    "detail": (
+                        "Parker could not put that one on the screen — nothing is "
+                        "waiting. Say it did not go through, never that it is "
+                        "waiting there, and offer to try again."
+                    ),
+                }
             return {
-                "status": "rejected",
+                "status": "staged",
                 "detail": (
-                    "Parker could not put that one on the screen — nothing is "
-                    "waiting. Say it did not go through, never that it is "
-                    "waiting there, and offer to try again."
+                    "Staged and shown on the screen for confirmation. Nothing runs "
+                    "until it is confirmed there."
                 ),
             }
-        return {
-            "status": "staged",
-            "detail": (
-                "Staged and shown on the screen for confirmation. Nothing runs "
-                "until it is confirmed there."
-            ),
-        }
-    finally:
-        db.close()
+        finally:
+            db.close()
 
 
 def _is_benign_upstream_error(error: Any) -> tuple[bool, bool]:
