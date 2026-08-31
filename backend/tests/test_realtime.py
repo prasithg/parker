@@ -417,13 +417,21 @@ def test_exchange_mirrors_to_the_live_screen(db, realtime_enabled, brainless, up
             {"type": "response.done", "response": {"output": []}},
         ]
     )
+    def mirrored() -> bool:
+        db.expire_all()
+        state = get_screen_state(db)
+        return state is not None and state.heard == "what's the weather"
+
     with client.websocket_connect("/parker/converse/realtime") as ws:
         ws.receive_json()  # user_transcript
         ws.receive_json()  # assistant delta
+        # The mirror write rides a threadpool thread that shutdown does not
+        # wait for — hang up only once the row is provably there, or the
+        # test's read races the commit (heard and speech land in one write).
+        assert _wait_until(mirrored)
         ws.send_json({"type": "end"})
 
     state = get_screen_state(db)
-    assert state is not None
     assert state.heard == "what's the weather"
     assert state.speech == "Sunny and mild."
 

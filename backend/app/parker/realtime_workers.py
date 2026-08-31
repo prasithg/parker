@@ -90,10 +90,22 @@ def _as_second_person(text: str) -> str:
     return re.sub(r"\bi\b", "you", lowered)
 
 
+_MEDICAL_NOUN_PATTERN = re.compile(
+    r"\b(dose|doses|dosage|medicine|medicines|medication|medications|meds|pill|pills"
+    r"|tablet|tablets|prescription|levodopa|carbidopa|pramipexole|sinemet|drug|drugs)\b"
+)
+
+
 def _question_is_guarded(question: str) -> bool:
-    return speech_violates_medical_boundary(question) or speech_violates_medical_boundary(
-        _as_second_person(question)
-    )
+    if speech_violates_medical_boundary(question):
+        return True
+    # The second-person swap only applies when the question is actually
+    # about medicine — bare it turned "increase my step count" into a
+    # guard trip (verifier find, round 3). The answer-side guard still
+    # backstops anything this pre-check lets through.
+    if _MEDICAL_NOUN_PATTERN.search(question.lower()):
+        return speech_violates_medical_boundary(_as_second_person(question))
+    return False
 
 
 def search_worker_available() -> bool:
@@ -316,12 +328,18 @@ def _strip_markers(text: str) -> str:
     """Untrusted content must not be able to close its own fence.
 
     Web-derived text containing a marker string would otherwise escape the
-    quotation and land beside Parker's instructions (UX-audit find).
+    quotation and land beside Parker's instructions (UX-audit find). Runs
+    to a fixpoint: a single pass let "LOOKUP RES<marker>ULT>>>" reassemble
+    the marker out of its own removal (verifier find, round 3).
     """
 
-    for marker in (_RESULT_OPEN, _RESULT_CLOSE, _CARD_OPEN, _CARD_CLOSE):
-        text = text.replace(marker, "")
-    return text
+    while True:
+        stripped = text
+        for marker in (_RESULT_OPEN, _RESULT_CLOSE, _CARD_OPEN, _CARD_CLOSE):
+            stripped = stripped.replace(marker, "")
+        if stripped == text:
+            return stripped
+        text = stripped
 
 
 def render_search_item(result: WorkerResult, *, age_seconds: float) -> str:

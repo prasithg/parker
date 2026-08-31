@@ -122,9 +122,23 @@ def get_balanced_context_lines(db: Session) -> list[str]:
     """
 
     lines: list[str] = []
-    rows = get_recent_memories(db, limit=20)
-    durable = [row for row in rows if row.source != "realtime"][:4]
-    episodic = [row for row in rows if row.source == "realtime"][:2]
+    # Separate queries, not one recency window partitioned: twenty chatty
+    # sessions must never push the durable facts out of query range
+    # (verifier find, round 3).
+    durable = (
+        db.query(ConversationMemory)
+        .filter(ConversationMemory.source != "realtime")
+        .order_by(ConversationMemory.created_at.desc(), ConversationMemory.id.desc())
+        .limit(4)
+        .all()
+    )
+    episodic = (
+        db.query(ConversationMemory)
+        .filter(ConversationMemory.source == "realtime")
+        .order_by(ConversationMemory.created_at.desc(), ConversationMemory.id.desc())
+        .limit(2)
+        .all()
+    )
     bullets = [f"- [{row.memory_type}] {row.content}" for row in durable + episodic]
     if bullets:
         lines.append("Recent memories:")

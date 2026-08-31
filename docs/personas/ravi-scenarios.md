@@ -103,4 +103,29 @@ Filed as design questions (docs/next-slices.md):
 - 📋 Honest drop: per-bridge store isolation is untestable by design (the
   DB seam is process-global; a wedged store is household-wide).
 
-## Rounds 3+ (appended by the gauntlet)
+## Round 3 — the verify round verified the verifiers (2026-08-31)
+
+A fresh-context attacker ran executed repros against round 2's own fixes
+and confirmed three defects IN THE FIXES (all fixed and pinned in
+`test_realtime_workers.py`):
+
+- 🐛 the balanced card partitioned one 20-row window, so twenty chatty
+  sessions still evicted every durable fact — durable and episodic now
+  have separate queries;
+- 🐛 marker-stripping ran one pass, so "LOOKUP RES&lt;marker&gt;ULT>>>" could
+  reassemble its own fence — now stripped to a fixpoint;
+- 🐛 the first-person medical swap tripped on ordinary life ("increase my
+  step count" burned the redirect) — the swap now applies only when the
+  question names medicine; the answer-side guard backstops the rest.
+
+Also confirmed clean: the text lane already used the effective-proposable
+set; a gateway-enabled appointment_note skill stages end-to-end; the tool
+schemas stay unmutated (deepcopy). Live re-probes: the levodopa education
+scenario now lands (plain-words explanation, boundary intact, and the
+model routed "save a question" through a stageable reminder that staged).
+
+Residual: one unreproduced full-suite blip in ~7 marathon runs (log lost;
+6 consecutive clean runs after) — if it resurfaces, apply the hygiene
+pattern (drain waits / right observable).
+
+## Rounds 4+ (appended by the gauntlet)
