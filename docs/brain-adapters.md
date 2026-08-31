@@ -1,6 +1,6 @@
 # Brain adapters — bring your own brain
 
-Parker is deliberately split into a **brainstem** and a **brain**.
+Parker is deliberately split into a **brainstem** and a **brain**. The broader live-voice shape—one consistent front agent delegating bounded jobs to invisible workers—is specified in [voice-agent-architecture.md](voice-agent-architecture.md); this document owns the adapter and guard contracts inside that architecture.
 
 The brainstem is Parker itself: hearing (local ASR), understanding and repair
 under uncertainty, the deterministic safety guards, and the policy broker —

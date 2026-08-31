@@ -1438,3 +1438,24 @@ BROWSER are pinned by the deck — presence signals should ride existing
 events or new-page-side derivation, not new upstream contracts, unless
 scenarios are updated deliberately); the review surface should journal
 enough that the next tester session's presence behavior is reviewable.
+
+## 2026-08-31 — One voice, many hands architecture — DOCUMENTED
+
+External convergence: Bootoshi's single-consistent-agent stack, Pipecat's
+worker bus/distributed/proxy architecture, and Pipecat PhoneLLM Alpha 1 all
+match the fast-voice-orchestrator direction Parker had already built: one
+person-facing front agent remains present while invisible workers fetch
+context, search, reason, or stage proposals, then return typed results for
+the front agent to screen and steer back into the conversation.
+
+The source-backed decision record is
+[voice-agent-architecture.md](voice-agent-architecture.md). It pins the
+front/worker/evidence planes, job and result lifecycle, stale/cancel/
+interruption semantics, client-measured latency budgets, current OpenAI
+Realtime mapping, and the evidence gate for a later Pipecat + PhoneLLM
+cascaded-runtime spike. It deliberately does **not** add Pipecat, Redis,
+PGMQ, PhoneLLM, Modal, vLLM, new workers, or hardware to Parker today.
+Current priority remains the human-proven voice experience: Live as the
+primary configured entry, a chosen natural Parker voice, "yes one"-style
+spoken selection, browser/client latency marks, and another reviewed human
+session.
