@@ -504,6 +504,8 @@ def test_duplicate_lookup_never_spawns_a_second_worker(
             for output in _function_outputs(fake)
         ]
         assert statuses == ["working", "already_working"]
+        # the single spawned worker may not have STARTED on its thread yet
+        assert _wait_until(lambda: calls)
         assert calls == ["What's the weather?"]
         release.set()
         ws.send_json({"type": "end"})

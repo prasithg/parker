@@ -183,7 +183,14 @@ def _memory_lines(db: Any) -> list[str]:
     text = get_context_for_next_call(db)
     if text == "No prior context yet.":
         return []
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    # A zero streak is the absence of data, not a fact about him — on a
+    # fresh install it would otherwise ride the card alone (gauntlet find).
+    return [
+        line
+        for line in lines
+        if not line.startswith("Medication adherence streak: 0 ")
+    ]
 
 
 def _medication_lines(db: Any) -> list[str]:
