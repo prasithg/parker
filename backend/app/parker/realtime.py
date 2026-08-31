@@ -313,12 +313,34 @@ def _make_db() -> Any:
     return SessionLocal()
 
 
+def _with_local_write_retries(label: str, write: Callable[[], None]) -> None:
+    """Run one best-effort local write, retrying transient refusals.
+
+    Local SQLite can refuse a write transiently: the file DB locked by
+    another Parker process (server, talk loop, digest share it), or the
+    test harness's single shared in-memory connection mid-query on
+    another thread. Each attempt opens its own session, so writers must
+    be idempotent. Never raises — but losing a write outright is a
+    warning, not a debug whisper.
+    """
+
+    for attempt in range(3):
+        try:
+            write()
+            return
+        except Exception:  # noqa: BLE001 — bookkeeping must never break the call
+            if attempt == 2:
+                logger.warning("realtime %s write lost after retries", label, exc_info=True)
+            else:
+                time.sleep(0.05 * (attempt + 1))
+
+
 def _record_exchange_sync(heard: str, speech: str) -> None:
     """Mirror one realtime exchange to the live screen row (best-effort)."""
 
     from app.parker.screen import publish_screen_state
 
-    try:
+    def write() -> None:
         db = _make_db()
         try:
             publish_screen_state(
@@ -326,8 +348,8 @@ def _record_exchange_sync(heard: str, speech: str) -> None:
             )
         finally:
             db.close()
-    except Exception:  # noqa: BLE001 — the mirror must never break the call
-        logger.debug("realtime screen mirror skipped", exc_info=True)
+
+    _with_local_write_retries("screen mirror", write)
 
 
 def _get_or_create_call(db: Any, call_sid: str) -> Any:
@@ -345,14 +367,14 @@ def _get_or_create_call(db: Any, call_sid: str) -> Any:
 def _ensure_call_log_sync(call_sid: str) -> None:
     """Eager call log at session open (best-effort; proposals also create it)."""
 
-    try:
+    def write() -> None:
         db = _make_db()
         try:
             _get_or_create_call(db, call_sid)
         finally:
             db.close()
-    except Exception:  # noqa: BLE001 — bookkeeping must never break the call
-        logger.debug("realtime eager call log skipped", exc_info=True)
+
+    _with_local_write_retries("eager call log", write)
 
 
 def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> None:
@@ -369,7 +391,9 @@ def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> N
     # filler-only session must not spend a context-card slot the family's
     # curated facts share (gauntlet find M03).
     substantive = [line for line in heard_lines if len(line.split()) >= 3]
-    try:
+
+    def write() -> None:
+        from app.memory.models import ConversationMemory
         from app.memory.store import save_memory
 
         db = _make_db()
@@ -383,7 +407,18 @@ def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> N
             call.summary = (
                 f"Live conversation, {len(exchanges)} exchange(s). Asked about: {topics}"
             )
-            if substantive:
+            # Idempotent under retry: a re-run after a committed-but-then-
+            # failed attempt must not mint a second topic memory.
+            already_minted = (
+                db.query(ConversationMemory)
+                .filter(
+                    ConversationMemory.call_log_id == call.id,
+                    ConversationMemory.source == "realtime",
+                )
+                .first()
+                is not None
+            )
+            if substantive and not already_minted:
                 # One transaction: save_memory's commit lands the call-log
                 # end and the topic memory together, so any reader that
                 # sees ended_at can trust the whole session record exists.
@@ -398,8 +433,8 @@ def _finalize_session_sync(call_sid: str, exchanges: list[tuple[str, str]]) -> N
                 db.commit()
         finally:
             db.close()
-    except Exception:  # noqa: BLE001 — persistence must never break shutdown
-        logger.debug("realtime session finalize skipped", exc_info=True)
+
+    _with_local_write_retries("session finalize", write)
 
 
 def _stage_proposal_sync(arguments: dict[str, Any], call_sid: str) -> dict[str, Any]:
