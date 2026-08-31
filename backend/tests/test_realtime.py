@@ -225,7 +225,7 @@ def test_session_config_carries_persona_vad_transcription_and_tools(
     # brainless -> propose_action stays the only tool
     assert [tool["name"] for tool in session["tools"]] == ["propose_action"]
     assert "Parkinson" in session["instructions"]
-    assert "waiting for their" in session["instructions"]  # wraps across a line
+    assert "waiting for him to confirm" in session["instructions"]  # he taps, nobody else
     assert "Right now it is" in session["instructions"]  # local clock grounding
     # the browser's audio chunk was forwarded verbatim
     appended = [e for e in fake.sent if e["type"] == "input_audio_buffer.append"]
@@ -240,6 +240,9 @@ def test_brained_session_offers_look_that_up_and_says_so(
         "propose_action",
         "look_that_up",
     ]
+    # only stageable types are advertised — never a promise that dies at the gate
+    enum = session["tools"][0]["parameters"]["properties"]["action_type"]["enum"]
+    assert "reminder" in enum and "appointment_note" not in enum
     assert "look_that_up" in session["instructions"]
     assert "do NOT have web search" not in session["instructions"]
     assert "read web addresses aloud" in session["instructions"]  # wraps lines
@@ -414,13 +417,21 @@ def test_exchange_mirrors_to_the_live_screen(db, realtime_enabled, brainless, up
             {"type": "response.done", "response": {"output": []}},
         ]
     )
+    def mirrored() -> bool:
+        db.expire_all()
+        state = get_screen_state(db)
+        return state is not None and state.heard == "what's the weather"
+
     with client.websocket_connect("/parker/converse/realtime") as ws:
         ws.receive_json()  # user_transcript
         ws.receive_json()  # assistant delta
+        # The mirror write rides a threadpool thread that shutdown does not
+        # wait for — hang up only once the row is provably there, or the
+        # test's read races the commit (heard and speech land in one write).
+        assert _wait_until(mirrored)
         ws.send_json({"type": "end"})
 
     state = get_screen_state(db)
-    assert state is not None
     assert state.heard == "what's the weather"
     assert state.speech == "Sunny and mild."
 
@@ -504,6 +515,8 @@ def test_duplicate_lookup_never_spawns_a_second_worker(
             for output in _function_outputs(fake)
         ]
         assert statuses == ["working", "already_working"]
+        # the single spawned worker may not have STARTED on its thread yet
+        assert _wait_until(lambda: calls)
         assert calls == ["What's the weather?"]
         release.set()
         ws.send_json({"type": "end"})

@@ -1283,3 +1283,38 @@ Named follow-ups (deliberately not built):
 - **Browser-side receipts** for the live lane (server INFO logs only for
   now); **LLM session summaries** (deterministic topics line today);
   **duplicate-question coalescing** beyond the in-flight set.
+
+## 2026-08-31 — Scenario gauntlet round 1 (overnight) — design questions for Pras
+
+Full context in docs/personas/ravi-scenarios.md (each is pinned as present
+behavior by a scenario test; none is an unguarded harm path):
+
+1. **Blocked staged actions are dead ends** (`test_scenarios_actions.py::
+   test_the_tv_stays_quiet_until_he_taps_yes`): a premature execute marks
+   the card `blocked`; confirm then ignores it forever and Ravi's tap is
+   silently swallowed. Re-stage on tap, or say "that card expired"?
+2. **No emergency path in the live lane** (`test_scenarios_safety.py`):
+   "I have fallen" gets the model's spoken advice + a transcript trail,
+   no escalation/notice. Should a fall statement raise a family notice
+   from this lane? (Send-path policy decision.)
+3. **Empty lexicon = every recipient "known"**: the anti-misdirection
+   guard only exists once PERSONAL_LEXICON / family contacts are set — a
+   documented v0 configuration cliff; the five-minute family conversation
+   may be enough.
+4. **Rephrased repeats bill twice**: exact-key lookup dedup can't see
+   "what time is the Alcaraz match" as a repeat of "when does Alcaraz
+   play" — semantic dedup would need a judgment the bridge deliberately
+   doesn't make today.
+
+## 2026-08-31 — Scenario gauntlet round 2 — design questions for Pras
+
+(Context: docs/personas/ravi-scenarios.md, Round 2. Round 2's memory-model
+gaps were fixed the same night; these two remain open product calls.)
+
+5. **The Dad screen with two live lines**: the screen mirror is one
+   overwritten row, so while Sarah's phone session is live her words
+   overwrite Ravi's tablet row (`test_scenarios_concurrency.py`). Should
+   the screen belong to the patient's line only, or name its speaker?
+6. **Lookup spend budget**: one session can fire unlimited billed
+   searches on the model's judgment (12 simultaneous held up fine —
+   `test_scenarios_stress.py`). Cap per session? Per day? Or leave it?

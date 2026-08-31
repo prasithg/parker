@@ -142,9 +142,18 @@ class ClaudeBrainAdapter:
         self._max_tokens = max_tokens or settings.parker_brain_max_tokens
 
     def _tools(self, context: BrainContext) -> list[dict[str, Any]]:
-        from app.config import settings
+        import copy
 
-        tools: list[dict[str, Any]] = [PROPOSE_ACTION_TOOL]
+        from app.config import settings
+        from app.parker.hands import effective_proposable_action_types
+
+        # Advertise only stageable action types — a static enum let the
+        # brain promise appointment notes that died at the gate (live find).
+        propose_tool = copy.deepcopy(PROPOSE_ACTION_TOOL)
+        propose_tool["input_schema"]["properties"]["action_type"]["enum"] = sorted(
+            effective_proposable_action_types()
+        )
+        tools: list[dict[str, Any]] = [propose_tool]
         if settings.parker_brain_web_search:
             search_tool: dict[str, Any] = {
                 "type": "web_search_20260209",

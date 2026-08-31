@@ -1,4 +1,4 @@
-.PHONY: backend-venv install run test seed-persona live-voice-probe sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest rollup voice-deps demo-voice talk talk-loop
+.PHONY: backend-venv install run test seed-persona live-voice-probe eval-voice-scenarios sidecar eval-tasks eval-interactivity eval-demo-interactivity eval-degraded-input-replay eval-caregiver-state-legibility eval-claim-metric-map eval-construct-validity eval-repair-quality-rubric eval-audio-autodata eval-wake-context eval-audio-real eval-release-readiness eval-repair eval-brain-lane eval-hands eval-scheduled-wrapper eval-scheduled-wrapper-harness reset-db repl demo digest rollup voice-deps demo-voice talk talk-loop
 
 BACKEND_PYTHON := backend/.venv/bin/python
 BACKEND_PIP := backend/.venv/bin/pip
@@ -150,6 +150,11 @@ demo: reset-db
 # orchestrator's context card reads. Idempotent; local DB only.
 seed-persona: backend-venv
 	cd backend && ./.venv/bin/python -m app.demo.persona
+
+# The Ravi scenario deck (docs/personas/ravi-scenarios.md): every invented
+# scenario as an executable bridge-contract test. Keyless, offline.
+eval-voice-scenarios: backend-venv
+	cd backend && ./.venv/bin/pytest tests/test_scenarios_*.py -q
 
 # Live probe of the fast-voice orchestrator: one REAL realtime session +
 # one searched brain call (billed). Seeds Ravi into an isolated in-memory

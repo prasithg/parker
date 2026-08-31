@@ -1,6 +1,8 @@
 """Shared test fixtures."""
 
 import pytest
+
+pytest.register_assert_rewrite("scenario_harness")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -39,6 +41,15 @@ def override_get_db(db):
         yield
     finally:
         app.dependency_overrides.clear()
+
+
+# The scenario gauntlet's world fixture, registered globally so every
+# tests/test_scenarios_*.py file can request `voice_world` directly.
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.dirname(__file__))
+from scenario_harness import voice_world  # noqa: E402,F401
 
 
 @pytest.fixture(autouse=True)
