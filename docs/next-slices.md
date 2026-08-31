@@ -1318,3 +1318,34 @@ gaps were fixed the same night; these two remain open product calls.)
 6. **Lookup spend budget**: one session can fire unlimited billed
    searches on the model's judgment (12 simultaneous held up fine —
    `test_scenarios_stress.py`). Cap per session? Per day? Or leave it?
+
+## Next: the human-testing flywheel (Pras, 2026-08-31 morning)
+
+Pras's read after the gauntlet: the flywheel's missing piece is HUMAN
+testing and seeing its results. He will be the first human tester —
+his speech is sharp, so ASR-of-impaired-speech goes untested, but
+everything else is speaker-independent (presence/latency feel, barge-in,
+confirm-screen UX, memory continuity, repair behavior under deliberate
+mumbling/pauses/rephrasing) and needs human eyes, not a fake upstream.
+
+What exists to build on:
+- `make run` + the Live conversation page is the human's way in; the mock
+  gateway (`scripts/mock_family_gateway.py`, 18790) supplies ambient
+  context; `make seed-persona` gives the session a life to draw on.
+- Sessions already leave a trail: CallLog summary, topic memory, screen
+  row, receipts at INFO under parker.realtime, live-probe JSON transcripts
+  in ~/Operations/parker/live-probes/.
+- The gap is the SEEING: no one surface shows a finished session back to
+  the human (what Parker heard/said/injected/staged, ack + inject
+  latencies, what tomorrow's card will now carry) so they can judge it
+  and file the judgment. That review-the-session surface — plus a
+  dirt-simple way to capture "that felt wrong because…" against a turn —
+  is the slice.
+
+Real-infra swap-in (later, deliberately): Hermes runs on this laptop and
+127.0.0.1:18789 is a Tailscale/SSH tunnel to the family OpenClaw on the
+Mac mini. Point PARKER_OPENCLAW_GATEWAY_URL at 18789 to run live sessions
+against the real gateway (the `/parker/v1/context` + skills endpoints
+need the harness-side plugin, filed above). The pytest deck stays on
+mocks by design; a manual `make`-target smoke against the real gateway is
+the right shape when we swap.
