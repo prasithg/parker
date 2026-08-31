@@ -243,6 +243,31 @@ class ScenarioWorld:
         self.mp.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: gw)
         return gw
 
+    def enable_hands(self, gw=None):
+        """Register the gateway's skills as Parker's hands.
+
+        Gateway-backed action types (media_playlist, open_links) are only
+        proposable/executable while the hands registry holds an enabled
+        skill — the conftest autouse reset clears it after each test. Pass
+        the gateway you built with lines+skills, or omit for a default
+        skills-only one.
+        """
+
+        from app.parker import hands as hands_module
+
+        if gw is None:
+            gw = self.gateway(
+                skills=[
+                    {
+                        "name": "mock",
+                        "action_types": ["media_playlist", "open_links"],
+                        "enabled": True,
+                    }
+                ]
+            )
+        hands_module.configure_hands(hands_module.OpenClawHands.discover(gw))
+        return gw
+
     # -- the mocked search brain ---------------------------------------
 
     def enable_search(self, answers=None, *, gate: "threading.Event | None" = None, error=None):
