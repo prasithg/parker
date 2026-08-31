@@ -148,7 +148,19 @@ def test_sessions_page_serves_with_conventions(db):
     # transcript and feedback text render through textContent, never
     # interpolated into markup
     assert "textContent" in page
-    for dangerous in ("${ev.heard}", "${ev.said}", "${s.summary}", "${f.note}"):
+    for dangerous in (
+        "${ev.heard}",
+        "${ev.said}",
+        "${s.summary}",
+        "${f.note}",
+        "${d.question}",
+        "${d.label}",
+        "${d.note}",
+        "${d.error}",
+        "${d.action_type}",  # model-controlled — must never be interpolated
+        "${a.action_type}",
+        "${s.minted_memory}",
+    ):
         assert dangerous not in page
     # the one-tap judgment control exists
     assert "Felt wrong" in page

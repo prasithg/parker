@@ -182,7 +182,10 @@ function eventCard(sid, ev) {
   } else if (ev.kind === 'proposal') {
     body.appendChild(el('<div class="who">Parker proposed</div>'));
     body.appendChild(text(el('<div class="speech"></div>'), (d.label || d.action_type || '')));
-    body.appendChild(el(`<div><span class="badge ${d.status === 'staged' ? 'staged' : 'failed'}">${d.status}</span><span class="chip">${d.action_type}</span></div>`));
+    const row = el(`<div><span class="badge ${d.status === 'staged' ? 'staged' : 'failed'}"></span><span class="chip"></span></div>`);
+    text(row.querySelector('.badge'), d.status);
+    text(row.querySelector('.chip'), d.action_type);  // model-controlled: textContent only
+    body.appendChild(row);
     if (d.note) body.appendChild(text(el('<div class="meta"></div>'), d.note));
   }
   feedbackControls(sid, ev, body);
@@ -207,7 +210,8 @@ async function loadDetail(sid) {
   staged.replaceChildren();
   if (!s.staged_actions.length) staged.appendChild(el('<div class="empty">Nothing was staged.</div>'));
   for (const a of s.staged_actions) {
-    const card = el(`<div class="card"><span class="badge ${a.status}">${a.status}</span><span class="chip">${a.action_type}</span><div class="meta summary"></div></div>`);
+    const card = el(`<div class="card"><span class="badge ${a.status}">${a.status}</span><span class="chip"></span><div class="meta summary"></div></div>`);
+    text(card.querySelector('.chip'), a.action_type);
     text(card.querySelector('.summary'), a.summary);
     staged.appendChild(card);
   }
