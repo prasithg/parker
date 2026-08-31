@@ -337,7 +337,9 @@ def test_the_mumble_that_transcribes_to_nothing(voice_world):
     assert world.db.query(ConversationMemory).count() == 0  # no user transcript, no memory
     call = world.db.query(CallLog).filter(CallLog.call_type == "realtime").one()
     assert call.summary is None  # the eager row exists; nothing was invented
-    assert call.ended_at is None
+    # Honestly ended, never "live" forever on the review feed (flywheel
+    # verifier find); no summary and no memory is the invisibility contract.
+    assert call.ended_at is not None
 
 
 def test_stop_kills_the_ramble_but_not_the_answer_he_wanted(voice_world):

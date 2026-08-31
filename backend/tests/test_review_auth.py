@@ -21,6 +21,10 @@ CREDS = ("family", "open-sesame")
 PROTECTED = [
     ("GET", "/parker/review"),
     ("GET", "/parker/review/ui"),
+    ("GET", "/parker/sessions"),
+    ("GET", "/parker/sessions/ui"),
+    ("GET", "/parker/sessions/REALTIME-nope"),
+    ("POST", "/parker/sessions/REALTIME-nope/feedback"),
     ("GET", "/parker/outbox"),
     ("POST", "/parker/actions/999/confirm"),
     ("POST", "/parker/actions/999/execute"),

@@ -224,6 +224,7 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 <details id="dev">
   <summary>Details for the family</summary>
   <pre id="dev-out">No turns yet.</pre>
+  <p><a href="/parker/sessions/ui">Review finished live sessions</a> — what Parker heard, said, injected, and staged, with latencies.</p>
 </details>
 
 <script>

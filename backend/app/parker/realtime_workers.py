@@ -258,15 +258,23 @@ CONTEXT_SOURCES: tuple[tuple[str, Callable[[Any], list[str]]], ...] = (
 )
 
 
-def run_context_worker(make_db: Callable[[], Any]) -> WorkerResult:
-    """Build the session context card. One failing source never kills it."""
+def run_context_worker(
+    make_db: Callable[[], Any],
+    sources: tuple[tuple[str, Callable[[Any], list[str]]], ...] = CONTEXT_SOURCES,
+) -> WorkerResult:
+    """Build the session context card. One failing source never kills it.
+
+    ``sources`` lets a read-side caller (the session-review card preview)
+    reuse the exact assembly while skipping the live gateway probe — a
+    review page request must never block on the family agent's network.
+    """
 
     started = time.time()
     lines: list[str] = []
     db = None
     try:
         db = make_db()
-        for name, source in CONTEXT_SOURCES:
+        for name, source in sources:
             try:
                 lines.extend(source(db))
             except Exception:  # noqa: BLE001 — card sources are best-effort

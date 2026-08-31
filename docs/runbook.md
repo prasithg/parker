@@ -244,6 +244,15 @@ screen mirroring the conversation. Audio goes to OpenAI in this mode —
 the family's explicit choice of lane. A/B it against the patient loop
 with the same receipts before deciding which one Dad meets first.
 
+**Reviewing a finished live session (the human-testing flywheel).**
+Every live session is journaled locally; open
+`http://localhost:8000/parker/sessions/ui` (same opt-in dashboard auth
+as the review page) to see the newest session's timeline — what Parker
+heard and said each turn, what the workers injected and how long the
+ack and answer took, what was staged, what the medical guard cancelled,
+and what the next session's context card now carries. Tap "Felt wrong…"
+on any moment to file why; feedback stays on this machine.
+
 Before a first-user session, rehearse the exact machine once:
 
 ```bash

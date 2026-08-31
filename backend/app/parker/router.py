@@ -54,6 +54,12 @@ from app.parker.converse_router import router as converse_router
 from app.parker.digest import render_digest_page
 from app.parker.practice_router import router as practice_router
 from app.parker.review_ui import REVIEW_PAGE_HTML
+from app.parker.session_review import (
+    build_session_detail,
+    build_sessions_feed,
+    file_feedback,
+)
+from app.parker.sessions_ui import SESSIONS_PAGE_HTML
 from app.parker.screen import get_screen_state, serialize_screen_state
 from app.parker.screen_ui import SCREEN_PAGE_HTML
 from app.parker.loop_state import get_loop_state
@@ -442,6 +448,61 @@ def caregiver_review_ui() -> str:
     """Local, single-file caregiver review page over the /parker review APIs."""
 
     return REVIEW_PAGE_HTML
+
+
+# ---------------------------------------------------------------------------
+# The human-testing flywheel: review a finished live session, file feedback.
+# Transcript content, so it sits behind the same opt-in auth seam as /review.
+# ---------------------------------------------------------------------------
+
+
+class SessionFeedbackRequest(BaseModel):
+    event_id: int
+    note: str = ""
+
+
+@router.get("/sessions", dependencies=[Depends(require_dashboard_auth)])
+def realtime_sessions_feed(limit: int = 20, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Recent live sessions, newest first — the tester's way in."""
+
+    return build_sessions_feed(db, limit=limit)
+
+
+@router.get(
+    "/sessions/ui",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+    dependencies=[Depends(require_dashboard_auth)],
+)
+def realtime_sessions_ui() -> str:
+    """Single-file review-the-session page over the /parker/sessions APIs."""
+
+    return SESSIONS_PAGE_HTML
+
+
+@router.get("/sessions/{call_sid}", dependencies=[Depends(require_dashboard_auth)])
+def realtime_session_detail(call_sid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """One session's full journal: turns, injections, latencies, next card."""
+
+    detail = build_session_detail(db, call_sid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Live session not found: {call_sid}")
+    return detail
+
+
+@router.post("/sessions/{call_sid}/feedback", dependencies=[Depends(require_dashboard_auth)])
+def realtime_session_feedback(
+    call_sid: str, payload: SessionFeedbackRequest, db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """File "that felt wrong because…" against one event of the session."""
+
+    filed = file_feedback(db, call_sid, payload.event_id, payload.note)
+    if filed is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No such event {payload.event_id} in session {call_sid}",
+        )
+    return filed
 
 
 # The live patient screen is deliberately outside the dashboard-auth seam:

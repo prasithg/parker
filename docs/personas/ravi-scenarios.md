@@ -128,4 +128,67 @@ Residual: one unreproduced full-suite blip in ~7 marathon runs (log lost;
 6 consecutive clean runs after) — if it resurfaces, apply the hygiene
 pattern (drain waits / right observable).
 
-## Rounds 4+ (appended by the gauntlet)
+## Round 4 — the review dimension: seeing the session (2026-08-31)
+
+The human-testing flywheel slice added the deck's first read-side
+dimension: `test_scenarios_review.py` (5 scenarios) drives full fake
+sessions and then pins what the review surface (`/parker/sessions/ui`)
+serves back — the journal timeline with ack/inject latencies, the
+staged actions, the guard-trip record, tomorrow's card preview with the
+minted memory named, and one-tap feedback filed against a turn.
+
+Building the dimension flushed three latent harness/product races (all
+fixed and pinned):
+
+- 🐛 **Silent-rollback write loss** — on the harness's shared StaticPool
+  connection, a concurrent session's rollback could discard another
+  thread's committed-looking write with NO exception (traced live:
+  `record_event_sync` printed count=0 immediately after its own commit).
+  Retry wrappers never fired because nothing raised. All realtime local
+  writers now verify-after-commit and raise so the bounded idempotent
+  retries actually retry. This is the likely mechanism behind the
+  original CI finalize flake class, not just the journal's.
+- 🐛 **Cancelled threadpool awaits ABANDON their thread** (measured:
+  anyio to_thread under plain asyncio returns from cancellation
+  immediately while the thread runs on) — so `_active_bridges == 0`
+  never proved quiescence and fixture `drop_all` could race a live
+  thread ("database table is locked"). The bridge now counts in-flight
+  DB threads with an atomic pending→running/aborted handoff
+  (`_tracked_thread`), and both harness teardowns wait for
+  `_inflight_db_threads == 0` too.
+- 🐛 **S09 double-count window** — `end` could cancel response handling
+  between the screen-mirror await and the per-turn state reset, so
+  shutdown's dangling-turn capture re-appended an already-recorded turn
+  (surfaced as "50 exchange(s)" in the 49-turn cap scenario once the
+  journal write widened the window). Turn state is now consumed
+  synchronously before any await; a mid-recording turn can never look
+  unanswered to shutdown.
+
+### Round 4's verify round (four fresh-context attackers, executed repros)
+
+- 🐛 **Duplicate journal rows under retry** — a transient failure of the
+  verify-after-commit READ, after a successful commit, made the retry
+  re-insert the same (call, seq) row (executed repro: two identical turn
+  rows). `record_event_sync` is now idempotent per (call, seq).
+- 🐛 **The last answered turn could vanish from the timeline** — a
+  hang-up cancelling the screen-mirror await ate the turn's journal
+  write while the summary still counted the exchange (executed repro:
+  "1 exchange(s)" beside an empty timeline). The turn's journal writer
+  is now stashed before any await and flushed by shutdown.
+- 🐛 **The dangling-turn journal was gated behind the 50-exchange cap**
+  — in long sessions, his unanswered last words were exactly the record
+  that got dropped. The journal write now runs outside the cap.
+- 🐛 **"Live" forever** — accidental-tap/mumble-only sessions never got
+  an `ended_at`, so the feed badged them live permanently. Finalize now
+  always closes the session; it still invents no summary and mints no
+  memory (the two cross-session invisibility pins updated to say so).
+- 🐛 **The detail endpoint could block ~30 s** on the inline gateway
+  probe; the next-card preview now runs the same builder over the
+  DB-backed sources only, and says so on the page.
+- Accepted, not fixed: past the cap the feed's turn count (uncapped
+  journal) sits beside the summary's "50 exchange(s)" (capped memory
+  bound) — both numbers are honest about different things; and `ack_ms`
+  measures function-call→ack-item (sub-ms by design) — "asked →
+  injected" is the number that means something to a human.
+
+## Rounds 5+ (appended by the gauntlet)
