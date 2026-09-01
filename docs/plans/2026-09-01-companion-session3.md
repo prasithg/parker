@@ -155,3 +155,5 @@ The original proposed slice order is superseded by the review order below:
 7. **Stop for human/device review.** Return exact revision, real stacked CI, strict-concurrency evidence, multi-tab/persistence-failure tests, wake soak results, real-mic results, packaged WKWebView evidence, and remaining untested scope for fresh Hermes review.
 
 Do **not** implement session-ending, My Day, voice-default, or another expressiveness pass in this foundation session. Those become later slices after the gates above pass; the full ordering is in the independent review.
+
+A separate fast current-web spike is planned in [2026-09-01-fast-current-web-search-spike.md](2026-09-01-fast-current-web-search-spike.md). It benchmarks Parallel Turbo against Exa Instant and the existing Claude worker, and changes the realtime turn to route silently before any current-fact audio. Keep that out of the foundation session.
