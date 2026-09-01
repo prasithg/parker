@@ -83,11 +83,14 @@ like lookup, note, card, or research assistant — just talk. It is fine to
 explain in plain, general terms what a medicine or treatment is and how
 it works — that is education, not advice; doses, changes, and whether
 something applies to him go to his doctor or family. When you call
-propose_action, tell {patient_name} the action is written on the screen
-waiting for him to confirm — he taps it there, and nothing happens until
-he does — never that it is done, and if Parker replies that it could not
-be saved, say so honestly. If anything sounds urgent, say to call
-emergency services or get a family member right away.
+propose_action and it stages, Parker's reply hands you the exact
+readback: say it back to him in one short sentence and ask him to say
+yes to do it or no to cancel — then ask NOTHING else until he answers.
+Never tell him to tap, touch, or press anything; his voice is the whole
+interface. Never say it is done before Parker reports the outcome, and
+if Parker replies that it could not be saved or did not work, say so
+honestly. If anything sounds urgent, say to call emergency services or
+get a family member right away.
 Right now it is {clock_line} (when this call began)."""
 
 _NO_SEARCH_PARAGRAPH = """In this live mode you do NOT have web search or any live data —
@@ -139,6 +142,11 @@ WORKER_TIMEOUT_SECONDS = 30.0
 IDLE_WRAPUP_SECONDS = 90.0
 IDLE_GOODBYE_SECONDS = 30.0
 CLOSING_DRAIN_SECONDS = 10.0
+# A staged action waits this long for his spoken yes/no before the offer
+# quietly expires (the action stays staged on the family review surface;
+# nothing executes). Short on purpose: a stray "yes" to some LATER
+# question must not execute an old offer (companion take 2, 2026-09-01).
+CONFIRM_WINDOW_SECONDS = 60.0
 _WATCHDOG_TICK_SECONDS = 1.0
 _MAX_TRACKED_EXCHANGES = 50
 
@@ -635,13 +643,121 @@ def _stage_proposal_sync(arguments: dict[str, Any], call_sid: str) -> dict[str, 
                         "waiting there, and offer to try again."
                     ),
                 }
+            contract = _action_contract(staged)
+            readback = _action_readback(contract)
             return {
                 "status": "staged",
                 "detail": (
-                    "Staged and shown on the screen for confirmation. Nothing runs "
-                    "until it is confirmed there."
+                    f"Staged and shown on the screen for spoken confirmation. "
+                    f"Read it back to him now — {readback} — and ask him to say "
+                    "yes to do it or no to cancel. Ask nothing else until he "
+                    "answers. Nothing runs until he says yes."
                 ),
+                "action_id": staged.id,
+                "contract": contract,
+                "readback": readback,
             }
+        finally:
+            db.close()
+
+
+def _action_contract(action: Any) -> dict[str, str]:
+    """Fields read back to him that must still match before spoken execution.
+
+    Mirrors the turns lane's confirmation contract exactly — the spoken
+    "yes" binds to what was offered, never to whatever the row says later.
+    """
+
+    try:
+        payload = json.loads(action.action_payload or "{}")
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "action_type": str(action.action_type or "").strip(),
+        "recipient": str(payload.get("recipient") or "").strip(),
+        "subject": str(payload.get("subject") or "").strip(),
+        "intent_text": str(payload.get("intent_text") or "").strip(),
+    }
+
+
+def _action_readback(contract: dict[str, str]) -> str:
+    """One plain speakable line describing exactly what would run."""
+
+    subject = contract.get("subject") or "that"
+    kind = contract.get("action_type")
+    if kind == "family_message":
+        recipient = contract.get("recipient") or "family"
+        body = contract.get("intent_text") or subject
+        return f"a message to {recipient} saying “{body}”"
+    if kind == "exercise_start":
+        return f"starting {subject}"
+    if kind == "reminder":
+        return f"a reminder about “{subject}”"
+    return f"{kind or 'an action'}: {subject}"
+
+
+def _confirm_execute_sync(action_id: int, offered_contract: dict[str, str]) -> dict[str, Any]:
+    """His spoken yes: re-verify the offered contract, confirm, execute.
+
+    The same deterministic gate the turns lane ships: the action must
+    still exist, still be staged, and still match every field that was
+    read back — a row mutated between offer and yes is cancelled and
+    reported as a mismatch, never executed.
+    """
+
+    from app.parker.pipeline import (
+        cancel_staged_action,
+        confirm_staged_action,
+        execute_staged_action,
+    )
+
+    with _db_write_lock:
+        db = _make_db()
+        try:
+            from app.db.models import StagedAction
+
+            action = db.get(StagedAction, action_id)
+            if (
+                action is None
+                or action.status != "staged"
+                or _action_contract(action) != offered_contract
+            ):
+                if action is not None and action.status in {"staged", "confirmed"}:
+                    cancel_staged_action(
+                        db, action_id, cancelled_by="confirmation_contract_mismatch"
+                    )
+                return {"status": "failed", "detail": "it changed before he confirmed"}
+            confirmed = confirm_staged_action(db, action_id, confirmed_by="patient")
+            if (
+                confirmed.status != "confirmed"
+                or _action_contract(confirmed) != offered_contract
+            ):
+                cancel_staged_action(
+                    db, action_id, cancelled_by="confirmation_contract_mismatch"
+                )
+                return {"status": "failed", "detail": "it changed before he confirmed"}
+            executed = execute_staged_action(db, action_id)
+            if executed.status == "executed":
+                return {"status": "executed", "detail": str(executed.execution_result or "")[:200]}
+            return {
+                "status": "failed",
+                "detail": str(executed.execution_result or executed.status)[:200],
+            }
+        finally:
+            db.close()
+
+
+def _cancel_staged_sync(action_id: int) -> None:
+    """His spoken no: cancel the staged action (idempotent, best-effort)."""
+
+    from app.parker.pipeline import cancel_staged_action
+
+    with _db_write_lock:
+        db = _make_db()
+        try:
+            cancel_staged_action(db, action_id, cancelled_by="patient")
         finally:
             db.close()
 
@@ -674,9 +790,15 @@ class RealtimeBridge:
         browser_receive: Callable[[], Awaitable[dict[str, Any]]],
         *,
         upstream_connect: Optional[Callable[[], Awaitable[Any]]] = None,
+        companion: bool = False,
     ) -> None:
         self._browser_send = browser_send
         self._browser_receive = browser_receive
+        # Companion mode (take 2, 2026-09-01): the living-room embodiment
+        # keeps its line open while powered on — silence is allowed, and
+        # Parker never chatters to fill it, so the idle wrap-up/goodbye
+        # ladder is disabled. Power off (or an error) ends the line.
+        self._companion = companion
         # Resolved at run time through the module so tests can monkeypatch
         # connect_openai without touching every construction site.
         self._upstream_connect = upstream_connect
@@ -719,6 +841,11 @@ class RealtimeBridge:
         self._lookup_asked: dict[str, float] = {}
         self._pending_turn_writer: Optional[Callable[[], None]] = None
         self._expression_receipts = 0
+        # One spoken confirmation at a time: {action_id, contract, label,
+        # readback, offered_at}. His next transcript is parsed by the same
+        # deterministic yes/no grammar the turns lane executes on; anything
+        # else defers, and the offer expires after CONFIRM_WINDOW_SECONDS.
+        self._pending_confirm: Optional[dict[str, Any]] = None
 
     def _event_writer(
         self,
@@ -1046,6 +1173,15 @@ class RealtimeBridge:
             await asyncio.sleep(_WATCHDOG_TICK_SECONDS)
             now = time.monotonic()
             idle = now - self._last_activity
+            if (
+                self._pending_confirm is not None
+                and now - self._pending_confirm["offered_at"] > CONFIRM_WINDOW_SECONDS
+            ):
+                # The offer quietly lapses: the card clears, the action
+                # stays staged on the family review surface, nothing runs.
+                await self._expire_confirmation("no spoken answer in the window")
+            if self._companion:
+                continue  # no idle ladder: quiet presence is the product
             if self._closing_sent:
                 # Goodbye fully sent; give the browser time to drain audio
                 # and hang up itself, then close from this side regardless.
@@ -1168,6 +1304,7 @@ class RealtimeBridge:
             self._last_activity = self._last_user_activity = time.monotonic()
             if transcript:
                 await self._browser_send({"type": "user_transcript", "text": transcript})
+                await self._maybe_resolve_confirmation(transcript)
         elif etype == "input_audio_buffer.speech_started":
             # Barge-in: he started talking — whatever is queued goes silent.
             self._user_speaking = True
@@ -1294,15 +1431,41 @@ class RealtimeBridge:
                     "item": {
                         "type": "function_call_output",
                         "call_id": item.get("call_id", ""),
-                        "output": json.dumps(outcome),
+                        # The model gets status + instructions only — never
+                        # ids or contract internals it could parrot aloud.
+                        "output": json.dumps(
+                            {
+                                "status": outcome.get("status", ""),
+                                "detail": outcome.get("detail", ""),
+                            }
+                        ),
                     },
                 }
             )
         )
         await self._request_nudge()
         if outcome.get("status") == "staged":
+            label = str(arguments.get("label", ""))[:80] or str(outcome.get("readback", ""))
+            if self._pending_confirm is not None:
+                # A newer offer replaces the old one — "yes" must never be
+                # ambiguous about which action it executes.
+                await self._journal(
+                    "action_result",
+                    detail={"label": self._pending_confirm["label"], "status": "replaced"},
+                )
+            self._pending_confirm = {
+                "action_id": outcome["action_id"],
+                "contract": outcome["contract"],
+                "label": label,
+                "readback": str(outcome.get("readback", "")),
+                "offered_at": time.monotonic(),
+            }
             await self._browser_send(
-                {"type": "proposal_staged", "label": str(arguments.get("label", ""))[:80]}
+                {
+                    "type": "proposal_staged",
+                    "label": label,
+                    "readback": str(outcome.get("readback", ""))[:200],
+                }
             )
         await self._journal(
             "proposal",
@@ -1311,6 +1474,101 @@ class RealtimeBridge:
                 "action_type": str(arguments.get("action_type", "")),
                 "status": str(outcome.get("status", "")),
                 "note": str(outcome.get("detail", ""))[:200],
+            },
+        )
+
+    async def _expire_confirmation(self, reason: str) -> None:
+        expired = self._pending_confirm
+        self._pending_confirm = None
+        if expired is None:
+            return
+        await self._browser_send(
+            {"type": "action_result", "status": "expired", "label": expired["label"]}
+        )
+        await self._journal(
+            "action_result",
+            detail={"label": expired["label"], "status": "expired", "reason": reason},
+        )
+
+    async def _maybe_resolve_confirmation(self, transcript: str) -> None:
+        """His spoken answer to a staged offer — the same deterministic
+        yes/no grammar the turns lane executes on (companion take 2,
+        2026-09-01: no taps; voice is the whole interface).
+
+        Anything that is not a clear yes/no DEFERS: the offer stays open
+        for its window and the conversation continues — never cancel,
+        never execute on ambiguity. The model is instructed to ask
+        nothing else while the offer is open, and the short window bounds
+        the stray-"yes" risk.
+        """
+
+        pending = self._pending_confirm
+        if pending is None:
+            return
+        if time.monotonic() - pending["offered_at"] > CONFIRM_WINDOW_SECONDS:
+            await self._expire_confirmation("answer arrived after the window")
+            return
+        import re as _re
+
+        from app.conversation.textloop import _confirmation_reply_kind
+
+        normalized = _re.sub(r"[,.!?]+", " ", transcript).strip().lower()
+        normalized = _re.sub(r"\s+", " ", normalized)
+        reply = _confirmation_reply_kind(normalized)
+        if reply is None:
+            return
+        self._pending_confirm = None
+        label = pending["label"]
+        asked = time.monotonic()
+        if reply == "no":
+            try:
+                await _tracked_thread(lambda: _cancel_staged_sync(pending["action_id"]))
+            except Exception:  # noqa: BLE001 — the cancel row is best-effort
+                logger.warning("realtime spoken-no cancel failed", exc_info=True)
+            await self._browser_send(
+                {"type": "action_result", "status": "cancelled", "label": label}
+            )
+            await self._send_system_item(
+                "He said no — the action is cancelled and nothing will run. "
+                "Acknowledge in one short sentence."
+            )
+            await self._request_nudge()
+            await self._journal(
+                "action_result", heard=transcript, detail={"label": label, "status": "cancelled"}
+            )
+            return
+        try:
+            outcome = await _tracked_thread(
+                lambda: _confirm_execute_sync(pending["action_id"], pending["contract"])
+            )
+        except Exception:  # noqa: BLE001 — an execution crash must be reported, not hidden
+            logger.warning("realtime spoken-yes execution crashed", exc_info=True)
+            outcome = {"status": "failed", "detail": "it hit a problem partway"}
+        status = "executed" if outcome.get("status") == "executed" else "failed"
+        await self._browser_send(
+            {"type": "action_result", "status": status, "label": label}
+        )
+        if status == "executed":
+            await self._send_system_item(
+                "The action executed exactly as read back. Tell him it's done, "
+                "in one short sentence — no extra promises."
+            )
+        else:
+            await self._send_system_item(
+                "The action did NOT run — "
+                + str(outcome.get("detail", ""))[:160]
+                + ". Tell him plainly it didn't go through and that it's on the "
+                "family review page; never claim it worked."
+            )
+        await self._request_nudge()
+        await self._journal(
+            "action_result",
+            heard=transcript,
+            detail={
+                "label": label,
+                "status": status,
+                "note": str(outcome.get("detail", ""))[:200],
+                "decide_ms": int((time.monotonic() - asked) * 1000),
             },
         )
 

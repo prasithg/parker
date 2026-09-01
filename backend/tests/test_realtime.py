@@ -256,7 +256,10 @@ def test_session_config_carries_persona_vad_transcription_and_tools(
     # brainless -> propose_action stays the only tool
     assert [tool["name"] for tool in session["tools"]] == ["propose_action"]
     assert "Parkinson" in session["instructions"]
-    assert "waiting for him to confirm" in session["instructions"]  # he taps, nobody else
+    # Spoken confirmation (companion take 2, 2026-09-01): the model reads
+    # the action back and asks for his yes/no — it never tells him to tap.
+    assert "yes to do it or no to cancel" in session["instructions"]
+    assert "Never tell him to tap" in session["instructions"]
     assert "Right now it is" in session["instructions"]  # local clock grounding
     # the browser's audio chunk was forwarded verbatim
     appended = [e for e in fake.sent if e["type"] == "input_audio_buffer.append"]
@@ -412,6 +415,228 @@ def test_prohibited_action_types_are_rejected_not_staged(
     assert db.query(StagedAction).count() == 0
     outputs = _function_outputs(fake)
     assert outputs and "not allowed" in outputs[0]["item"]["output"]
+
+
+def _propose_event(call_id="call-1", **overrides):
+    arguments = {
+        "action_type": "reminder",
+        "label": "a reminder to water the plants",
+        "subject": "water the plants",
+        "intent_text": "remind me to water the plants",
+    }
+    arguments.update(overrides)
+    return {
+        "type": "response.done",
+        "response": {
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "propose_action",
+                    "call_id": call_id,
+                    "arguments": json.dumps(arguments),
+                }
+            ]
+        },
+    }
+
+
+def _heard(text):
+    return {
+        "type": "conversation.item.input_audio_transcription.completed",
+        "transcript": text,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Spoken confirmation (companion take 2, 2026-09-01): his voice is the whole
+# interface — a staged offer resolves on the SAME deterministic yes/no
+# grammar the turns lane executes on. No taps, no model-decided execution.
+# ---------------------------------------------------------------------------
+
+
+def test_action_readback_says_exactly_what_would_run():
+    """The read-back line is the spoken contract; every shape is pinned
+    (the deck's assert_staged relies on these for readback content)."""
+
+    assert realtime._action_readback(
+        {"action_type": "reminder", "subject": "water the plants",
+         "recipient": "", "intent_text": "remind me"}
+    ) == "a reminder about “water the plants”"
+    assert realtime._action_readback(
+        {"action_type": "family_message", "subject": "Sunday visit",
+         "recipient": "Sarah", "intent_text": "the park sounds lovely"}
+    ) == "a message to Sarah saying “the park sounds lovely”"
+    assert realtime._action_readback(
+        {"action_type": "exercise_start", "subject": "morning stretches",
+         "recipient": "", "intent_text": ""}
+    ) == "starting morning stretches"
+    assert realtime._action_readback(
+        {"action_type": "media_playlist", "subject": "old Hindi songs",
+         "recipient": "", "intent_text": ""}
+    ) == "media_playlist: old Hindi songs"
+
+
+def test_spoken_yes_confirms_and_executes_the_staged_action(
+    db, realtime_enabled, brainless, upstream
+):
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        staged_note = ws.receive_json()
+        assert staged_note["type"] == "proposal_staged"
+        assert "water the plants" in staged_note["readback"]
+        fake.feed(_heard("yes"))
+        assert ws.receive_json() == {"type": "user_transcript", "text": "yes"}
+        result = ws.receive_json()
+        assert result == {
+            "type": "action_result",
+            "status": "executed",
+            "label": "a reminder to water the plants",
+        }
+        ws.send_json({"type": "end"})
+
+    action = db.query(StagedAction).one()
+    assert action.status == "executed"
+    assert action.confirmed_by == "patient"
+    # The model is told the truth so it can say it aloud.
+    assert any("executed exactly as read back" in text for text in _system_items(fake))
+
+
+def test_spoken_no_cancels_and_never_executes(
+    db, realtime_enabled, brainless, upstream
+):
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        fake.feed(_heard("no, not now"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        result = ws.receive_json()
+        assert result["type"] == "action_result" and result["status"] == "cancelled"
+        ws.send_json({"type": "end"})
+
+    action = db.query(StagedAction).one()
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "patient"
+    assert any("He said no" in text for text in _system_items(fake))
+
+
+def test_ambiguous_speech_defers_and_a_later_yes_still_executes(
+    db, realtime_enabled, brainless, upstream
+):
+    """'yes one', a question, or ordinary talk is NOT an answer: nothing
+    executes, nothing cancels, and the offer stays open for its window."""
+
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        for utterance in ("yes one", "what time is it again", "hmm"):
+            fake.feed(_heard(utterance))
+            assert ws.receive_json()["type"] == "user_transcript"
+        action = db.query(StagedAction).one()
+        db.refresh(action)
+        assert action.status == "staged"  # deferred, untouched
+        fake.feed(_heard("yes please"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        assert ws.receive_json()["status"] == "executed"
+        ws.send_json({"type": "end"})
+
+
+def test_the_offer_expires_and_a_late_yes_executes_nothing(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    monkeypatch.setattr(realtime, "CONFIRM_WINDOW_SECONDS", 0.2)
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        # The watchdog expires the offer; the card clears honestly.
+        expired = ws.receive_json()
+        assert expired == {
+            "type": "action_result",
+            "status": "expired",
+            "label": "a reminder to water the plants",
+        }
+        fake.feed(_heard("yes"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        ws.send_json({"type": "end"})
+
+    action = db.query(StagedAction).one()
+    assert action.status == "staged"  # still waiting on the family surface
+    assert action.confirmed_at is None
+
+
+def test_a_mutated_action_fails_closed_on_spoken_yes(
+    db, realtime_enabled, brainless, upstream
+):
+    """The yes binds to the read-back contract: a row that changed between
+    offer and yes is cancelled and reported failed — never executed."""
+
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        action = db.query(StagedAction).one()
+        payload = json.loads(action.action_payload)
+        payload["subject"] = "send money somewhere"
+        action.action_payload = json.dumps(payload)
+        db.commit()
+        fake.feed(_heard("yes"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        result = ws.receive_json()
+        assert result["type"] == "action_result" and result["status"] == "failed"
+        ws.send_json({"type": "end"})
+
+    db.expire_all()
+    action = db.query(StagedAction).one()
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "confirmation_contract_mismatch"
+    assert any("did NOT run" in text for text in _system_items(fake))
+
+
+def test_a_newer_offer_replaces_the_old_one_unambiguously(
+    db, realtime_enabled, brainless, upstream
+):
+    fake = upstream["script"](
+        [
+            _propose_event(call_id="call-1"),
+            _propose_event(
+                call_id="call-2",
+                label="a reminder to stretch",
+                subject="stretch",
+                intent_text="remind me to stretch",
+            ),
+        ]
+    )
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        assert "water the plants" in ws.receive_json()["label"]
+        assert "stretch" in ws.receive_json()["label"]
+        fake.feed(_heard("yes"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        result = ws.receive_json()
+        assert result["status"] == "executed"
+        assert result["label"] == "a reminder to stretch"  # the NEWEST offer
+        ws.send_json({"type": "end"})
+
+    executed = [a for a in db.query(StagedAction).all() if a.status == "executed"]
+    assert len(executed) == 1
+    assert "stretch" in executed[0].action_payload
+
+
+def test_companion_mode_disables_the_idle_chatter_ladder(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    """The living-room companion keeps its line open: silence is allowed
+    and Parker never asks wrap-up questions or says goodbye on a timer."""
+
+    monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 0.1)
+    monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 0.1)
+    monkeypatch.setattr(realtime, "_WATCHDOG_TICK_SECONDS", 0.02)
+    fake = upstream["script"]([])
+    with client.websocket_connect("/parker/converse/realtime?mode=companion") as ws:
+        time.sleep(0.6)  # far past every ladder threshold
+        ws.send_json({"type": "end"})
+    texts = _system_items(fake)
+    assert not any("anything else" in text for text in texts)
+    assert not any("goodbye" in text.lower() for text in texts)
+    # The greeting still happens — power-on says hello once.
+    assert any("line just opened" in text for text in texts)
 
 
 def test_stop_cancels_upstream_and_junk_audio_never_forwards(

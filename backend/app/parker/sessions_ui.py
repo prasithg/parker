@@ -180,6 +180,14 @@ function eventCard(sid, ev) {
     if (d.sources) chips.appendChild(el(`<span class="chip">${d.sources} source(s)</span>`));
     if (d.error) chips.appendChild(text(el('<span class="chip"></span>'), 'error: ' + d.error));
     body.appendChild(chips);
+  } else if (ev.kind === 'action_result') {
+    body.appendChild(el('<div class="who">Spoken confirmation outcome</div>'));
+    if (ev.heard) body.appendChild(text(el('<div class="speech"></div>'), '“' + ev.heard + '”'));
+    const row = el(`<div><span class="badge ${d.status === 'executed' ? 'staged' : 'failed'}"></span><span class="chip"></span></div>`);
+    text(row.querySelector('.badge'), d.status || '');
+    text(row.querySelector('.chip'), d.label || '');
+    body.appendChild(row);
+    if (d.note) body.appendChild(text(el('<div class="meta"></div>'), d.note));
   } else if (ev.kind === 'expression') {
     body.appendChild(el('<div class="who">Reachy showed</div>'));
     const row = el('<div><span class="chip from"></span><span class="chip to"></span><span class="chip why"></span></div>');

@@ -438,17 +438,18 @@ test('proposal_staged sets the waiting-on-screen overlay', () => {
   assert.strictEqual(c.getState().action, 'staged');
 });
 
-test('no event path can ever claim an executed action', () => {
-  // Proven over the machine's ACTUAL vocabulary, not a guess list: fire
-  // every registered handler inside an active session and assert `action`
-  // never reads executed — and that no execution-shaped event exists at
-  // all (no browser signal proves execution; see the brief).
+test('executed is reachable ONLY through the real outcome frame', () => {
+  // The 2026-08-31 brief forbade any executed claim until a real
+  // pipeline signal existed; companion take 2 (2026-09-01) added exactly
+  // one: the bridge's action_result frame, mapped to action_executed /
+  // action_failed. Proven over the machine's ACTUAL vocabulary: no OTHER
+  // event — and no amount of ticking — may ever claim execution.
   const c = makeController();
   assert.ok(Array.isArray(c.events) && c.events.length >= 15);
+  const executionEvents = c.events.filter((n) => /exec/.test(n));
+  assert.deepStrictEqual(executionEvents, ['action_executed']);
   for (const name of c.events) {
-    assert.ok(!/exec|confirm|complete/.test(name), name);
-  }
-  for (const name of c.events) {
+    if (name === 'action_executed') continue;
     const fresh = makeController();
     fresh.handleEvent('connect', { mode: 'live' });
     fresh.handleEvent('connected');
@@ -458,6 +459,45 @@ test('no event path can ever claim an executed action', () => {
     fresh.tick();
     assert.notStrictEqual(fresh.getState().action, 'executed', name);
   }
+});
+
+test('a real outcome frame lands and then relaxes; the record is durable elsewhere', () => {
+  const c = makeController({ resultTtlMs: 12000 });
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('proposal_staged');
+  assert.ok(c.handleEvent('action_executed'));
+  assert.strictEqual(c.getState().action, 'executed');
+  assert.strictEqual(c.getState().attention, 'none'); // the wait is over
+  clock = 13000;
+  c.tick();
+  assert.strictEqual(c.getState().action, 'none'); // a brief acknowledgment only
+
+  const f = makeController({ resultTtlMs: 12000 });
+  f.handleEvent('connect', { mode: 'live' });
+  f.handleEvent('connected');
+  f.handleEvent('proposal_staged');
+  assert.ok(f.handleEvent('action_failed'));
+  assert.strictEqual(f.getState().action, 'failed');
+});
+
+test('outcome frames are rejected outside an active session', () => {
+  const c = makeController();
+  assert.strictEqual(c.handleEvent('action_executed'), false);
+  assert.strictEqual(c.getState().action, 'none');
+});
+
+test('the spoken-confirmation labels never overclaim', () => {
+  const staged = ParkerExpression.describe({
+    phase: 'listening', work: [], action: 'staged', guard: 'none', attention: 'confirmation',
+  });
+  assert.ok(/say yes/i.test(staged), staged);
+  assert.ok(/nothing has happened/i.test(staged), staged);
+  assert.ok(!/tap|button|press|touch/i.test(staged), staged); // voice is the interface
+  const failed = ParkerExpression.describe({
+    phase: 'listening', work: [], action: 'failed', guard: 'none', attention: 'none',
+  });
+  assert.ok(!/done|worked/i.test(failed), failed);
 });
 
 test('the staged pose relaxes after its TTL; the card is the durable truth', () => {

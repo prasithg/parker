@@ -62,6 +62,9 @@ function createEnv() {
       focus() {},
       remove() {},
       querySelector() { return fakeElement('anon'); },
+      _attrs: {},
+      setAttribute(name, value) { this._attrs[name] = String(value); },
+      getAttribute(name) { return this._attrs[name] ?? null; },
     };
   }
 
@@ -193,6 +196,7 @@ function createEnv() {
   };
 
   // ------------------------------------------------------------ network
+  env.settings = { power_on: false, cc_on: false }; // the persisted store
   function jsonResponse(body) {
     return { ok: true, status: 200, json: async () => body, body: null };
   }
@@ -202,6 +206,13 @@ function createEnv() {
       return Promise.resolve(jsonResponse({
         session_id: 'sess-test', realtime_available: true, asr_ready: true,
       }));
+    }
+    if (String(url).includes('/companion/settings')) {
+      if (opts && opts.method === 'POST') {
+        try { Object.assign(env.settings, JSON.parse(opts.body)); } catch (err) {}
+        return Promise.resolve(jsonResponse(env.settings));
+      }
+      return Promise.resolve(jsonResponse(Object.assign({}, env.settings)));
     }
     return Promise.resolve(jsonResponse({}));
   };

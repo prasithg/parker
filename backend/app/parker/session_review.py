@@ -45,8 +45,18 @@ logger = logging.getLogger("parker.session_review")
 # outcome (the StagedAction rows themselves live in the normal pipeline);
 # `expression` is one browser-reported semantic presence transition
 # (from/to phase + overlays + reason), bounded and allowlisted by the
-# bridge, so review can see what Parker visibly presented.
-EVENT_KINDS = ("turn", "guard_trip", "lookup_ack", "injection", "proposal", "expression")
+# bridge, so review can see what Parker visibly presented. `action_result`
+# is the terminal truth of one spoken-confirmation offer: executed,
+# failed, cancelled, expired, or replaced.
+EVENT_KINDS = (
+    "turn",
+    "guard_trip",
+    "lookup_ack",
+    "injection",
+    "proposal",
+    "expression",
+    "action_result",
+)
 
 MAX_FEEDBACK_NOTE_CHARS = 2000
 
