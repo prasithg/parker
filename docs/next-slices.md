@@ -1459,3 +1459,22 @@ Current priority remains the human-proven voice experience: Live as the
 primary configured entry, a chosen natural Parker voice, "yes one"-style
 spoken selection, browser/client latency marks, and another reviewed human
 session.
+
+## Next: the 3D Reachy Mini Converse experience (Pras, 2026-08-31)
+
+Chairman decision: the earlier 2D-vector/no-WebGL constraint is superseded.
+The primary Converse UI should render a stylized 3D Reachy Mini so Parker's
+real state is visible—listening/hearing, thinking, waiting on a background
+job, talking from actual output audio, yielding on barge-in, waiting on a
+staged confirmation, redirecting, failing, and closing. One Parker face
+must remain consistent while invisible workers operate behind it.
+
+The implementation brief is
+[2026-08-31-reachy-mini-converse-ui.md](plans/2026-08-31-reachy-mini-converse-ui.md).
+It requires a renderer-independent semantic expression state, actual runtime
+signals rather than fake timers, a locally bundled/licensed 3D asset path,
+reduced-motion and no-WebGL fallbacks, preserved transcript/sources/Stop/
+confirmation accessibility, lifecycle/performance verification, semantic
+state transitions in the session-review trail, and a branch/PR/Fable-review/
+CI flow. Physical Reachy control, cameras, and a general avatar system are
+explicitly outside this slice.
