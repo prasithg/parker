@@ -5,7 +5,11 @@ import json
 import pytest
 
 from app.brain.adapter import BrainContext, BrainReply, ProposedAction
-from app.conversation.textloop import TextSession, UtteranceContext
+from app.conversation.textloop import (
+    TextSession,
+    UtteranceContext,
+    _spoken_selection_position,
+)
 from app.db.models import CallLog, CapturedIntent, OutboxMessage
 from app.parker.pipeline import (
     confirm_staged_action,
@@ -948,6 +952,38 @@ def test_natural_spoken_selection_reaches_other_positions(db, spoken):
 
     assert response["via_repair_selection"] is True
     assert session.has_pending_choices is False
+
+
+@pytest.mark.parametrize(
+    "utterance,expected",
+    [
+        # The exact position matters: an ordinal off-by-one must fail here.
+        ("yes one", 1),
+        ("one", 1),
+        ("number two", 2),
+        ("two please", 2),
+        ("the second one", 2),
+        ("the third one", 3),
+        ("three", 3),
+        ("1st", 1),
+        ("2nd", 2),
+        ("Yes, the first one, please.", 1),
+        ("thank you two", 2),  # 'you' rides 'thank', then a clean number
+        # Never a selection:
+        ("you two", None),  # addresses people, not choices (review find)
+        ("you first", None),
+        ("the one", None),  # a reference, not a pick (review find)
+        ("yes the one", None),
+        ("one two", None),
+        ("four", None),  # out of range for three choices
+        ("no one", None),
+        ("remind me at one", None),
+        ("the blue one maybe", None),
+        ("", None),
+    ],
+)
+def test_spoken_selection_position_mapping(utterance, expected):
+    assert _spoken_selection_position(utterance, 3) == expected
 
 
 @pytest.mark.parametrize(

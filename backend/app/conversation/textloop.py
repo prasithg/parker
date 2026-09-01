@@ -818,7 +818,9 @@ _SELECTION_ORDINALS = {
 }
 _SELECTION_AFFIRMATIONS = {"yes", "yeah", "yep", "okay", "ok", "sure", "alright", "fine"}
 _SELECTION_FILLERS = {"the", "number", "choice", "option", "um", "uh", "hmm", "mm"}
-_SELECTION_TAILS = {"please", "thanks", "thank", "you"}
+# "you" is deliberately NOT a free tail: it only rides "thank" — "you two"
+# and "you first" address a person and must never select (review find).
+_SELECTION_TAILS = {"please", "thanks", "thank"}
 
 
 def _spoken_selection_position(utterance: str, choice_count: int) -> Optional[int]:
@@ -830,25 +832,34 @@ def _spoken_selection_position(utterance: str, choice_count: int) -> Optional[in
         return None
     position: Optional[int] = None
     via_ordinal = False
+    previous = ""
     for token in tokens:
-        if token in _SELECTION_AFFIRMATIONS or token in _SELECTION_FILLERS:
-            continue
-        if token in _SELECTION_TAILS:
-            continue
-        if token in _SELECTION_ORDINALS:
+        if token == "you":
+            if previous != "thank":
+                return None
+        elif token in _SELECTION_AFFIRMATIONS or token in _SELECTION_FILLERS:
+            pass
+        elif token in _SELECTION_TAILS:
+            pass
+        elif token in _SELECTION_ORDINALS:
             if position is not None:
                 return None
             position = _SELECTION_ORDINALS[token]
             via_ordinal = True
-            continue
-        if token in _SELECTION_NUMBERS:
+        elif token in _SELECTION_NUMBERS:
             if position is None:
+                if token == "one" and previous == "the":
+                    # Bare "the one" refers to something, it does not pick
+                    # choice 1 — "the first one" carries the ordinal.
+                    return None
                 position = _SELECTION_NUMBERS[token]
-                continue
-            if via_ordinal and token == "one":
-                continue  # "the first one" — 'one' is the noun, not a number
+            elif via_ordinal and token == "one":
+                pass  # "the first one" — 'one' is the noun, not a number
+            else:
+                return None
+        else:
             return None
-        return None
+        previous = token
     if position is None or not 1 <= position <= choice_count:
         return None
     return position
