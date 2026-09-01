@@ -16,5 +16,9 @@ fi
 echo "[shared-checkout] recent branches:"
 git for-each-ref --sort=-committerdate --format='  %(refname:short)  (%(committerdate:relative))' refs/heads 2>/dev/null | head -5
 echo "[shared-checkout] rules: work on a feature branch, never long work directly on main; if the tree has changes you did not make, STOP and ask the user. See CLAUDE.md 'Multi-session working agreement'."
+if [ -f ".claude/commands/parker-session.md" ]; then
+  echo "[parker-workflow] For substantive work start with: /parker-session <goal + plan/review/PR>. Delivery contract: docs/agent-development-workflow.md"
+  echo "[parker-workflow] Builder self-review is inner-loop evidence; T1/T2 still require fresh independent review and named human/device gates."
+fi
 
 exit 0
