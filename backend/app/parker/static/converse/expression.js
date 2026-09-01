@@ -56,6 +56,11 @@
     // (the confirmation card itself stays until acted on).
     actionTtlMs: 120000,
     guardTtlMs: 20000,
+    // Waiting-for-choice / waiting-for-confirmation are DURABLE overlays:
+    // they survive spoken playback draining to idle, and clear only when
+    // resolved, replaced, stopped, or expired (independent review,
+    // 2026-09-01).
+    attentionTtlMs: 120000,
   };
 
   function createController(options) {
@@ -71,10 +76,14 @@
       work: {},
       action: 'none',
       guard: 'none',
+      // 'none' | 'choice' | 'confirmation': input Parker is waiting on,
+      // independent of whether anything is being spoken right now.
+      attention: 'none',
     };
     var phaseSince = now();
     var actionSince = 0;
     var guardSince = 0;
+    var attentionSince = 0;
     var userEnergy = 0;
     var parkerEnergy = 0;
     var energyAbove = null;  // when the mic first rose past hearingEnter
@@ -89,16 +98,17 @@
         work: work,
         action: state.action,
         guard: state.guard,
+        attention: state.attention,
         userEnergy: userEnergy,
         parkerEnergy: parkerEnergy,
         sincePhaseMs: Math.max(0, now() - phaseSince),
       };
     }
 
-    function emit() {
+    function emit(cause) {
       var current = snapshot();
       for (var i = 0; i < listeners.length; i++) {
-        try { listeners[i](current); } catch (err) { /* a bad listener never breaks the machine */ }
+        try { listeners[i](current, cause); } catch (err) { /* a bad listener never breaks the machine */ }
       }
     }
 
@@ -107,18 +117,31 @@
       state.phase = phase;
       phaseSince = now();
       if (!ACTIVE_PHASES[phase]) {
-        // Leaving the session: no work, no staged pose, no guard face may
-        // survive into idle/stopped/error/offline.
+        // Leaving live speech: no work claim and no mode survive rest.
         state.work = {};
-        state.action = 'none';
-        state.guard = 'none';
         energyAbove = energyBelow = null;
         state.mode = null;
+        if (phase !== 'idle') {
+          // Terminal rest (stopped/error/offline): nothing waits anymore.
+          state.action = 'none';
+          state.guard = 'none';
+          state.attention = 'none';
+        }
+        // Turns-lane idle between turns is different: choices or a
+        // confirmation may still be ON THE SCREEN awaiting him — the
+        // staged pose, asking face, and attention overlay must survive
+        // playback draining (independent review, 2026-09-01). They clear
+        // on resolution, replacement, Stop, or their own TTLs.
       }
       return true;
     }
 
     function active() { return !!ACTIVE_PHASES[state.phase]; }
+
+    // The page is alive and the person is (or was just) engaged: active
+    // session phases plus the turns lane's between-turns idle. Terminal
+    // rest (stopped/error/offline) accepts no waiting/asking overlays.
+    function awake() { return active() || state.phase === 'idle'; }
 
     var handlers = {
       // Page ready / session surface available again.
@@ -201,7 +224,8 @@
       proposal_staged: function () {
         if (!active()) return false;
         state.action = 'staged';
-        actionSince = now();
+        state.attention = 'confirmation';
+        actionSince = attentionSince = now();
         return true;
       },
 
@@ -213,6 +237,7 @@
       },
       repair_offered: function () {
         // The turns lane asks a repair question with choices on screen.
+        if (!awake()) return false; // never re-animates a stopped scene
         state.guard = 'repair';
         guardSince = now();
         return true;
@@ -223,6 +248,36 @@
         return true;
       },
 
+      // Durable attention overlays: a real turn result put choices or a
+      // yes/no confirmation on the screen, and it WAITS there — through
+      // playback draining to idle — until resolved, replaced, dismissed,
+      // stopped, or expired (independent review, 2026-09-01).
+      choices_offered: function () {
+        if (!awake()) return false;
+        state.attention = 'choice';
+        attentionSince = now();
+        // Choices are the repair posture: Parker is asking, attentively.
+        state.guard = 'repair';
+        guardSince = now();
+        return true;
+      },
+      yes_no_offered: function () {
+        // An authoritative confirmation offer: an action is staged and
+        // waiting on the screen — the staged/waiting pose, never repair.
+        if (!awake()) return false;
+        state.attention = 'confirmation';
+        state.action = 'staged';
+        actionSince = attentionSince = now();
+        return true;
+      },
+      attention_resolved: function () {
+        var changed = false;
+        if (state.attention !== 'none') { state.attention = 'none'; changed = true; }
+        if (state.action === 'staged') { state.action = 'none'; changed = true; }
+        if (state.guard !== 'none') { state.guard = 'none'; changed = true; }
+        return changed;
+      },
+
       notice: function () { return false; }, // recoverable text; never a pose change
     };
 
@@ -230,7 +285,7 @@
       var handler = handlers[name];
       if (!handler) return false;
       var changed = handler(data);
-      if (changed) emit();
+      if (changed) emit(name); // subscribers learn WHAT caused a change
       return changed;
     }
 
@@ -250,7 +305,7 @@
           if (energyAbove === null) energyAbove = t;
           if (t - energyAbove >= opts.hearingAttackMs) {
             energyBelow = null;
-            if (setPhase('hearing')) emit();
+            if (setPhase('hearing')) emit('energy');
           }
         } else {
           energyAbove = null;
@@ -260,7 +315,7 @@
           if (energyBelow === null) energyBelow = t;
           if (t - energyBelow >= opts.hearingReleaseMs) {
             energyAbove = null;
-            if (setPhase('listening')) emit();
+            if (setPhase('listening')) emit('energy');
           }
         } else {
           energyBelow = null;
@@ -292,7 +347,11 @@
         state.guard = 'none';
         changed = true;
       }
-      if (changed) emit();
+      if (state.attention !== 'none' && t - attentionSince >= opts.attentionTtlMs) {
+        state.attention = 'none';
+        changed = true;
+      }
+      if (changed) emit('tick');
       return changed;
     }
 
@@ -322,9 +381,13 @@
   // lines — a different lane with different mechanics.)
   function describe(state) {
     if (state.guard === 'redirect') return 'That one is for your doctor or family.';
-    if (state.action === 'staged') {
+    if (state.action === 'staged' || state.attention === 'confirmation') {
       if (state.phase === 'talking') return 'Parker is talking — an action is on the screen to confirm.';
       return 'Waiting for you to confirm on the screen. Nothing has happened yet.';
+    }
+    if (state.attention === 'choice') {
+      if (state.phase === 'talking') return 'Parker is asking — the choices are on the screen.';
+      return 'Waiting on your choice — tap one, or say the number.';
     }
     var working = state.work.indexOf('search') >= 0;
     switch (state.phase) {

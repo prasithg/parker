@@ -281,7 +281,7 @@ const expr = window.ParkerExpression ? ParkerExpression.createController() : nul
 // the interrupt dwell must expire even when WebGL is unavailable and the
 // orb is the whole presence (review find, 2026-09-01). tick() is
 // idempotent, so the renderer's own frame loop calling it too is fine.
-if (expr) setInterval(() => { try { expr.tick(); } catch (err) {} }, 500);
+let tickTimer = expr ? setInterval(() => { try { expr.tick(); } catch (err) {} }, 500) : null;
 
 function presence(name, data) {
   if (expr) { try { expr.handleEvent(name, data); } catch (err) {} }
@@ -452,9 +452,14 @@ function renderResult(data) {
   wrap.hidden = !showChoices;
   $('yes-no').hidden = pendingAwaiting !== 'yes_no';
 
-  // Repair posture: choices or a yes/no question on screen mean Parker is
-  // asking, attentively — resolved the moment a turn ends with neither.
-  presence(pendingAwaiting ? 'repair_offered' : 'repair_resolved');
+  // What is Parker waiting on? Choices on screen are the asking/repair
+  // posture; a yes/no result is an authoritative confirmation offer (the
+  // staged/waiting state, not repair); neither resolves the wait. These
+  // overlays are DURABLE — they survive playback draining to idle, until
+  // resolved, replaced, stopped, or expired (independent review, 2026-09-01).
+  if (pendingAwaiting === 'choices') presence('choices_offered');
+  else if (pendingAwaiting === 'yes_no') presence('yes_no_offered');
+  else presence('attention_resolved');
 
   lastTimings = data.timings_ms || null;
   renderDev(data);
@@ -474,6 +479,9 @@ function clearResult() {
   $('speech').textContent = '';
   $('heard').textContent = '';
   setNotice('');
+  // The waiting cards just left the screen: whatever they awaited is
+  // dismissed/replaced by the new interaction.
+  presence('attention_resolved');
 }
 
 // ---------------------------------------------------------------------------
@@ -908,8 +916,26 @@ function sendText(text) {
 const LIVE_RATE = 24000;
 const live = {ws: null, micCtx: null, micStream: null, proc: null, gain: null,
               playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
-              energyTimer: null, wasPlaying: false, closingSeen: false};
+              energyTimer: null, wasPlaying: false, closingSeen: false,
+              // Output-truth gates: the provider response that produced
+              // the audio being played, and any guard speech via browser
+              // TTS. "Listening" may not be claimed while either is open.
+              responseOpen: false, guardSpeaking: 0};
 let startingLive = false;
+
+// The one place "Parker finished talking" is decided (independent review
+// blocker, 2026-09-01): the local queue being empty proves nothing while
+// the provider response is still active (network jitter between chunks) or
+// guard speech is still audible. Drained means: response done AND all
+// scheduled audio played (or flushed) AND no guard TTS outstanding. The
+// expression controller ignores the event unless it is actually talking,
+// so calling this liberally is safe.
+function maybeOutputDrained() {
+  if (!liveActive()) return;
+  if (live.responseOpen || live.guardSpeaking > 0 || live.wasPlaying) return;
+  if (live.playCtx && live.chunkMeta.length) return;
+  presence('assistant_audio_drained');
+}
 
 // Output-energy truth for the live lane: each scheduled chunk knows its
 // window and loudness; a light timer reads whichever chunk is actually
@@ -928,7 +954,7 @@ function watchLivePlayback() {
       presenceEnergy({parker: 0});
       if (live.wasPlaying && now >= live.nextTime) {
         live.wasPlaying = false;
-        presence('assistant_audio_drained');
+        maybeOutputDrained();
       }
     }
   }, 120);
@@ -982,7 +1008,13 @@ async function startLive() {
   watchLivePlayback();
 
   startingLive = false;
-  ws.onopen = () => { earcon('listen'); presence('connected'); setState('live'); };
+  // The identity fence on EVERY socket callback (open included): a socket
+  // that finishes opening after Stop must not restore live controls
+  // (independent review, 2026-09-01).
+  ws.onopen = () => {
+    if (ws !== live.ws) return;
+    earcon('listen'); presence('connected'); setState('live');
+  };
   ws.onmessage = (message) => {
     if (ws !== live.ws) return; // a frame from a dead line must change nothing
     let event;
@@ -1002,7 +1034,15 @@ async function startLive() {
 
 function handleLiveEvent(event) {
   if (event.type === 'audio') {
+    // Audio implies its provider response is still open; only the
+    // bridge's authoritative response_state frame closes it.
+    live.responseOpen = true;
     playLivePcm(event.data);
+  } else if (event.type === 'response_state') {
+    if (event.status === 'done') {
+      live.responseOpen = false;
+      maybeOutputDrained();
+    }
   } else if (event.type === 'user_transcript') {
     presence('user_transcript');
     renderHeard(event.text);
@@ -1109,10 +1149,30 @@ function flushLivePlayback() {
 }
 
 function speakNow(text) {
-  // Immediate speech outside the turn lifecycle (live-lane guard redirect).
+  // Immediate speech for the live-lane guard redirect — but never outside
+  // the output lifecycle: it is fenced to THIS session's socket, counted
+  // by the drain gate (Reachy shows talking, not listening, while it is
+  // audible), and cancelled by Stop/end/page-hide like every other output
+  // (independent review, 2026-09-01).
   if (!text || !window.speechSynthesis) return;
+  const ws = live.ws;
+  if (!ws) return; // the line is already gone; nothing may speak for it
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = 0.95;
+  live.guardSpeaking += 1;
+  utterance.onstart = () => {
+    if (ws !== live.ws) { speechSynthesis.cancel(); return; }
+    presence('assistant_audio');
+    presenceEnergy({parker: 0.6});
+  };
+  const settle = () => {
+    if (ws !== live.ws) return; // a dead line's speech changes nothing
+    live.guardSpeaking = Math.max(0, live.guardSpeaking - 1);
+    presenceEnergy({parker: 0});
+    maybeOutputDrained();
+  };
+  utterance.onend = settle;
+  utterance.onerror = settle;
   speechSynthesis.speak(utterance);
 }
 
@@ -1122,6 +1182,13 @@ function endLive(noticeText, outcome) {
   live.ws = null;
   if (live.energyTimer) { clearInterval(live.energyTimer); live.energyTimer = null; }
   flushLivePlayback();
+  // Stop/end silences EVERY output this session owns — browser TTS (the
+  // guard redirect) included, not just WebAudio (independent review,
+  // 2026-09-01). The generation fence above makes late TTS callbacks
+  // from this session inert.
+  try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
+  live.guardSpeaking = 0;
+  live.responseOpen = false;
   if (ws) {
     try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
     try { ws.close(); } catch (err) {}
@@ -1141,6 +1208,7 @@ function endLive(noticeText, outcome) {
   } else {
     setState('stopped');
   }
+  flushPresenceReceipts(); // the socket is gone; the beacon lane carries the tail
 }
 
 // ---------------------------------------------------------------------------
@@ -1174,6 +1242,7 @@ function stopParker() {
   $('yes-no').hidden = true;
   setNotice('');
   setState('stopped');
+  flushPresenceReceipts();
 }
 
 function tryAgain() { clearResult(); startListening(); }
@@ -1199,22 +1268,105 @@ $('type-row').addEventListener('submit', (event) => {
   $('type-input').value = '';
 });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') stopParker(); });
+
+// Page-level teardown: leaving the page must release EVERYTHING the page
+// holds — microphone tracks, audio contexts, the live socket, browser TTS,
+// timers, the GL scene — not just send an end beacon (independent review,
+// 2026-09-01). Idempotent: safe to call from pagehide and unload both.
+let pageReleased = false;
+function releasePage() {
+  if (pageReleased) return;
+  pageReleased = true;
+  clientGen++; // anything still in flight lands stale and silent
+  startingCapture = false;
+  clearTimeout(cueTimer);
+  try { abortCtl && abortCtl.abort(); } catch (err) {}
+  teardownCapture();
+  if (liveActive() || startingLive) endLive('');
+  try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
+  if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+  try { earcuCtx && earcuCtx.close(); } catch (err) {}
+  earcuCtx = null;
+  const scene = window.ParkerPresence && window.ParkerPresence.scene;
+  if (scene) {
+    try { scene.dispose(); } catch (err) {} // GL resources + its observers
+    window.ParkerPresence.scene = null;
+  }
+}
 window.addEventListener('pagehide', () => {
-  if (!sessionId) return;
-  try {
-    navigator.sendBeacon('/parker/converse/sessions/' + sessionId + '/end', new Blob(['{}'], {type: 'application/json'}));
-  } catch (err) {}
+  const hadSession = !!sessionId;
+  flushPresenceReceipts();
+  releasePage();
+  if (hadSession) {
+    try {
+      navigator.sendBeacon('/parker/converse/sessions/' + sessionId + '/end', new Blob(['{}'], {type: 'application/json'}));
+    } catch (err) {}
+  }
 });
+window.addEventListener('pageshow', (event) => {
+  // A BFCache restore would resurrect a page whose scene, timers, and
+  // audio graph were just torn down; reload for a clean boot instead of
+  // a half-dead page.
+  if (event.persisted && pageReleased) location.reload();
+});
+
+// ---------------------------------------------------------------------------
+// Semantic transition receipts: session review must be able to answer
+// "what did Reachy show when he spoke / waited / interrupted / stopped?"
+// (independent review, 2026-09-01). Transitions only — never animation
+// frames or raw audio energy. Live sessions stream each transition to the
+// bridge journal over the socket; every session also accumulates a bounded
+// local list flushed through the receipts beacon at stop/end/page-hide.
+// ---------------------------------------------------------------------------
+
+const PRESENCE_RECEIPT_CAP = 300;
+const presenceReceipts = [];
+let presenceDropped = 0;
+let prevPresence = null;
+
+function recordPresenceTransition(next, cause) {
+  const entry = {
+    at_ms: Math.round(performance.now()),
+    gen: clientGen,
+    from: prevPresence ? prevPresence.phase : '',
+    to: next.phase,
+    work: next.work.join(','),
+    action: next.action,
+    guard: next.guard,
+    attention: next.attention,
+    reason: cause || '',
+  };
+  prevPresence = next;
+  if (presenceReceipts.length >= PRESENCE_RECEIPT_CAP) presenceDropped += 1;
+  else presenceReceipts.push(entry);
+  if (live.ws && live.ws.readyState === 1) {
+    try {
+      live.ws.send(JSON.stringify(Object.assign({type: 'expression'}, entry)));
+    } catch (err) { /* receipts are best-effort, never call-breaking */ }
+  }
+}
+
+function flushPresenceReceipts() {
+  if (!presenceReceipts.length || !sessionId) return;
+  postReceipt({
+    expression: presenceReceipts.slice(),
+    expression_dropped: presenceDropped,
+  });
+  presenceReceipts.length = 0;
+  presenceDropped = 0;
+}
 
 // The live lane's status label reads from the semantic state, so the words
 // and the pose can never disagree; the Start/Done lane keeps its longer
 // coaching lines. Exposed on window for the renderer module (and for
 // driving the real controller with synthetic fixtures during testing).
 if (expr) {
-  expr.subscribe((s) => {
+  prevPresence = expr.getState();
+  expr.subscribe((s, cause) => {
     if (document.body.dataset.state === 'live') {
       statusText.textContent = ParkerExpression.describe(s);
     }
+    recordPresenceTransition(s, cause);
   });
 }
 window.ParkerPresence = {controller: expr};

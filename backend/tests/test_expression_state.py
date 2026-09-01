@@ -60,6 +60,39 @@ def test_reachy_renderer_module_parses_as_esm():
     assert result.returncode == 0, result.stderr
 
 
+def _extract_page_script() -> str:
+    """The inline conversation script from the real page HTML."""
+
+    import re
+
+    from app.parker.converse_ui import CONVERSE_PAGE_HTML
+
+    scripts = [
+        s
+        for s in re.findall(
+            r"<script(?:\s[^>]*)?>(.*?)</script>", CONVERSE_PAGE_HTML, re.S
+        )
+        if s.strip()
+    ]
+    assert scripts, "no inline scripts found in the Converse page"
+    return scripts[0]
+
+
+def test_converse_page_lifecycle_spec_passes(tmp_path):
+    """The REAL page script, executed under Node against stubbed browser
+    surfaces — pinning the interleavings the independent review proved
+    broken (guard TTS vs Stop/close, drain-vs-response truth, stale socket
+    opens, page-hide teardown, repeated cycles, transition receipts)."""
+
+    page_script = tmp_path / "converse-page.js"
+    page_script.write_text(_extract_page_script())
+    result = _run_node(
+        str(TESTS_DIR / "js" / "converse_page.spec.js"), str(page_script)
+    )
+    assert result.returncode == 0, f"\n{result.stdout}\n{result.stderr}"
+    assert "FAIL" not in result.stdout
+
+
 def test_converse_page_inline_scripts_parse(tmp_path):
     # The page's JavaScript lives inside a Python string; a stray escape
     # or syntax slip must fail here, not in the living room. (The module

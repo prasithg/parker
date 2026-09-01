@@ -127,6 +127,12 @@ _GOODBYE_INSTRUCTION = (
 MAX_LIVE_BRIDGES = 2
 _active_bridges = 0
 
+# Bounded semantic-presence journaling: the browser reports expression
+# transitions (from/to phase, overlays, reason) so session review can show
+# what Parker visibly presented. A cap keeps a chatty page from flooding
+# the journal; frame-by-frame animation never belongs here.
+MAX_EXPRESSION_RECEIPTS = 400
+
 # Orchestrator timings. Module constants, not config: one household, and
 # the tests shrink them via monkeypatch.
 WORKER_TIMEOUT_SECONDS = 30.0
@@ -688,6 +694,11 @@ class RealtimeBridge:
         # workers, proposals, the greeting, and the watchdog can never
         # double-fire against each other or the server VAD.
         self._response_active = False
+        # True once this response's audio actually reached the browser:
+        # those responses get an authoritative `response_state: done` frame
+        # so the page never has to infer "Parker finished" from a gap in
+        # its local playback queue (independent review, 2026-09-01).
+        self._audio_sent = False
         self._user_speaking = False
         self._pending_nudge_count = 0
         self._inflight_lookups: set[str] = set()
@@ -707,6 +718,7 @@ class RealtimeBridge:
         self._opened_mono = time.monotonic()
         self._lookup_asked: dict[str, float] = {}
         self._pending_turn_writer: Optional[Callable[[], None]] = None
+        self._expression_receipts = 0
 
     def _event_writer(
         self,
@@ -741,6 +753,31 @@ class RealtimeBridge:
     ) -> None:
         writer = self._event_writer(kind, heard=heard, said=said, detail=detail)
         await _tracked_thread(lambda: _with_local_write_retries("session event", writer))
+
+    async def _journal_expression(self, message: dict[str, Any]) -> None:
+        """Journal one browser-reported semantic expression transition.
+
+        The page is untrusted input: every field is allowlisted, typed, and
+        truncated, and the per-session count is capped — session review
+        needs "listening became talking when the audio arrived", never a
+        frame-by-frame animation log (independent review, 2026-09-01).
+        """
+
+        if self._expression_receipts >= MAX_EXPRESSION_RECEIPTS:
+            return
+        self._expression_receipts += 1
+        detail: dict[str, Any] = {}
+        for field in ("from", "to", "action", "guard", "attention", "reason", "work"):
+            value = message.get(field)
+            if isinstance(value, str):
+                detail[field] = value[:32]
+        for field in ("at_ms", "gen"):
+            value = message.get(field)
+            if isinstance(value, (int, float)):
+                detail[field] = int(value)
+        if self._expression_receipts == MAX_EXPRESSION_RECEIPTS:
+            detail["truncated"] = True  # later transitions are dropped
+        await self._journal("expression", detail=detail)
 
     async def run(self) -> None:
         connect = self._upstream_connect or globals()["connect_openai"]
@@ -1074,6 +1111,8 @@ class RealtimeBridge:
             elif kind == "stop":
                 await self._upstream.send(json.dumps({"type": "response.cancel"}))
                 await self._browser_send({"type": "clear"})
+            elif kind == "expression":
+                await self._journal_expression(message)
             elif kind == "end":
                 return
 
@@ -1101,6 +1140,7 @@ class RealtimeBridge:
         if etype.endswith("output_audio.delta") or etype == "response.audio.delta":
             self._last_activity = time.monotonic()
             if not self._guard_tripped:
+                self._audio_sent = True
                 await self._browser_send({"type": "audio", "data": event.get("delta", "")})
         elif etype.endswith("output_audio_transcript.delta") or etype == "response.audio_transcript.delta":
             delta = str(event.get("delta", ""))
@@ -1169,6 +1209,13 @@ class RealtimeBridge:
             response = {}
         self._response_active = False
         self._last_activity = time.monotonic()
+        if self._audio_sent:
+            # The authoritative end of an audio-bearing response, in-order
+            # after its last audio frame: the page may claim "listening"
+            # only after this AND its scheduled playback truly drained —
+            # an inter-chunk network gap alone proves nothing.
+            self._audio_sent = False
+            await self._browser_send({"type": "response_state", "status": "done"})
         speech = (
             self._assistant_transcript
             if not self._guard_tripped
@@ -1294,13 +1341,15 @@ class RealtimeBridge:
         else:
             self._inflight_lookups.add(key)
             self._lookup_asked[key] = asked
-            self._spawn_search_worker(question, key)
             # The smallest truthful presence event: real work was just
-            # dispatched. The scene may show "checking" from this frame on,
-            # never from a timer.
+            # dispatched. Committed to the browser BEFORE the worker can
+            # possibly finish — spawning first let an instant result's
+            # `done` frame overtake `started` and leave the scene claiming
+            # work after it ended (independent review, 2026-09-01).
             await self._browser_send(
                 {"type": "working", "kind": "search", "status": "started"}
             )
+            self._spawn_search_worker(question, key)
             ack = {
                 "status": "working",
                 "detail": (

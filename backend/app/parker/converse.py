@@ -693,9 +693,33 @@ class ConverseStore:
                 "stop_to_silence_ms",
                 "capture_seconds",
                 "outcome",
+                "expression_dropped",
             }
             and isinstance(value, (int, float, str))
         }
+        # Bounded semantic presence transitions (what Reachy showed, when,
+        # and why) — the review trail for the Start/Done lane and the tail
+        # of a live session after its socket closed. Untrusted client
+        # input: allowlisted fields, typed, truncated, and capped.
+        transitions = marks.get("expression")
+        if isinstance(transitions, list):
+            cleaned = []
+            for item in transitions[:300]:
+                if not isinstance(item, dict):
+                    continue
+                entry: dict[str, Any] = {}
+                for field in ("from", "to", "action", "guard", "attention", "reason", "work"):
+                    value = item.get(field)
+                    if isinstance(value, str):
+                        entry[field] = value[:32]
+                for field in ("at_ms", "gen"):
+                    value = item.get(field)
+                    if isinstance(value, (int, float)):
+                        entry[field] = int(value)
+                if entry:
+                    cleaned.append(entry)
+            if cleaned:
+                allowed["expression"] = cleaned
         try:
             self._receipt_writer(
                 {

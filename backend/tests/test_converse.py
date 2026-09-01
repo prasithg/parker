@@ -870,8 +870,12 @@ def test_converse_page_forwards_real_signals_to_the_expression_state(db):
     # The PAGE owns truth housekeeping: overlay TTLs and the interrupt
     # dwell keep expiring with no WebGL renderer at all (review find).
     assert "expr.tick()" in html
-    # Repair posture rides the real awaiting state of a finished turn.
-    assert "'repair_offered' : 'repair_resolved'" in html
+    # Waiting posture rides the real awaiting state of a finished turn:
+    # choices are the asking/repair posture, yes_no is an authoritative
+    # confirmation offer (staged state), neither means resolved.
+    assert "presence('choices_offered')" in html
+    assert "presence('yes_no_offered')" in html
+    assert "presence('attention_resolved')" in html
 
 
 def test_converse_page_separates_stop_from_failure_outcomes(db):
