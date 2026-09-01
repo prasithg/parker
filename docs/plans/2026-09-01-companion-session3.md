@@ -138,3 +138,20 @@ semantic expression state.
 
 Real-voice wake in the room over an evening (false-wake watch), the full
 conversation cycle with spoken end, packaged WKWebView.
+
+## Hermes independent review amendment (2026-09-01)
+
+Review: [PR #40 independent review](../reviews/2026-09-01-pr40-independent-review.md).
+Official motion input: [Reachy Mini motion and expression reference](../references/2026-09-01-reachy-mini-motion-reference.md).
+
+The original proposed slice order is superseded by the review order below:
+
+1. **CI is no longer a builder task.** Hermes merged PR #41 (`ff4cd01`), which runs CI for every PR plus manual dispatch, merged PR #39 (`1c40275`), synchronized main into PR #37 and PR #40, and triggered the first real PR #40 CI run.
+2. **Fix the strict concurrent-session false-green before feature work.** Make spawned-thread errors fail the test/CI and remove the shared SQLite write/refresh race. Independent repetition failed 4 of 15 runs; a full suite run was contaminated into a later spoken-confirmation failure.
+3. **Make power server-authoritative, single-owner, acknowledged, and fail-closed.** Revoke all companion wake/realtime sessions on off, reject stale/second tabs, expose persistence failure, bound live reconnects to one attempt, and never open continuous cloud audio merely because local wake ASR is unavailable.
+4. **Tighten wake before relying on evening dormancy.** Current grammar wakes on `hey darker`, `hey marker`, `hey barker`, `hey packer`, `hey parked`, and `a parker`; replace broad edit-distance/greeting acceptance with an evidence-backed confusion set, preserve the request tail in `Hey Parker, <request>`, and add ambient-TV CPU/false-wake evidence.
+5. **Make the packaged app open the companion.** The current Tauri first-session/tray path still opens `/parker/screen`; verify power/wake/WebGL/permission/teardown through the actual person-facing WKWebView path.
+6. **Fix accessible action/error cards and search truth.** Exact staged/result/error text needs atomic live semantics. Keep CC-off zero-chrome with unmistakable Reachy/spoken work cues; show bounded source labels in CC-on mode; align the realtime prompt with both.
+7. **Stop for human/device review.** Return exact revision, real stacked CI, strict-concurrency evidence, multi-tab/persistence-failure tests, wake soak results, real-mic results, packaged WKWebView evidence, and remaining untested scope for fresh Hermes review.
+
+Do **not** implement session-ending, My Day, voice-default, or another expressiveness pass in this foundation session. Those become later slices after the gates above pass; the full ordering is in the independent review.
