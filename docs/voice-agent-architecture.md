@@ -182,6 +182,12 @@ The front agent owns everything the person experiences as Parker:
 
 The front agent must stay available while background work runs. "Never blocks" means the conversation loop remains responsive; it does not mean Parker should fill silence compulsively or narrate internal machinery.
 
+### Visual embodiment contract
+
+Parker's visual presence follows the same single-front-agent rule. A renderer-independent semantic expression state translates real voice/runtime signals—listening, user speech energy, front-response work, background-job work, played output audio, interruption, staged confirmation, guard redirect, close/error—into one consistent Parker embodiment. The approved primary renderer direction is a stylized 3D Reachy Mini; reduced-motion, no-WebGL, and static/2D fallbacks must preserve the complete textual and control experience. The detailed build brief is [`docs/plans/2026-08-31-reachy-mini-converse-ui.md`](plans/2026-08-31-reachy-mini-converse-ui.md).
+
+The renderer is downstream of the voice architecture: it may visualize only state that Parker can truthfully derive or explicitly emit, and it may not invent work, listening, speech, or action completion. The semantic state should later be able to drive a physical Reachy Mini, but physical control is not part of the current UI slice.
+
 ### Plane 2: invisible workers
 
 Initial worker classes should stay small:
