@@ -904,6 +904,85 @@ def test_garbled_text_while_choices_pending_still_reprompts(db):
     assert db.query(CapturedIntent).count() == 0
 
 
+@pytest.mark.parametrize(
+    "spoken",
+    [
+        "yes one",
+        "Yes, one.",
+        "one please",
+        "One, please!",
+        "the first one",
+        "number one",
+        "yes number one",
+        "Yes, the first one, please.",
+        "okay one thanks",
+        "1st",
+    ],
+)
+def test_natural_spoken_selection_selects_choice_one(db, spoken):
+    """'Yes one' selects choice 1 — the first human-tester session ended in
+    repair_abandoned because only a bare digit selected (2026-08-31)."""
+
+    session = _session(db)
+    offered = session.handle("Call... the... you know... the one with the garden...")
+    assert offered["kind"] == "choices"
+
+    response = session.handle(spoken)
+
+    assert response["kind"] == "captured"
+    assert response["via_repair_selection"] is True
+    assert session.has_pending_choices is False
+
+
+@pytest.mark.parametrize(
+    "spoken",
+    ["the second one", "number two", "two please", "yes two"],
+)
+def test_natural_spoken_selection_reaches_other_positions(db, spoken):
+    session = _session(db)
+    offered = session.handle("Call... the... you know... the one with the garden...")
+    assert offered["kind"] == "choices"
+    assert len(offered["choices"]) >= 2
+
+    response = session.handle(spoken)
+
+    assert response["via_repair_selection"] is True
+    assert session.has_pending_choices is False
+
+
+@pytest.mark.parametrize(
+    "spoken",
+    [
+        "one two",  # two numbers — ambiguous, never a guess
+        "five please",  # out of range for the offered set
+        "maybe the one with blue",  # a number-adjacent ramble is not a selection
+        "no one",  # negation must never select
+    ],
+)
+def test_ambiguous_number_talk_never_selects(db, spoken):
+    session = _session(db)
+    offered = session.handle("Call... the... you know... the one with the garden...")
+    assert offered["kind"] == "choices"
+
+    response = session.handle(spoken)
+
+    assert response.get("via_repair_selection") is not True
+    assert db.query(CapturedIntent).count() == 0
+
+
+def test_counting_practice_still_beats_spoken_selection(db):
+    """'one, two, three' stays exercise audio, never choice one."""
+
+    session = _session(db)
+    offered = session.handle("Call... the... you know... the one with the garden...")
+    assert offered["kind"] == "choices"
+
+    response = session.handle("one, two, three, four")
+
+    assert response["kind"] == "noop"
+    assert db.query(CapturedIntent).count() == 0
+
+
 def test_questions_get_answer_stub_without_capture(db):
     session = _session(db)
 

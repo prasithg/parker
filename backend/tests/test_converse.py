@@ -238,6 +238,23 @@ def test_repair_choices_expose_position_and_label_only(db):
     assert db.query(CapturedIntent).count() == 1
 
 
+def test_spoken_yes_one_selects_choice_one_in_the_converse_lane(db):
+    """The first tester said 'yes one' to the choice screen and Parker
+    re-prompted twice into repair_abandoned (session CONVERSE-Ef8HsYes,
+    2026-08-31). Natural spoken selection must work where he met it."""
+
+    store = make_store(db)
+    session_id = store.create_session()["session_id"]
+    result = store.run_turn(
+        session_id, turn_id=1, text="Call... the... you know... the one with the garden..."
+    )
+    assert result["awaiting"] == "choices"
+
+    selected = store.run_turn(session_id, turn_id=2, text="yes one")
+    assert selected["kind"] == "confirm_offer"
+    assert db.query(CapturedIntent).count() == 1
+
+
 def test_followup_history_survives_across_http_turns(db):
     brain = EchoBrain()
     store = make_store(db, brain=brain)

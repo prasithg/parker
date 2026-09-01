@@ -375,7 +375,7 @@ def _is_confirmation_repair_rejection(normalized: str) -> bool:
 
 # Spoken dismissal while repair choices are pending: equivalent to picking
 # "none of these" without knowing its number. Kept small and exact-match —
-# anything else while choices are pending is a digit selection, a
+# anything else while choices are pending is a digit or spoken selection, a
 # clearly-new utterance (which escapes to normal routing), or a garbled
 # selection attempt (re-prompt).
 DISMISS_CHOICE_PHRASES = CONFIRM_NO_PHRASES | {
@@ -798,6 +798,60 @@ def _counting_sequence_response(utterance: str) -> dict[str, Any] | None:
         "kind": "noop",
         "speech": "Sounds like counting practice — I'll stay out of the way.",
     }
+
+
+# Spoken selection of a numbered choice ("yes one", "one please", "the
+# first one", "number two"). People do not say bare digits; the first
+# human-tester session ended in repair_abandoned because "yes one" fell
+# through to the garbled-selection re-prompt (2026-08-31). The grammar is
+# strict whole-utterance: every token must be an affirmation, a filler, a
+# politeness tail, or exactly one number/ordinal — "remind me at one" and
+# "the blue one maybe" never select. Counting sequences are screened out
+# before this runs.
+_SELECTION_NUMBERS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "1": 1, "2": 2, "3": 3, "4": 4, "5": 5,
+}
+_SELECTION_ORDINALS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5,
+}
+_SELECTION_AFFIRMATIONS = {"yes", "yeah", "yep", "okay", "ok", "sure", "alright", "fine"}
+_SELECTION_FILLERS = {"the", "number", "choice", "option", "um", "uh", "hmm", "mm"}
+_SELECTION_TAILS = {"please", "thanks", "thank", "you"}
+
+
+def _spoken_selection_position(utterance: str, choice_count: int) -> Optional[int]:
+    """The 1-based choice a spoken selection names, or None if not one."""
+
+    normalized = re.sub(r"[,.!?\-]+", " ", utterance).strip().lower()
+    tokens = re.sub(r"\s+", " ", normalized).split()
+    if not tokens or len(tokens) > 6:
+        return None
+    position: Optional[int] = None
+    via_ordinal = False
+    for token in tokens:
+        if token in _SELECTION_AFFIRMATIONS or token in _SELECTION_FILLERS:
+            continue
+        if token in _SELECTION_TAILS:
+            continue
+        if token in _SELECTION_ORDINALS:
+            if position is not None:
+                return None
+            position = _SELECTION_ORDINALS[token]
+            via_ordinal = True
+            continue
+        if token in _SELECTION_NUMBERS:
+            if position is None:
+                position = _SELECTION_NUMBERS[token]
+                continue
+            if via_ordinal and token == "one":
+                continue  # "the first one" — 'one' is the noun, not a number
+            return None
+        return None
+    if position is None or not 1 <= position <= choice_count:
+        return None
+    return position
 
 
 def _looks_like_new_directed_utterance(utterance: str) -> bool:
@@ -2332,8 +2386,10 @@ class TextSession:
     def _handle_selection(self, utterance: str) -> Optional[dict[str, Any]]:
         """Resolve one utterance spoken while repair choices are pending.
 
-        Digits select. Counting sequences and dismissal words set the
-        choices aside. A clearly-new command/question returns ``None`` so
+        Digits and natural spoken selections ("yes one", "one please",
+        "the first one", "number two") select. Counting sequences and
+        dismissal words set the choices aside. A clearly-new
+        command/question returns ``None`` so
         ``handle`` routes it normally — the web-private validation lane
         showed ambient speech constantly draws generic choices, and before
         this seam selection mode swallowed the user's next real attempt
@@ -2348,6 +2404,9 @@ class TextSession:
         if counting is not None:
             self._dismiss_pending_choices()
             return counting
+        spoken = _spoken_selection_position(utterance, len(choices))
+        if spoken is not None:
+            return self._consumed_selection(choices[spoken - 1], choices)
         normalized = re.sub(r"[,.!?]+", " ", utterance).strip().lower()
         normalized = re.sub(r"\s+", " ", normalized)
         handoff_create = next(
