@@ -572,11 +572,23 @@ def test_a_mutated_action_fails_closed_on_spoken_yes(
     fake = upstream["script"]([_propose_event()])
     with client.websocket_connect("/parker/converse/realtime") as ws:
         assert ws.receive_json()["type"] == "proposal_staged"
-        action = db.query(StagedAction).one()
-        payload = json.loads(action.action_payload)
-        payload["subject"] = "send money somewhere"
-        action.action_payload = json.dumps(payload)
-        db.commit()
+
+        def mutate() -> bool:
+            # The bridge's journal threads share the harness connection; a
+            # mid-cursor collision surfaces as OperationalError — retry
+            # until the write lands (shared-connection artifact).
+            try:
+                action = db.query(StagedAction).one()
+                payload = json.loads(action.action_payload)
+                payload["subject"] = "send money somewhere"
+                action.action_payload = json.dumps(payload)
+                db.commit()
+                return True
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                return False
+
+        assert _wait_until(mutate)
         fake.feed(_heard("yes"))
         assert ws.receive_json()["type"] == "user_transcript"
         result = ws.receive_json()
