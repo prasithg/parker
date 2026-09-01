@@ -96,12 +96,14 @@ beats, all still downstream of the semantic expression state.
 
 - Branch `fable/reachy-companion-take2` (PR #40, stacked on PR #37's
   branch; PR #39 = grammar hotfix). Do not merge — independent Hermes
-  review pending on all three. **CI caveat (found 2026-09-01 evening):
-  GitHub CI has NEVER run on this branch — the workflow triggers only
-  for PRs targeting main, and PR #40's base is a feature branch. Local
-  `make test` is green (1179), but a stacked PR gets no CI. Next
-  session: extend the workflow trigger to all PRs (or re-base #40 once
-  #37 merges) before trusting any green badge.**
+  review pending on #37/#40. **CI update (2026-09-01 ~22:10Z,
+  superseding the earlier caveat): a Hermes lane merged PR #39 to main,
+  fixed the stacked-PR CI trigger, and merged main + PR #37's base into
+  this branch (`4a19bf8`) — CI then RAN on PR #40 and PASSED (run
+  33564781769, 2m17s). The "extend the workflow trigger" slice is
+  already done upstream; drop it from the slice order. Always
+  `git pull --ff-only` at session start — this branch is shared with
+  the Hermes lane.**
 - Shipped so far: companion surface (power+CC only) at /parker/converse;
   lab harness at /parker/converse/lab; spoken yes/no confirmation with
   contract binding + action_result truth; Reachy v2 character; local
@@ -115,6 +117,8 @@ beats, all still downstream of the semantic expression state.
   expression 47/47, wake 25.
 
 ## Proposed session-4 slice order
+
+(The CI-trigger fix landed upstream — start directly at 1.)
 
 1. Spoken session end → wind-down → dormant (+ shorter idle ladder);
    pin "OK thanks" ambiguity carefully (mid-conversation thanks must NOT
