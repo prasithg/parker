@@ -95,8 +95,13 @@ beats, all still downstream of the semantic expression state.
 ## State of the branch (context for a fresh session)
 
 - Branch `fable/reachy-companion-take2` (PR #40, stacked on PR #37's
-  branch; PR #39 = grammar hotfix). All CI green as of `5509b0e`. Do not
-  merge — independent Hermes review pending on all three.
+  branch; PR #39 = grammar hotfix). Do not merge — independent Hermes
+  review pending on all three. **CI caveat (found 2026-09-01 evening):
+  GitHub CI has NEVER run on this branch — the workflow triggers only
+  for PRs targeting main, and PR #40's base is a feature branch. Local
+  `make test` is green (1179), but a stacked PR gets no CI. Next
+  session: extend the workflow trigger to all PRs (or re-base #40 once
+  #37 merges) before trusting any green badge.**
 - Shipped so far: companion surface (power+CC only) at /parker/converse;
   lab harness at /parker/converse/lab; spoken yes/no confirmation with
   contract binding + action_result truth; Reachy v2 character; local
