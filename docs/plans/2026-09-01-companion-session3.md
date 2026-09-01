@@ -87,10 +87,15 @@ Current character is primitives-built from a text brief. Next level needs
 visual reference: real Reachy Mini videos/screenshots (Pollen Robotics
 YouTube, Hugging Face demos, reviewer footage — the "sad/happy/curious"
 antenna emotes, the head-lean tracking, idle sway, wake/sleep beats).
-**Pras will have Hermes collect reference material** (frames/clips/notes)
-— the builder session should consume that into: antenna emote library,
-gaze-tracking-toward-voice behavior, richer idle life, and transition
-beats, all still downstream of the semantic expression state.
+**Hermes has ALREADY delivered the first reference**:
+`docs/references/2026-09-01-reachy-mini-motion-reference.md` (source-backed
+motion vocabulary — staged wake beat, attentive/thoughtful/inquiring
+poses, sleep silhouette, 50 Hz emotes library notes, and a
+no-asset-copying license rule; untracked in the shared checkout as of
+this writing — the Hermes lane owns committing it). The builder session
+consumes it into: antenna emote library, orientation/engagement cues,
+richer idle life, and transition beats, all still downstream of the
+semantic expression state.
 
 ## State of the branch (context for a fresh session)
 
