@@ -74,13 +74,42 @@ lane, and lifecycle fixes from PR #37 remain the foundation.
 
 | # | Slice | State |
 |---|---|---|
-| 1 | Log + plan (this doc), branch `fable/reachy-companion-take2` | in_progress |
-| 2 | Research fan-out: Reachy reference, game-dev animation, Three.js look-dev, zero-UI companion patterns | pending |
-| 3 | Route split: lab page (turns lane only) + companion shell (Reachy + power + CC), power state persisted server-side, teardown reuse | pending |
-| 4 | Spoken confirmation + action_result truth in the realtime bridge + instructions rewrite + pinned tests (T2 core) | pending |
-| 5 | Reachy v2 variants (3 subagent builds) → visual judging → graft + iterate in real browser | pending |
-| 6 | Test migration: page specs target the right pages; new companion Node spec; scenario/realtime pins for confirm flow | pending |
-| 7 | Full verification + browser/screenshot evidence + handoff for Pras's next look | pending |
+| 1 | Log + plan (this doc), branch `fable/reachy-companion-take2` | verified |
+| 2 | Research fan-out (4 agents): Reachy reference, game-dev animation, Three.js look-dev, zero-UI patterns | verified |
+| 3 | Route split + companion shell + persisted power/CC + teardown | verified (`5363b20`) |
+| 4 | Spoken confirmation + action_result truth in the bridge + instructions rewrite + pins | verified (`5363b20`) |
+| 5 | Reachy v2: 3 subagent variants → browser judging → graft + iterate | verified (`6deb395`) |
+| 6 | Test migration: lab/companion Node specs, deck assert_staged, confirm pins | verified |
+| 7 | Full verification + evidence + handoff | verified — see below |
+
+## Evidence (2026-09-01, this branch)
+
+- `make test`: **1155 passed**; `git diff --check` clean.
+- Node: companion page spec **13/13** (power semantics, persisted restore,
+  stale fences, guard TTS vs power-off, drain truth, spoken-confirm cards
+  with no-tap copy pinned, CC, drop-retry, page-hide, receipts, Escape);
+  lab spec 3/3; expression spec **44/44** (executed reachable ONLY via the
+  real outcome frame).
+- Bridge pins: spoken yes executes / no cancels / ambiguity defers /
+  window expires / mutated contract fails closed / newest offer wins /
+  companion mode never fires the idle chatter ladder.
+- Real browser (dev server, this branch): companion boots powered-off
+  ("Parker is off. Nothing is listening."), scene mounted, zero console
+  errors; Reachy v2 judged and iterated over live screenshots — listening
+  / talking / staged-amber / asleep (head sinks, floppy-ear antennae) all
+  captured; 8/8 create/dispose cycles clean.
+- Reviewer escape closed en route: the receipts route's Pydantic model
+  silently dropped `expression` transitions (route-level test added).
+- Known v1 semantics (logged, deliberate): power-on streams continuously
+  (no local wake word yet — R2); the idle ladder is off in companion mode
+  so the line stays open until power-off/error; a gesture-less restore
+  shows "Turn the switch to wake Parker" instead of silently half-waking.
+
+## Open human gates (unchanged)
+
+Real-microphone companion session (power on → talk → lookup → staged
+offer → spoken yes → executed card → barge-in → power off) and packaged
+Tauri/WKWebView capture. Merge only after fresh independent review.
 
 ## Non-goals
 
