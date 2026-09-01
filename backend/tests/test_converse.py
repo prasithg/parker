@@ -822,6 +822,45 @@ def test_streamed_speech_is_always_a_prefix_of_the_final_speech(db):
     assert len(streamed) <= 360  # the trim cap holds on the streamed path too
 
 
+def test_converse_page_mounts_the_reachy_presence_scene(db):
+    """The 3D Reachy Mini scene (2026-08-31 brief): mounted as enhancement,
+    orb + full text experience kept as the fallback."""
+
+    html = client.get("/parker/converse").text
+    assert 'id="reachy-mount"' in html
+    assert "/parker/converse/static/converse/expression.js" in html
+    assert "createReachyScene" in html
+    assert "scene-active" in html
+    assert 'aria-live="polite"' in html
+    # The renderer boots as an independent module — the microphone never
+    # waits for it — and the orb stays in the markup as the fallback.
+    assert 'type="module"' in html
+    assert 'id="orb"' in html
+
+
+def test_converse_page_forwards_real_signals_to_the_expression_state(db):
+    """Motion tells the truth: every presence input is a real signal."""
+
+    html = client.get("/parker/converse").text
+    assert "ParkerExpression.createController" in html
+    assert "presence('connect', {mode: 'live'})" in html
+    assert "'work_start'" in html and "'work_failed'" in html
+    assert "assistant_audio_drained" in html
+    assert "micEnergy(" in html  # hearing derives from actual mic level
+    # `clear` yields the scene only when playback was actually flushed.
+    assert "if (flushLivePlayback()) presence('interrupted')" in html
+
+
+def test_converse_page_makes_live_primary_when_available(db):
+    """The Live lane is the lane you meet (first tester finding): the page
+    carries the live-primary styling and the live control leads the row."""
+
+    html = client.get("/parker/converse").text
+    assert "live-primary" in html
+    assert html.index('id="btn-live"') < html.index('id="btn-start"')
+    assert "Start listening is the push-button way" in html
+
+
 def test_converse_page_speaks_the_final_remainder_and_live_redirect(db):
     html = client.get("/parker/converse").text
     # the confirmation question / 'Want more detail?' remainder is spoken

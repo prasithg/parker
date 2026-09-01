@@ -952,6 +952,18 @@ class RealtimeBridge:
         await self._send_system_item(
             realtime_workers.render_search_item(result, age_seconds=age_seconds)
         )
+        # Presence truth for the page (2026-08-31 Reachy brief): the lookup
+        # that `working` started is now finished — done or honestly failed.
+        # Paired with the `started` frame sent at dispatch; the page's
+        # expression state also expires stale work on its own, so a lost
+        # frame can never claim eternal work.
+        await self._browser_send(
+            {
+                "type": "working",
+                "kind": "search",
+                "status": "failed" if result.error else "done",
+            }
+        )
         if result.sources:
             await self._browser_send(
                 {
@@ -1283,6 +1295,12 @@ class RealtimeBridge:
             self._inflight_lookups.add(key)
             self._lookup_asked[key] = asked
             self._spawn_search_worker(question, key)
+            # The smallest truthful presence event: real work was just
+            # dispatched. The scene may show "checking" from this frame on,
+            # never from a timer.
+            await self._browser_send(
+                {"type": "working", "kind": "search", "status": "started"}
+            )
             ack = {
                 "status": "working",
                 "detail": (

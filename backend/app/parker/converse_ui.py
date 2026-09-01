@@ -12,8 +12,14 @@ Design contract (pinned by tests):
   disables the controls for 400 ms so a tremor double-tap cannot hit the
   button that just swapped into the same footprint.
 - Truthful, *present* states: idle / preparing / listening / thinking /
-  speaking / stopped, carried by a large breathing orb + banner + soft
-  earcons — never a silent dead wait. Answers stream sentence-by-sentence
+  speaking / stopped, carried by the 3D Reachy Mini presence scene (or
+  the breathing orb wherever WebGL is unavailable) + banner + soft
+  earcons — never a silent dead wait. The scene is driven by the
+  semantic expression state (static/converse/expression.js) fed only by
+  real signals; the orb + full text experience remain the complete
+  fallback. When realtime is configured, Live conversation is the
+  primary control and Start/Done is the labeled push-to-talk fallback
+  (first human-tester finding, 2026-08-31). Answers stream sentence-by-sentence
   (the ndjson turn endpoint) so speech starts after the first sentence;
   if nothing has arrived within ~1.2 s Parker says a short truthful cue
   ("Let me check.") instead of leaving dead air.
@@ -61,6 +67,25 @@ CONVERSE_PAGE_HTML = """<!doctype html>
     text-transform: uppercase;
     color: #7d8ca1;
   }
+  /* The Reachy Mini presence scene. Presentation only: every essential
+     meaning also lives in the status text and controls. When WebGL is
+     unavailable the mount stays empty and hidden, and the orb carries
+     presence exactly as before. */
+  #presence {
+    flex: none;
+    height: clamp(160px, 30vh, 320px);
+    display: none;
+    justify-content: center;
+  }
+  body.scene-active #presence { display: flex; }
+  #reachy-mount {
+    width: min(100%, 540px);
+    height: 100%;
+    background: radial-gradient(ellipse 60% 55% at 50% 62%, #0d1622 0%, rgba(5,8,13,0) 70%);
+  }
+  #reachy-mount canvas { width: 100% !important; height: 100% !important; display: block; }
+  body.scene-active #orb { display: none; }
+  @media (max-height: 640px) { #presence { height: clamp(120px, 24vh, 200px); } }
   #status-banner {
     font-size: clamp(1.6rem, 3.2vw, 2.6rem);
     font-weight: 650;
@@ -147,7 +172,11 @@ CONVERSE_PAGE_HTML = """<!doctype html>
   }
   .big:disabled { opacity: .75; }
   #btn-start { background: #133c1f; color: #7fe3a1; border-color: #2e6b2e; }
-  #btn-live  { background: #0c1b2a; color: #9fd8ff; border-color: #1f3a55; }
+  #btn-live  { background: #0c2a1c; color: #7fe3a1; border-color: #2e6b46; flex: 2; }
+  /* With Live available, Start/Done is the labeled push-to-talk fallback. */
+  body.live-primary #btn-start {
+    background: #1a2432; color: #b9c6d8; border-color: #34435c; flex: 1;
+  }
   body[data-state="live"] #orb { background: #6db3ff; box-shadow: 0 0 44px 6px rgba(109,179,255,.4); animation: breathe 2s ease-in-out infinite; }
   #btn-done  { background: #4a3a08; color: #ffd166; border-color: #8a6d1a; }
   #btn-stop  { background: #431a1f; color: #ff9aa4; border-color: #a33; }
@@ -185,8 +214,9 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 </head>
 <body data-state="starting">
 <main>
-  <div id="status-banner"><span id="orb"></span><span id="status-text">Getting Parker ready…</span></div>
-  <div id="notice"></div>
+  <div id="presence"><div id="reachy-mount"></div></div>
+  <div id="status-banner"><span id="orb"></span><span id="status-text" aria-live="polite">Getting Parker ready…</span></div>
+  <div id="notice" aria-live="polite"></div>
   <div id="heard-block" hidden>
     <div class="label">Parker heard</div>
     <div id="heard"></div>
@@ -204,8 +234,8 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 </main>
 
 <div id="controls">
-  <button class="big" id="btn-start">Start listening</button>
   <button class="big" id="btn-live" hidden>Live conversation</button>
+  <button class="big" id="btn-start">Start listening</button>
   <button class="big" id="btn-done" hidden>Done talking</button>
   <button class="big" id="btn-stop" hidden>Stop Parker</button>
   <button class="big" id="btn-again" hidden>Try again</button>
@@ -227,6 +257,7 @@ CONVERSE_PAGE_HTML = """<!doctype html>
   <p><a href="/parker/sessions/ui">Review finished live sessions</a> — what Parker heard, said, injected, and staged, with latencies.</p>
 </details>
 
+<script src="/parker/converse/static/converse/expression.js"></script>
 <script>
 'use strict';
 
@@ -235,7 +266,37 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 // speaking -> idle, with stopped reachable from anywhere. clientGen guards
 // against stale results: Stop bumps it, and anything finishing under an old
 // generation is dropped, never rendered, never spoken.
+//
+// Presence rides beside it: the semantic expression controller
+// (ParkerExpression) receives the SAME real signals and drives the Reachy
+// scene + the live-lane status label. It never invents state — the
+// Start/Done lane forwards its own control states, the live lane forwards
+// its websocket/audio events, and mic/output energy comes from the actual
+// audio graph.
 // ---------------------------------------------------------------------------
+
+const expr = window.ParkerExpression ? ParkerExpression.createController() : null;
+
+function presence(name, data) {
+  if (expr) { try { expr.handleEvent(name, data); } catch (err) {} }
+}
+
+function presenceEnergy(levels) {
+  if (expr) { try { expr.setEnergy(levels); } catch (err) {} }
+}
+
+// The Start/Done lane's control machine already runs on real signals; map
+// its states onto the semantic phases so the two can never disagree. The
+// live lane wires its own richer events and is skipped here.
+const TURNS_PRESENCE = {
+  idle: 'ready',
+  preparing: 'connect',
+  listening: 'connected',
+  thinking: 'user_transcript',
+  speaking: 'assistant_audio',
+  stopped: 'stopped',
+  error: 'error',
+};
 
 let sessionId = null;
 let clientGen = 0;
@@ -284,6 +345,12 @@ function setState(state, text) {
   $('btn-stop').hidden = !(state === 'preparing' || state === 'listening' || state === 'thinking' || state === 'speaking' || state === 'live');
   $('btn-again').hidden = !(state === 'stopped' || state === 'error');
   if (previous !== state) guardButtons();
+  // Presence for the Start/Done lane; the live lane forwards its own events.
+  if (previous !== state && state !== 'live' && !liveActive() && !startingLive) {
+    const event = TURNS_PRESENCE[state];
+    if (event === 'connect') presence('connect', {mode: 'turns'});
+    else if (event) presence(event);
+  }
 }
 
 function setNotice(text) { notice.textContent = text || ''; }
@@ -410,6 +477,16 @@ async function createSession() {
     const data = await res.json();
     sessionId = data.session_id;
     realtimeAvailable = !!data.realtime_available;
+    if (realtimeAvailable) {
+      // Live is the lane you meet (first human-tester finding, 2026-08-31):
+      // the flagship experience leads, Start/Done stays as the clearly
+      // available push-button fallback.
+      document.body.classList.add('live-primary');
+      STATE_TEXT.idle = 'Tap Live conversation, then just talk.';
+      const hint = document.querySelector('footer span');
+      if (hint) hint.textContent =
+        'Live conversation is easiest \\u2014 just talk. Start listening is the push-button way.';
+    }
     if (!data.asr_ready) {
       setNotice('Voice recognition is not ready on this laptop — typing still works.');
       showTypeRow(true);
@@ -438,6 +515,15 @@ function postReceipt(marks) {
 
 const TARGET_RATE = 16000;
 const MAX_CAPTURE_SECONDS = 180;
+
+// RMS of a float PCM block, scaled to a 0..1 presence energy. Real level
+// in, nothing invented: quiet rooms sit near 0, speech lands well above
+// the expression controller's hearing threshold.
+function micEnergy(data) {
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+  return Math.min(1, Math.sqrt(sum / data.length) * 6);
+}
 
 async function startListening() {
   if (startingCapture || capture) return; // one microphone, one opening at a time
@@ -475,6 +561,7 @@ async function startListening() {
     const data = event.inputBuffer.getChannelData(0);
     chunks.push(new Float32Array(data));
     samples += data.length;
+    presenceEnergy({user: micEnergy(data)}); // real mic level -> hearing
     if (samples / ctx.sampleRate >= MAX_CAPTURE_SECONDS) {
       setNotice('That was a long one, so I sent what I heard so far.');
       doneTalking();
@@ -614,9 +701,13 @@ function speakText(text) {
     const orb = $('orb');
     orb.classList.add('pulse');
     setTimeout(() => orb.classList.remove('pulse'), 90);
+    // Word boundaries are the real output signal this lane has.
+    presenceEnergy({parker: 0.85});
+    setTimeout(() => presenceEnergy({parker: 0.2}), 160);
   };
   const settle = () => {
     tts.outstanding -= 1;
+    presenceEnergy({parker: 0});
     if (tts.outstanding <= 0 && tts.turnComplete) finishSpeechTurn();
   };
   utterance.onend = settle;
@@ -787,8 +878,32 @@ function sendText(text) {
 
 const LIVE_RATE = 24000;
 const live = {ws: null, micCtx: null, micStream: null, proc: null, gain: null,
-              playCtx: null, nextTime: 0, sources: []};
+              playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
+              energyTimer: null, wasPlaying: false};
 let startingLive = false;
+
+// Output-energy truth for the live lane: each scheduled chunk knows its
+// window and loudness; a light timer reads whichever chunk is actually
+// playing NOW and reports drain once the queue really empties.
+function watchLivePlayback() {
+  if (live.energyTimer) return;
+  live.energyTimer = setInterval(() => {
+    if (!live.playCtx) return;
+    const now = live.playCtx.currentTime;
+    live.chunkMeta = live.chunkMeta.filter((c) => c.at + c.dur > now);
+    const current = live.chunkMeta.find((c) => c.at <= now);
+    if (current) {
+      live.wasPlaying = true;
+      presenceEnergy({parker: current.energy});
+    } else {
+      presenceEnergy({parker: 0});
+      if (live.wasPlaying && now >= live.nextTime) {
+        live.wasPlaying = false;
+        presence('assistant_audio_drained');
+      }
+    }
+  }, 120);
+}
 
 function liveActive() { return !!live.ws; }
 
@@ -797,6 +912,7 @@ async function startLive() {
   startingLive = true; // one live line, one opening at a time
   window.speechSynthesis && speechSynthesis.cancel();
   clearResult();
+  presence('connect', {mode: 'live'});
   setState('preparing');
   let stream;
   try {
@@ -825,37 +941,48 @@ async function startLive() {
   live.gain.gain.value = 0;
   live.proc.onaudioprocess = (event) => {
     if (!live.ws || live.ws.readyState !== 1) return;
-    const pcm = resamplePCM16(event.inputBuffer.getChannelData(0), live.micCtx.sampleRate, LIVE_RATE);
+    const data = event.inputBuffer.getChannelData(0);
+    presenceEnergy({user: micEnergy(data)}); // real mic level -> hearing
+    const pcm = resamplePCM16(data, live.micCtx.sampleRate, LIVE_RATE);
     live.ws.send(JSON.stringify({type: 'audio', data: bufferToBase64(pcm.buffer)}));
   };
   source.connect(live.proc);
   live.proc.connect(live.gain);
   live.gain.connect(live.micCtx.destination);
+  watchLivePlayback();
 
   startingLive = false;
-  ws.onopen = () => { earcon('listen'); setState('live'); };
+  ws.onopen = () => { earcon('listen'); presence('connected'); setState('live'); };
   ws.onmessage = (message) => {
+    if (ws !== live.ws) return; // a frame from a dead line must change nothing
     let event;
     try { event = JSON.parse(message.data); } catch (err) { return; }
     if (!event || typeof event !== 'object') return;
     handleLiveEvent(event);
   };
-  ws.onclose = () => { if (liveActive()) endLive('The live line closed.'); };
-  ws.onerror = () => { if (liveActive()) endLive('The live line dropped.'); };
+  ws.onclose = () => { if (ws === live.ws) endLive('The live line closed.'); };
+  ws.onerror = () => { if (ws === live.ws) endLive('The live line dropped.'); };
 }
 
 function handleLiveEvent(event) {
   if (event.type === 'audio') {
     playLivePcm(event.data);
   } else if (event.type === 'user_transcript') {
+    presence('user_transcript');
     renderHeard(event.text);
     $('speech').textContent = '';
     $('answer-block').hidden = true;
     $('sources').hidden = true; // last turn's evidence must not linger
   } else if (event.type === 'sources') {
     renderSources(event.items);
+  } else if (event.type === 'working') {
+    // Real background-work presence from the bridge: started / done / failed.
+    const status = event.status === 'started' ? 'work_start'
+      : event.status === 'failed' ? 'work_failed' : 'work_done';
+    presence(status, {kind: event.kind || 'search'});
   } else if (event.type === 'closing') {
     // Parker said goodbye; let the scheduled audio finish before hanging up.
+    presence('closing');
     const remaining = live.playCtx
       ? Math.max(0, (live.nextTime - live.playCtx.currentTime) * 1000)
       : 0;
@@ -863,8 +990,11 @@ function handleLiveEvent(event) {
   } else if (event.type === 'assistant_transcript_delta') {
     appendSpeechText(event.text);
   } else if (event.type === 'clear') {
-    flushLivePlayback();
+    // The scene yields only when playback was actually flushed — the
+    // server sends `clear` on every speech_started, talking or not.
+    if (flushLivePlayback()) presence('interrupted');
   } else if (event.type === 'guard_redirect') {
+    presence('guard_redirect');
     flushLivePlayback();
     $('speech').textContent = event.text;
     $('answer-block').hidden = false;
@@ -874,10 +1004,11 @@ function handleLiveEvent(event) {
     // silently cancelled it on a fresh page).
     speakNow(event.text);
   } else if (event.type === 'proposal_staged') {
+    presence('proposal_staged');
     setNotice('On the screen to confirm: ' + (event.label || 'a suggested action'));
   } else if (event.type === 'notice' || event.type === 'unavailable') {
     setNotice(event.text || '');
-    if (event.type === 'unavailable') endLive('');
+    if (event.type === 'unavailable') { endLive(''); presence('offline'); }
   }
 }
 
@@ -902,6 +1033,15 @@ function playLivePcm(encoded) {
     live.nextTime = at + buffer.duration;
     live.sources.push(src);
     src.onended = () => { live.sources = live.sources.filter((s) => s !== src); };
+    // Presence: audio is genuinely scheduled — talking, with the chunk's
+    // own loudness carried for audio-reactive motion.
+    let sum = 0;
+    for (let i = 0; i < floats.length; i++) sum += floats[i] * floats[i];
+    live.chunkMeta.push({
+      at: at, dur: buffer.duration,
+      energy: Math.min(1, Math.sqrt(sum / floats.length) * 4),
+    });
+    presence('assistant_audio');
     const orb = $('orb');
     orb.classList.add('pulse');
     setTimeout(() => orb.classList.remove('pulse'), 90);
@@ -909,9 +1049,14 @@ function playLivePcm(encoded) {
 }
 
 function flushLivePlayback() {
+  const hadAudio = live.sources.length > 0;
   for (const src of live.sources) { try { src.stop(); } catch (err) {} }
   live.sources = [];
+  live.chunkMeta = [];
   live.nextTime = 0;
+  live.wasPlaying = false;
+  presenceEnergy({parker: 0});
+  return hadAudio;
 }
 
 function speakNow(text) {
@@ -926,6 +1071,7 @@ function endLive(noticeText) {
   startingLive = false;
   const ws = live.ws;
   live.ws = null;
+  if (live.energyTimer) { clearInterval(live.energyTimer); live.energyTimer = null; }
   flushLivePlayback();
   if (ws) {
     try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
@@ -1003,7 +1149,40 @@ window.addEventListener('pagehide', () => {
   } catch (err) {}
 });
 
+// The live lane's status label reads from the semantic state, so the words
+// and the pose can never disagree; the Start/Done lane keeps its longer
+// coaching lines. Exposed on window for the renderer module (and for
+// driving the real controller with synthetic fixtures during testing).
+if (expr) {
+  expr.subscribe((s) => {
+    if (document.body.dataset.state === 'live') {
+      statusText.textContent = ParkerExpression.describe(s);
+    }
+  });
+}
+window.ParkerPresence = {controller: expr};
+
 createSession();
+</script>
+<script type="module">
+// The Reachy Mini scene boots independently of the conversation script:
+// a slow import or a WebGL failure never delays the microphone, and on
+// failure the page simply keeps the orb + full text experience.
+(async () => {
+  const mount = document.getElementById('reachy-mount');
+  const controller = window.ParkerPresence && window.ParkerPresence.controller;
+  if (!mount || !controller) return;
+  const reduced = window.matchMedia
+    && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  try {
+    const mod = await import('/parker/converse/static/converse/reachy.js');
+    const scene = mod.createReachyScene(mount, controller, {reducedMotion: !!reduced});
+    if (scene) {
+      document.body.classList.add('scene-active');
+      window.ParkerPresence.scene = scene;
+    }
+  } catch (err) { /* no WebGL / no module: the orb remains the presence */ }
+})();
 </script>
 </body>
 </html>

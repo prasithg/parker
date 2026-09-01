@@ -295,17 +295,20 @@ def test_two_lookups_in_flight_land_on_the_right_line(voice_world):
                 assert "That pharmacy shuts at five on Saturdays." in her_note
                 assert "Alcaraz" not in her_note
 
-                # only the line that asked gets the sources chip
-                assert ws_a.receive_json() == {
-                    "type": "sources",
-                    "items": [
-                        {
-                            "label": "US Open schedule",
-                            "url": "https://example.org/uso",
-                            "fresh_as_of": "",
-                        }
-                    ],
-                }
+                # only the line that asked gets the sources chip (each line
+                # sees exactly its own lookup's presence pair)
+                chips = browser_frame(
+                    ws_a,
+                    "sources",
+                    working=[("search", "started"), ("search", "done")],
+                )
+                assert chips["items"] == [
+                    {
+                        "label": "US Open schedule",
+                        "url": "https://example.org/uso",
+                        "fresh_as_of": "",
+                    }
+                ]
 
                 # nudge accounting is per line: both notes are deferred
                 # behind their own ack response, and only the line whose
@@ -319,12 +322,15 @@ def test_two_lookups_in_flight_land_on_the_right_line(voice_world):
                 fakes[1].feed(done())
                 assert _wait_until(lambda: _response_creates(fakes[1]) == 3)
 
-                # her browser never saw his chips: the next frame is speech
+                # her browser never saw his chips: past her own lookup's
+                # presence pair, the next frame is speech
                 fakes[1].feed(model_said("Five o'clock, then."))
-                assert ws_b.receive_json() == {
-                    "type": "assistant_transcript_delta",
-                    "text": "Five o'clock, then.",
-                }
+                delta = browser_frame(
+                    ws_b,
+                    "assistant_transcript_delta",
+                    working=[("search", "started"), ("search", "done")],
+                )
+                assert delta["text"] == "Five o'clock, then."
 
                 ws_b.send_json({"type": "end"})
             ws_a.send_json({"type": "end"})

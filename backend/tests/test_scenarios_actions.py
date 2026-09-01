@@ -518,7 +518,10 @@ def test_a_reminder_jumps_the_queue_while_the_lookup_is_still_running(voice_worl
                 )
             )
             assert _wait_until(lambda: len(_function_outputs(fake)) == 2)
-            assert ws.receive_json() == {"type": "proposal_staged", "label": "tennis Friday"}
+            staged = browser_frame(
+                ws, "proposal_staged", working=[("search", "started")]
+            )
+            assert staged["label"] == "tennis Friday"
 
             acks = [json.loads(o["item"]["output"]) for o in _function_outputs(fake)]
             assert [a["status"] for a in acks] == ["working", "staged"]

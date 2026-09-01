@@ -112,6 +112,32 @@ def _response_creates(fake) -> int:
     return sum(1 for e in fake.sent if e["type"] == "response.create")
 
 
+def browser_frame(ws, expected_type: str, *, working=()) -> dict:
+    """Receive the next *expected_type* browser frame, consuming presence
+    frames along the way — deliberately.
+
+    The lookup dispatch/finish presence frames (``{"type": "working"}``,
+    2026-08-31 Reachy brief) interleave with the frames scenarios pin.
+    The deck stays the authority on browser traffic: every consumed
+    presence frame must be declared by the caller as a ``(kind, status)``
+    pair, so an unexpected frame — presence or otherwise — still fails
+    loudly instead of being skipped in a helper.
+    """
+
+    expected_working = list(working)
+    while True:
+        frame = ws.receive_json()
+        if frame.get("type") != "working":
+            assert frame.get("type") == expected_type, frame
+            assert not expected_working, (
+                f"expected working frames {expected_working} before {expected_type}"
+            )
+            return frame
+        assert expected_working, f"undeclared working frame: {frame}"
+        kind, status = expected_working.pop(0)
+        assert (frame.get("kind"), frame.get("status")) == (kind, status), frame
+
+
 @pytest.fixture
 def realtime_enabled(monkeypatch):
     from app.config import settings
@@ -471,6 +497,11 @@ def test_look_that_up_acks_instantly_and_injects_only_at_a_safe_point(
         ack = json.loads(_function_outputs(fake)[0]["item"]["output"])
         assert ack["status"] == "working"
         assert "keep the conversation going" in ack["detail"].lower()
+        # The page hears about the dispatch the moment it is real — the
+        # presence frame the Reachy scene animates "checking" from.
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
         creates_after_ack = _response_creates(fake)  # greeting + ack nudge
         assert creates_after_ack >= 2
 
@@ -487,7 +518,11 @@ def test_look_that_up_acks_instantly_and_injects_only_at_a_safe_point(
         assert "US Open schedule" not in item  # sources are browser-only
         assert _response_creates(fake) == creates_after_ack
 
-        # The browser gets the evidence chips.
+        # The finished lookup closes its presence pair, then the browser
+        # gets the evidence chips.
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "done"
+        }
         chips = ws.receive_json()
         assert chips["type"] == "sources"
         assert chips["items"][0]["label"] == "US Open schedule"
@@ -543,6 +578,14 @@ def test_failed_lookup_injects_an_honest_note(
         note = next(text for text in _system_items(fake) if "could not finish" in text)
         assert "what's on at the cinema?" in note
         assert "offer to try again" in note
+        # The presence pair is honest too: started, then FAILED — the scene
+        # must never keep claiming work, and must never claim it succeeded.
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "failed"
+        }
         ws.send_json({"type": "end"})
 
 
