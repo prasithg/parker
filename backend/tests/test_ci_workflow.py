@@ -30,9 +30,13 @@ def test_pr_ci_workflow_runs_backend_tests_and_release_evals() -> None:
     for command in required_commands:
         assert command in workflow_text
 
-    required_triggers = ["pull_request:", "push:"]
+    required_triggers = ["pull_request:", "push:", "workflow_dispatch:"]
     for trigger in required_triggers:
         assert trigger in workflow_text
+    # Stacked PRs target feature branches. A `branches: [main]` filter under
+    # pull_request silently gives them no CI; PR #40 exposed this gap.
+    pull_block = workflow_text.split("pull_request:", 1)[1].split("push:", 1)[0]
+    assert "branches:" not in pull_block
 
     assert "python-version: '3.11'" in workflow_text
     assert "ANTHROPIC_API_KEY" not in workflow_text
