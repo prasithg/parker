@@ -1478,3 +1478,19 @@ confirmation accessibility, lifecycle/performance verification, semantic
 state transitions in the session-review trail, and a branch/PR/Fable-review/
 CI flow. Physical Reachy control, cameras, and a general avatar system are
 explicitly outside this slice.
+
+### Status: BUILT overnight 2026-08-31→09-01 (PRs open, mic pass pending)
+
+Fable's overnight session shipped both fronts as separate PRs:
+"yes one" spoken selection (`fable/spoken-selection-yes-one`, CI green)
+and the 3D Reachy Mini presence (`fable/reachy-mini-converse-3d`):
+expression state machine (33 node tests under pytest), procedural
+Three.js Reachy (vendored 0.185.1, SHA-pinned, sidecar-packaged),
+Live-primary layout, truthful `working` presence frames from the bridge,
+reduced-motion/no-WebGL fallbacks. Full record, deliberate deviations,
+and the morning checklist:
+[2026-09-01-reachy-overnight-handoff.md](plans/2026-09-01-reachy-overnight-handoff.md).
+Remaining gates: Pras's real-microphone session, then the packaged
+Tauri/WKWebView capture (release gate). Named follow-ups: expression
+trail into session review; audio-deck spoken-selection variants;
+server-VAD-driven hearing.
