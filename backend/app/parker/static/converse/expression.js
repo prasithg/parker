@@ -32,8 +32,8 @@
   'use strict';
 
   var PHASES = [
-    'offline', 'idle', 'connecting', 'listening', 'hearing', 'thinking',
-    'talking', 'interrupted', 'closing', 'stopped', 'error',
+    'offline', 'dormant', 'idle', 'connecting', 'listening', 'hearing',
+    'thinking', 'talking', 'interrupted', 'closing', 'stopped', 'error',
   ];
 
   // Phases in which a live session is actually underway: only these may
@@ -154,6 +154,19 @@
       offline: function () { return setPhase('offline'); },
       error: function () { return setPhase('error'); },
       stopped: function () { return setPhase('stopped'); },
+
+      // Powered on, resting: ONLY local wake listening is armed — no
+      // session, no cloud line, overlays cleared. The page asserts this
+      // state itself (its wake lane is open), so entry is unconditional
+      // like stopped/offline (docs/plans/2026-09-01-wake-word.md).
+      dormant: function () { return setPhase('dormant'); },
+      // "Hey Parker" was actually detected by the local engine — the one
+      // event that may pop the scene out of dormancy.
+      wake_detected: function () {
+        if (state.phase !== 'dormant') return false;
+        state.mode = 'live';
+        return setPhase('connecting');
+      },
 
       connect: function (data) {
         state.mode = (data && data.mode) === 'turns' ? 'turns' : 'live';
@@ -410,6 +423,7 @@
   // disagree. (The Start/Done fallback keeps its own longer coaching
   // lines — a different lane with different mechanics.)
   function describe(state) {
+    if (state.phase === 'dormant') return 'Resting. Say \u201CHey Parker\u201D any time.';
     if (state.guard === 'redirect') return 'That one is for your doctor or family.';
     if (state.action === 'executed') return 'Done — that ran, exactly as read back.';
     if (state.action === 'failed') return 'That didn’t go through — it’s on the family review page.';

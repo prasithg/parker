@@ -212,6 +212,10 @@ test('stop is terminal for the ENTIRE event vocabulary', () => {
   // readiness, a typed turn, or a real error/offline report.
   const allowedFromStopped = new Set([
     'connect', 'ready', 'user_transcript', 'error', 'offline', 'stopped',
+    // The powered-on companion re-arms wake listening after a session
+    // ends — dormancy is a deliberate page-asserted state, not a stale
+    // session event. (wake_detected itself stays fenced to dormant.)
+    'dormant',
   ]);
   const c = makeController();
   assert.ok(c.events.length >= 20, 'vocabulary introspection lost events');
@@ -542,6 +546,58 @@ test('repair posture sets and resolves', () => {
   assert.strictEqual(c.getState().guard, 'repair');
   c.handleEvent('repair_resolved');
   assert.strictEqual(c.getState().guard, 'none');
+});
+
+// ---------------------------------------------------------------------------
+// Dormancy and wake (docs/plans/2026-09-01-wake-word.md)
+// ---------------------------------------------------------------------------
+
+test('dormant is a cleared rest state; only wake_detected pops it', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('work_start', { kind: 'search' });
+  c.handleEvent('proposal_staged');
+  assert.ok(c.handleEvent('dormant'));
+  const s = c.getState();
+  assert.strictEqual(s.phase, 'dormant');
+  assert.deepStrictEqual(s.work, []);
+  assert.strictEqual(s.action, 'none');
+  assert.strictEqual(s.attention, 'none');
+  // Ambient events cannot animate a dormant scene…
+  for (const name of ['assistant_audio', 'work_start', 'proposal_staged',
+                      'choices_offered', 'interrupted', 'connected']) {
+    assert.strictEqual(c.handleEvent(name, { kind: 'search' }), false, name);
+  }
+  // …and energy is ignored (someone talking near the mic is not a wake).
+  clock = 5000;
+  c.setEnergy({ user: 1.0 });
+  clock = 6000;
+  c.setEnergy({ user: 1.0 });
+  assert.strictEqual(c.getState().phase, 'dormant');
+  // The real local detection is the ONE way out — into a live session.
+  assert.ok(c.handleEvent('wake_detected'));
+  assert.strictEqual(c.getState().phase, 'connecting');
+  assert.strictEqual(c.getState().mode, 'live');
+  assert.ok(c.handleEvent('connected'));
+  assert.strictEqual(c.getState().phase, 'listening');
+});
+
+test('wake_detected is rejected outside dormancy', () => {
+  for (const setup of [['ready'], ['stopped'], ['offline'],
+                       ['connect', 'connected']]) {
+    const c = makeController();
+    for (const step of setup) c.handleEvent(step, { mode: 'live' });
+    assert.strictEqual(c.handleEvent('wake_detected'), false, setup.join(','));
+  }
+});
+
+test('the dormant label invites the wake phrase without overclaiming', () => {
+  const text = ParkerExpression.describe({
+    phase: 'dormant', work: [], action: 'none', guard: 'none', attention: 'none',
+  });
+  assert.ok(/hey parker/i.test(text), text);
+  assert.ok(!/listening intently|talking/i.test(text), text);
 });
 
 // ---------------------------------------------------------------------------

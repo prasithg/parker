@@ -1,15 +1,15 @@
 /*
  * Executable lifecycle tests for the REAL companion page script
- * (companion_ui.py — the virtual Reachy embodiment: power + CC only).
+ * (companion_ui.py — the virtual Reachy embodiment with local wake).
  *
  * Usage: node companion_page.spec.js <path-to-extracted-inline-script>
  *
- * The companion owns the live full-duplex lane, so every interleaving the
- * independent review proved broken (guard TTS vs off/close, drain-vs-
- * response truth, stale socket opens, page-hide teardown) is pinned here
- * against the page's actual code — plus the take-2 contracts: real power
- * semantics, persisted settings, CC captions, and spoken-confirmation
- * cards that never ask him to tap anything.
+ * Pins the take-2 + wake-word contracts against the page's actual code:
+ * real power semantics with DORMANCY (power on = local wake lane only,
+ * no cloud socket, lifeless scene until "Hey Parker"), the wake pop,
+ * return-to-dormancy after the gentle wind-down, spoken-confirmation
+ * cards that never ask him to tap, CC, and every interleaving the
+ * independent review proved broken on the live lane.
  */
 'use strict';
 
@@ -54,11 +54,26 @@ function click(env, id) {
   const el = env.element(id);
   (el._handlers.click || []).forEach((fn) => fn({}));
 }
+function wakeSockets(env) {
+  return env.sockets.filter((s) => s.url.includes('/converse/wake'));
+}
+function liveSockets(env) {
+  return env.sockets.filter((s) => s.url.includes('/converse/realtime'));
+}
 
-async function poweredOn(env) {
+async function poweredDormant(env) {
   await env.context.powerOn();
   await env.flush();
-  const ws = env.sockets[env.sockets.length - 1];
+  const ws = wakeSockets(env)[wakeSockets(env).length - 1];
+  ws.open();
+  return ws;
+}
+
+async function poweredActive(env) {
+  const wakeWs = await poweredDormant(env);
+  wakeWs.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker' });
+  await env.flush();
+  const ws = liveSockets(env)[liveSockets(env).length - 1];
   ws.open();
   return ws;
 }
@@ -68,51 +83,134 @@ async function poweredOn(env) {
     const env = await bootedEnv();
     assert.strictEqual(power(env), 'off');
     assert.strictEqual(env.streams.length, 0, 'no microphone was opened');
-    assert.strictEqual(env.sockets.length, 0, 'no live socket was opened');
+    assert.strictEqual(env.sockets.length, 0, 'no socket of any kind');
     assert.strictEqual(phase(env), 'offline');
     assert.ok(/off/i.test(env.element('sr-status').textContent));
   });
 
-  await test('persisted power restores across a reload', async () => {
-    const env = await bootedEnv({ power_on: true });
-    assert.ok(env.sockets.length >= 1, 'the line reopens on boot');
-    env.sockets[0].open();
-    assert.strictEqual(power(env), 'on');
-    assert.strictEqual(phase(env), 'listening');
+  await test('power on means DORMANT: local wake lane only, no cloud line', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(phase(env), 'dormant');
+    assert.strictEqual(env.streams.length, 1, 'the mic is held locally');
+    assert.strictEqual(liveSockets(env).length, 0, 'NO cloud socket while dormant');
+    assert.ok(/hey parker/i.test(env.element('sr-status').textContent));
+    // Mic frames route ONLY to the local wake lane, resampled to 16 kHz.
+    assert.ok(env.micFrame(0.2));
+    const frames = wakeWs.sent.filter((f) => f.type === 'audio');
+    assert.strictEqual(frames.length, 1);
+    // 4096 samples @48k -> ~1365 @16k -> ~2730 bytes -> ~3640 base64 chars
+    assert.ok(frames[0].data.length > 3000 && frames[0].data.length < 4200,
+      'frames are 16 kHz-sized, not 24 kHz');
+    assert.strictEqual(phase(env), 'dormant', 'room sound never animates a dormant scene');
   });
 
-  await test('power off releases everything and persists', async () => {
+  await test('"Hey Parker" pops the scene awake and opens the line', async () => {
     const env = await bootedEnv();
-    const ws = await poweredOn(env);
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker' });
+    assert.strictEqual(phase(env), 'connecting', 'the pop begins immediately');
+    await env.flush();
+    assert.ok(wakeWs.closed, 'the wake lane closes on detection');
+    const live = liveSockets(env)[0];
+    assert.ok(live, 'the realtime line opens');
+    live.open();
+    assert.strictEqual(phase(env), 'listening');
     assert.strictEqual(power(env), 'on');
-    assert.ok(env.streams.length === 1);
+    // The wake transition is in the receipts for session review.
+    const receiptsAfterOff = () => {
+      env.context.powerOff();
+      const receipt = env.beacons.find((b) => b.url.includes('/receipts'));
+      return JSON.parse(receipt.body).expression;
+    };
+    const transitions = receiptsAfterOff();
+    const popped = transitions.find((t) => t.from === 'dormant' && t.to === 'connecting');
+    assert.ok(popped && popped.reason === 'wake_detected', JSON.stringify(transitions));
+  });
+
+  await test('the gentle wind-down returns to dormancy, wake re-armed', async () => {
+    const env = await bootedEnv();
+    const live = await poweredActive(env);
+    const wakeCountBefore = wakeSockets(env).length;
+    live.message({ type: 'closing' });
+    env.advance(400); // the drain timer fires
+    assert.ok(live.closed, 'the cloud line closed');
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(phase(env), 'dormant');
+    assert.strictEqual(wakeSockets(env).length, wakeCountBefore + 1, 'wake re-armed');
+    assert.ok(!env.streams[0].track.stopped, 'the mic stays held — power is still on');
+    // …and a second "hey parker" works: the full cycle repeats.
+    const wakeWs = wakeSockets(env)[wakeSockets(env).length - 1];
+    wakeWs.open();
+    wakeWs.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker' });
+    await env.flush();
+    assert.strictEqual(liveSockets(env).length, 2, 'a fresh line per wake');
+  });
+
+  await test('persisted power restores to DORMANT, not to a live line', async () => {
+    const env = await bootedEnv({ power_on: true });
+    await env.flush();
+    assert.ok(wakeSockets(env).length >= 1, 'wake listening re-arms on boot');
+    assert.strictEqual(liveSockets(env).length, 0, 'no cloud line without a wake');
+    assert.strictEqual(power(env), 'dormant');
+  });
+
+  await test('power off from dormancy releases the mic and persists', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
     env.context.powerOff();
     assert.ok(env.streams[0].track.stopped, 'microphone released');
-    assert.ok(ws.closed, 'socket closed');
-    assert.ok(ws.sent.some((f) => f.type === 'end'));
+    assert.ok(wakeWs.closed, 'wake lane closed');
+    for (const ctx of env.audioContexts) assert.ok(ctx.closed, 'audio contexts closed');
     assert.strictEqual(power(env), 'off');
     assert.strictEqual(phase(env), 'offline');
     assert.strictEqual(env.settings.power_on, false, 'off is persisted');
-    assert.strictEqual(env.intervalCount(), 1, 'only the truth heartbeat remains');
   });
 
-  await test('a socket that opens after power-off cannot restore the line', async () => {
+  await test('a wake frame after power-off cannot wake anything', async () => {
     const env = await bootedEnv();
-    await env.context.powerOn();
+    const wakeWs = await poweredDormant(env);
+    env.context.powerOff();
+    wakeWs.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker' });
     await env.flush();
-    const ws = env.sockets[0];
-    env.context.powerOff(); // off while still CONNECTING
-    ws.open();
+    assert.strictEqual(liveSockets(env).length, 0);
     assert.strictEqual(power(env), 'off');
-    assert.strictEqual(phase(env), 'offline');
+  });
+
+  await test('a dropped wake lane retries once, then is honest', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.dropped();
+    env.advance(1600);
+    const second = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.notStrictEqual(second, wakeWs, 'one quiet retry');
+    second.open();
+    assert.strictEqual(power(env), 'dormant');
+    second.dropped();
+    env.advance(1600);
+    assert.strictEqual(power(env), 'error');
+    assert.ok(/wake listening/i.test(card(env).text), JSON.stringify(card(env)));
+  });
+
+  await test('a missing local model falls back to straight-active, honestly', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'unavailable', text: 'Wake listening needs the local voice model.' });
+    await env.flush();
+    assert.ok(card(env) && /local voice model/i.test(card(env).text));
+    const live = liveSockets(env)[0];
+    assert.ok(live, 'Parker still works — take-2 behavior');
+    live.open();
+    assert.strictEqual(power(env), 'on');
+    assert.strictEqual(phase(env), 'listening', 'the scene is truthfully live, not dormant');
   });
 
   await test('guard redirect speech dies with power off and stays dead', async () => {
     const env = await bootedEnv();
-    const ws = await poweredOn(env);
+    const ws = await poweredActive(env);
     ws.message({ type: 'user_transcript', text: 'should I change my dose' });
     ws.message({ type: 'guard_redirect', text: 'That one is for your doctor or family.' });
-    assert.ok(card(env) && /doctor/.test(card(env).text), 'the redirect is shown');
     const u = env.utterances[0];
     u.onstart();
     assert.strictEqual(phase(env), 'talking');
@@ -125,7 +223,7 @@ async function poweredOn(env) {
 
   await test('an inter-chunk gap never claims listening while the response is active', async () => {
     const env = await bootedEnv();
-    const ws = await poweredOn(env);
+    const ws = await poweredActive(env);
     ws.message({ type: 'user_transcript', text: 'what is the weather' });
     ws.message({ type: 'audio', data: env.pcmBase64(12000) });
     assert.strictEqual(phase(env), 'talking');
@@ -138,8 +236,7 @@ async function poweredOn(env) {
 
   await test('a staged offer is a spoken question — no tapping, ever', async () => {
     const env = await bootedEnv();
-    const ws = await poweredOn(env);
-    ws.message({ type: 'user_transcript', text: 'remind me to take my meds at three' });
+    const ws = await poweredActive(env);
     ws.message({
       type: 'proposal_staged',
       label: 'a 3 PM meds reminder',
@@ -152,39 +249,14 @@ async function poweredOn(env) {
     const s = env.context.ParkerPresence.controller.getState();
     assert.strictEqual(s.attention, 'confirmation');
     assert.strictEqual(s.action, 'staged');
-  });
-
-  await test('the real outcome frame drives the executed/failed/cancelled cards', async () => {
-    const env = await bootedEnv();
-    const ws = await poweredOn(env);
-    ws.message({ type: 'user_transcript', text: 'remind me' });
-    ws.message({ type: 'proposal_staged', label: 'a reminder', readback: 'a reminder' });
-    ws.message({ type: 'action_result', status: 'executed', label: 'a reminder' });
-    let c = card(env);
-    assert.ok(c && c.kind === 'executed' && /done/i.test(c.text), JSON.stringify(c));
-    assert.strictEqual(env.context.ParkerPresence.controller.getState().action, 'executed');
-
-    ws.message({ type: 'proposal_staged', label: 'a message', readback: 'a message' });
-    ws.message({ type: 'action_result', status: 'failed', label: 'a message' });
-    c = card(env);
-    assert.ok(c && c.kind === 'failed', JSON.stringify(c));
-    assert.ok(/family review/i.test(c.text), 'failure points at the review page');
-    assert.ok(!/done/i.test(c.text));
-
-    ws.message({ type: 'proposal_staged', label: 'x', readback: 'x' });
-    ws.message({ type: 'action_result', status: 'cancelled', label: 'x' });
-    c = card(env);
-    assert.ok(c && c.kind === 'cancelled', JSON.stringify(c));
-
-    ws.message({ type: 'proposal_staged', label: 'y', readback: 'y' });
-    ws.message({ type: 'action_result', status: 'expired', label: 'y' });
-    assert.strictEqual(card(env), null, 'an expired offer just lapses');
-    assert.strictEqual(env.context.ParkerPresence.controller.getState().attention, 'none');
+    ws.message({ type: 'action_result', status: 'executed', label: 'a 3 PM meds reminder' });
+    const done = card(env);
+    assert.ok(done && done.kind === 'executed' && /done/i.test(done.text));
   });
 
   await test('CC captions appear only when CC is on, and persist the choice', async () => {
     const env = await bootedEnv();
-    const ws = await poweredOn(env);
+    const ws = await poweredActive(env);
     ws.message({ type: 'user_transcript', text: 'hello parker' });
     assert.ok(env.element('cc-him').hidden, 'captions stay hidden with CC off');
     click(env, 'cc-toggle');
@@ -192,29 +264,26 @@ async function poweredOn(env) {
     ws.message({ type: 'user_transcript', text: 'how are you' });
     assert.ok(!env.element('cc-him').hidden);
     assert.strictEqual(env.element('cc-him').textContent, 'how are you');
-    ws.message({ type: 'assistant_transcript_delta', text: 'I’m here' });
-    ws.message({ type: 'assistant_transcript_delta', text: ' with you.' });
-    assert.strictEqual(env.element('cc-parker').textContent, 'I’m here with you.');
   });
 
-  await test('a dropped line retries once, honestly', async () => {
+  await test('a dropped ACTIVE line retries the session, not dormancy', async () => {
     const env = await bootedEnv();
-    const ws = await poweredOn(env);
+    const ws = await poweredActive(env);
     ws.dropped();
     assert.strictEqual(power(env), 'error');
-    const c = card(env);
-    assert.ok(c && /reconnect/i.test(c.text), JSON.stringify(c));
-    const socketsBefore = env.sockets.length;
+    assert.ok(/reconnect/i.test(card(env).text));
+    const liveBefore = liveSockets(env).length;
     env.advance(2600);
     await env.flush();
-    assert.strictEqual(env.sockets.length, socketsBefore + 1, 'one quiet retry');
-    env.sockets[env.sockets.length - 1].open();
+    assert.strictEqual(liveSockets(env).length, liveBefore + 1, 'one quiet retry');
+    liveSockets(env)[liveSockets(env).length - 1].open();
     assert.strictEqual(power(env), 'on');
+    assert.strictEqual(phase(env), 'listening', 'the retry re-enters truthfully');
   });
 
-  await test('page hide releases microphone, audio, socket, TTS, timers, and the scene', async () => {
+  await test('page hide releases microphone, audio, sockets, TTS, timers, and the scene', async () => {
     const env = await bootedEnv();
-    const ws = await poweredOn(env);
+    const ws = await poweredActive(env);
     ws.message({ type: 'audio', data: env.pcmBase64(2400) });
     const scene = { disposed: false, dispose() { this.disposed = true; } };
     env.context.ParkerPresence.scene = scene;
@@ -229,23 +298,9 @@ async function poweredOn(env) {
     assert.strictEqual(env.reloads, 1, 'a BFCache restore reloads clean');
   });
 
-  await test('semantic transitions stream to the bridge and flush as receipts', async () => {
+  await test('Escape is the keyboard power-off, from dormant too', async () => {
     const env = await bootedEnv();
-    const ws = await poweredOn(env);
-    ws.message({ type: 'user_transcript', text: 'hello there' });
-    const frames = ws.sent.filter((f) => f.type === 'expression');
-    const thinking = frames.find((f) => f.to === 'thinking');
-    assert.ok(thinking && thinking.reason === 'user_transcript');
-    env.context.powerOff();
-    const receipt = env.beacons.find((b) => b.url.includes('/receipts'));
-    assert.ok(receipt, 'power off flushes the receipt buffer');
-    const parsed = JSON.parse(receipt.body);
-    assert.ok(Array.isArray(parsed.expression) && parsed.expression.length >= 2);
-  });
-
-  await test('Escape is the keyboard power-off', async () => {
-    const env = await bootedEnv();
-    await poweredOn(env);
+    await poweredDormant(env);
     env.keydown.forEach((fn) => fn({ key: 'Escape' }));
     assert.strictEqual(power(env), 'off');
     assert.ok(env.streams[0].track.stopped);

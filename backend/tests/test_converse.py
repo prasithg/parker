@@ -535,8 +535,11 @@ def test_companion_page_is_the_person_facing_surface(db):
     for absent in ("btn-start", "btn-done", "btn-again", "btn-yes", "btn-no",
                    "type-input", "Type instead", "Start listening"):
         assert absent not in html, absent
-    # The live lane belongs to the companion, in companion mode.
-    assert "/parker/converse/realtime?mode=companion" in html
+    # The live lane belongs to the companion; dormancy runs on the LOCAL
+    # wake lane — no cloud line until "Hey Parker".
+    assert "/parker/converse/realtime" in html
+    assert "/parker/converse/wake" in html
+    assert "startDormant" in html and "wake_detected" in html
     # Spoken confirmation: the staged card asks for a spoken yes/no.
     # (companion_page.spec.js pins the RENDERED card text as tap-free.)
     assert "proposal_staged" in html
@@ -902,7 +905,7 @@ def test_live_lane_lives_only_on_the_companion(db):
     assert "/parker/converse/realtime" not in lab
     assert "btn-live" not in lab
     companion = client.get("/parker/converse").text
-    assert "/parker/converse/realtime?mode=companion" in companion
+    assert "/parker/converse/realtime" in companion
 
 
 def test_streamed_speech_is_always_a_prefix_of_the_final_speech(db):

@@ -125,6 +125,83 @@ def converse_static(asset_path: str) -> FileResponse:
     )
 
 
+@router.websocket("/converse/wake")
+async def converse_wake(websocket: WebSocket) -> None:
+    """Local dormant wake listening: mic PCM in, one wake frame out.
+
+    Localhost-only audio — the transcriber is the same warmed local model
+    the push-button lane uses; nothing here touches the network. The page
+    streams 16 kHz mono s16le frames while dormant and closes the lane
+    the moment a wake fires (docs/plans/2026-09-01-wake-word.md).
+    """
+
+    import base64
+    import binascii
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.parker import wake as wake_module
+    from app.parker.converse import write_receipt
+
+    await websocket.accept()
+    transcriber = converse_store.transcriber()
+    if transcriber is None:
+        await websocket.send_json(
+            {
+                "type": "unavailable",
+                "text": (
+                    "Wake listening needs the local voice model "
+                    "(make voice-deps)."
+                ),
+            }
+        )
+        await websocket.close()
+        return
+    detector = wake_module.WakeDetector(transcriber)
+    opened = __import__("time").monotonic()
+    try:
+        while True:
+            message = await websocket.receive_json()
+            if not isinstance(message, dict):
+                continue
+            kind = message.get("type")
+            if kind == "audio":
+                try:
+                    pcm = base64.b64decode(
+                        str(message.get("data", "")).encode("ascii"), validate=True
+                    )
+                except (ValueError, binascii.Error, UnicodeEncodeError):
+                    continue  # junk frames never end dormancy
+                hit = await run_in_threadpool(detector.feed, pcm)
+                if hit:
+                    logger.info(
+                        "wake detected matched=%r infer_ms=%d rms=%d",
+                        hit["matched"],
+                        hit["infer_ms"],
+                        hit["rms"],
+                    )
+                    try:
+                        write_receipt(
+                            {
+                                "recorded_by": "server",
+                                "kind": "wake",
+                                "matched": hit["matched"],
+                                "infer_ms": hit["infer_ms"],
+                                "rms": hit["rms"],
+                                "dormant_s": int(
+                                    __import__("time").monotonic() - opened
+                                ),
+                            }
+                        )
+                    except Exception:  # noqa: BLE001 — receipts never break waking
+                        pass
+                    await websocket.send_json({"type": "wake", **hit})
+            elif kind == "end":
+                return
+    except WebSocketDisconnect:
+        pass
+
+
 @router.post("/converse/sessions")
 def create_converse_session() -> dict[str, Any]:
     """Start one conversation session and warm the shared local model."""
@@ -162,13 +239,7 @@ async def converse_realtime(websocket: WebSocket) -> None:
         )
         await websocket.close()
         return
-    bridge = realtime_lane.RealtimeBridge(
-        websocket.send_json,
-        websocket.receive_json,
-        # The companion keeps its line open while powered on — no idle
-        # wrap-up/goodbye chatter in the living room.
-        companion=websocket.query_params.get("mode") == "companion",
-    )
+    bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
     try:
         await bridge.run()
     except WebSocketDisconnect:

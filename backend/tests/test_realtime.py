@@ -631,26 +631,6 @@ def test_a_newer_offer_replaces_the_old_one_unambiguously(
     assert "stretch" in executed[0].action_payload
 
 
-def test_companion_mode_disables_the_idle_chatter_ladder(
-    db, realtime_enabled, brainless, upstream, monkeypatch
-):
-    """The living-room companion keeps its line open: silence is allowed
-    and Parker never asks wrap-up questions or says goodbye on a timer."""
-
-    monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 0.1)
-    monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 0.1)
-    monkeypatch.setattr(realtime, "_WATCHDOG_TICK_SECONDS", 0.02)
-    fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime?mode=companion") as ws:
-        time.sleep(0.6)  # far past every ladder threshold
-        ws.send_json({"type": "end"})
-    texts = _system_items(fake)
-    assert not any("anything else" in text for text in texts)
-    assert not any("goodbye" in text.lower() for text in texts)
-    # The greeting still happens — power-on says hello once.
-    assert any("line just opened" in text for text in texts)
-
-
 def test_stop_cancels_upstream_and_junk_audio_never_forwards(
     db, realtime_enabled, brainless, upstream
 ):

@@ -790,15 +790,9 @@ class RealtimeBridge:
         browser_receive: Callable[[], Awaitable[dict[str, Any]]],
         *,
         upstream_connect: Optional[Callable[[], Awaitable[Any]]] = None,
-        companion: bool = False,
     ) -> None:
         self._browser_send = browser_send
         self._browser_receive = browser_receive
-        # Companion mode (take 2, 2026-09-01): the living-room embodiment
-        # keeps its line open while powered on — silence is allowed, and
-        # Parker never chatters to fill it, so the idle wrap-up/goodbye
-        # ladder is disabled. Power off (or an error) ends the line.
-        self._companion = companion
         # Resolved at run time through the module so tests can monkeypatch
         # connect_openai without touching every construction site.
         self._upstream_connect = upstream_connect
@@ -1180,8 +1174,6 @@ class RealtimeBridge:
                 # The offer quietly lapses: the card clears, the action
                 # stays staged on the family review surface, nothing runs.
                 await self._expire_confirmation("no spoken answer in the window")
-            if self._companion:
-                continue  # no idle ladder: quiet presence is the product
             if self._closing_sent:
                 # Goodbye fully sent; give the browser time to drain audio
                 # and hang up itself, then close from this side regardless.

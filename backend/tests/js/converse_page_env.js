@@ -29,6 +29,7 @@ function createEnv() {
     pageshow: [],
     keydown: [],
     audioContexts: [],
+    processors: [],
     streams: [],
     reloads: 0,
     getUserMediaMode: 'grant', // or 'deny'
@@ -116,6 +117,7 @@ function createEnv() {
   class FakeAudioContext {
     constructor() {
       this.closed = false;
+      this.state = 'running';
       this.sampleRate = 48000;
       this.destination = {};
       this.startedSources = [];
@@ -128,7 +130,9 @@ function createEnv() {
     }
     createMediaStreamSource() { return { connect() {} }; }
     createScriptProcessor() {
-      return { onaudioprocess: null, connect() {}, disconnect() {} };
+      const proc = { onaudioprocess: null, connect() {}, disconnect() {} };
+      env.processors.push(proc);
+      return proc;
     }
     createBuffer(channels, length, rate) {
       const data = new Float32Array(length);
@@ -276,6 +280,13 @@ function createEnv() {
   env.firePageshow = (persisted) => env.pageshow.forEach((fn) => fn({ persisted: !!persisted }));
   env.flush = () => new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
   env.pcmBase64 = (samples) => Buffer.alloc(samples * 2).toString('base64');
+  env.micFrame = (level) => {
+    const proc = env.processors[env.processors.length - 1];
+    if (!proc || !proc.onaudioprocess) return false;
+    const data = new Float32Array(4096).fill(level == null ? 0.2 : level);
+    proc.onaudioprocess({ inputBuffer: { getChannelData: () => data } });
+    return true;
+  };
 
   env.boot = function boot(pageScriptPath) {
     const expressionSource = fs.readFileSync(

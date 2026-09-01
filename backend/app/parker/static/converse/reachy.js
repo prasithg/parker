@@ -91,14 +91,22 @@ function poseFor(state) {
       POSE.antennaL = -1.0; POSE.antennaR = 1.0;
       POSE.breathAmp = 0; POSE.blinks = false;
       break;
+    case 'dormant':   // powered but resting: same sunken sleep — with the
+      // faintest eye ember as the honest "wake listening is armed" cue,
+      // and the slowest whisper of breath. Lifeless until "Hey Parker."
+      POSE.headPitch = 0.3; POSE.headDrop = 1; POSE.eyeOpen = 0.06; POSE.eyeGlow = 0.14;
+      POSE.antennaL = -1.0; POSE.antennaR = 1.0;
+      POSE.breathRate = 0.1; POSE.breathAmp = 0.005; POSE.blinks = false;
+      break;
     case 'idle':      // present, softly alive, gaze wandering the room
       POSE.headPitch = 0.08; POSE.eyeOpen = 0.66; POSE.eyeGlow = 0.35;
       POSE.saccades = true;
       break;
-    case 'connecting': // perking up: head lifts, antennae rise, quick breath
-      POSE.headPitch = -0.07; POSE.eyeOpen = 0.9; POSE.eyeGlow = 0.6;
-      POSE.antennaL = -0.06; POSE.antennaR = 0.06;
-      POSE.breathRate = 0.5; POSE.gazeCamera = true;
+    case 'connecting': // the POP: head springs up, eyes snap open bright,
+      // antennae perk to attention — "I heard you."
+      POSE.headPitch = -0.1; POSE.eyeOpen = 1.0; POSE.eyeGlow = 0.95;
+      POSE.antennaL = -0.02; POSE.antennaR = 0.02;
+      POSE.breathRate = 0.6; POSE.breathAmp = 0.02; POSE.gazeCamera = true;
       break;
     case 'listening': // open, attentive, eyes on him, tiny gaze life
       POSE.headPitch = -0.05; POSE.eyeOpen = 0.92; POSE.eyeGlow = 0.7;

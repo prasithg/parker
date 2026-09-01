@@ -9,10 +9,12 @@ no transcript panel, no numbered choices. Voice is the whole interface.
 Contract (pinned by tests):
 
 - Power is real and persisted server-side: off = microphone stopped,
-  socket closed, speech cancelled, playback flushed, visibly asleep —
-  and it stays off across restarts. On = the live full-duplex line is
-  open continuously (companion mode: the server's idle wrap-up/goodbye
-  ladder is disabled — silence is allowed, Parker never chatters).
+  sockets closed, speech cancelled, playback flushed, visibly asleep —
+  and it stays off across restarts. On = DORMANT: the mic feeds only the
+  LOCAL wake lane (no cloud audio) and Reachy rests lifeless with an
+  ember cue until "Hey Parker" pops it awake into the live full-duplex
+  line; the session's gentle wind-down returns it to dormancy
+  (docs/plans/2026-09-01-wake-word.md).
 - CC (closed captions) is optional and persisted: TV-style captions of
   what Parker heard and what it is saying. Off by default.
 - Action truth outranks the avatar: staged offers, execution outcomes,
@@ -62,6 +64,7 @@ COMPANION_PAGE_HTML = """<!doctype html>
     transition: background .3s ease, box-shadow .3s ease;
   }
   body[data-power="on"] #orb-fallback .dot { background: #7fe3a1; box-shadow: 0 0 80px 10px rgba(127,227,161,.3); animation: breathe 2s ease-in-out infinite; }
+  body[data-power="dormant"] #orb-fallback .dot { background: #223041; animation: breathe 5s ease-in-out infinite; }
   body[data-power="starting"] #orb-fallback .dot { background: #ffd166; animation: breathe 1s ease-in-out infinite; }
   body[data-power="error"] #orb-fallback .dot { background: #ff9aa4; }
   @keyframes breathe { 0%, 100% { opacity: .5; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.05); } }
@@ -124,6 +127,7 @@ COMPANION_PAGE_HTML = """<!doctype html>
     transition: background .25s ease, box-shadow .25s ease;
   }
   body[data-power="on"] #power .lamp { background: #7fe3a1; box-shadow: 0 0 18px 2px rgba(127,227,161,.6); }
+  body[data-power="dormant"] #power .lamp { background: #3f6b52; animation: breathe 4s ease-in-out infinite; }
   body[data-power="starting"] #power .lamp { background: #ffd166; }
   body[data-power="error"] #power .lamp { background: #ff9aa4; }
   body[data-power="off"] #power { border-color: #34435c; background: #10161f; color: #b9c6d8; }
@@ -260,9 +264,19 @@ function bufferToBase64(buffer) {
   return btoa(binary);
 }
 
-const live = {ws: null, micCtx: null, micStream: null, proc: null, gain: null,
-              playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
-              energyTimer: null, wasPlaying: false,
+const WAKE_RATE = 16000;
+
+// The ONE microphone owner for the whole powered-on lifetime: acquired on
+// the power gesture, released at power off. Frames route by mode —
+// 'wake' streams 16 kHz PCM to the LOCAL wake lane (nothing leaves this
+// machine while dormant), 'live' streams 24 kHz to the realtime line.
+const audio = {stream: null, micCtx: null, playCtx: null, proc: null,
+               gain: null, source: null, mode: 'idle'};
+
+const wake = {ws: null, retried: false};
+
+const live = {ws: null, playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
+              energyTimer: null, wasPlaying: false, closingSeen: false,
               responseOpen: false, guardSpeaking: 0};
 let startingLive = false;
 
@@ -363,7 +377,79 @@ function speakNow(text) {
   speechSynthesis.speak(utterance);
 }
 
-function endLive() {
+async function acquireAudio() {
+  if (audio.stream) return true;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
+    });
+  } catch (err) {
+    return false;
+  }
+  audio.stream = stream;
+  audio.playCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audio.micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audio.source = audio.micCtx.createMediaStreamSource(stream);
+  audio.proc = audio.micCtx.createScriptProcessor(4096, 1, 1);
+  audio.gain = audio.micCtx.createGain();
+  audio.gain.gain.value = 0;
+  audio.proc.onaudioprocess = (event) => {
+    const data = event.inputBuffer.getChannelData(0);
+    if (audio.mode === 'wake') {
+      // Dormant: frames go ONLY to the local wake lane — no cloud, no
+      // presence energy (a lifeless robot does not react to the room).
+      if (wake.ws && wake.ws.readyState === 1) {
+        const pcm = resamplePCM16(data, audio.micCtx.sampleRate, WAKE_RATE);
+        try { wake.ws.send(JSON.stringify({type: 'audio', data: bufferToBase64(pcm.buffer)})); } catch (err) {}
+      }
+    } else if (audio.mode === 'live') {
+      if (!live.ws || live.ws.readyState !== 1) return;
+      presenceEnergy({user: micEnergy(data)});
+      const pcm = resamplePCM16(data, audio.micCtx.sampleRate, TARGET_LIVE_RATE);
+      try { live.ws.send(JSON.stringify({type: 'audio', data: bufferToBase64(pcm.buffer)})); } catch (err) {}
+    }
+  };
+  audio.source.connect(audio.proc);
+  audio.proc.connect(audio.gain);
+  audio.gain.connect(audio.micCtx.destination);
+  return true;
+}
+
+function releaseAudio() {
+  audio.mode = 'idle';
+  try { audio.proc && audio.proc.disconnect(); audio.gain && audio.gain.disconnect(); } catch (err) {}
+  try { audio.stream && audio.stream.getTracks().forEach((track) => track.stop()); } catch (err) {}
+  try { audio.micCtx && audio.micCtx.close(); } catch (err) {}
+  try { audio.playCtx && audio.playCtx.close(); } catch (err) {}
+  audio.stream = null; audio.micCtx = null; audio.playCtx = null;
+  audio.proc = null; audio.gain = null; audio.source = null;
+}
+
+// The wake acknowledgment: two quick rising notes — "I heard you" —
+// while the eyes are already popping open. The greeting follows.
+function chirp() {
+  try {
+    const ctx = audio.playCtx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.06;
+    gain.connect(ctx.destination);
+    [660, 990].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      osc.connect(gain);
+      osc.start(now + i * 0.09);
+      osc.stop(now + i * 0.09 + 0.09);
+    });
+  } catch (err) { /* sound is a courtesy */ }
+}
+
+// Ends the CLOUD line only: the microphone and contexts stay owned for
+// the powered-on lifetime (dormancy re-arms wake on the same stream).
+function endLine() {
   startingLive = false;
   const ws = live.ws;
   live.ws = null;
@@ -372,15 +458,21 @@ function endLive() {
   try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
   live.guardSpeaking = 0;
   live.responseOpen = false;
+  live.closingSeen = false;
+  live.playCtx = null; // alias only — audio.playCtx stays open
   if (ws) {
     try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
     try { ws.close(); } catch (err) {}
   }
-  try { live.proc && live.proc.disconnect(); live.gain && live.gain.disconnect(); } catch (err) {}
-  try { live.micStream && live.micStream.getTracks().forEach((track) => track.stop()); } catch (err) {}
-  try { live.micCtx && live.micCtx.close(); } catch (err) {}
-  try { live.playCtx && live.playCtx.close(); } catch (err) {}
-  live.micCtx = null; live.micStream = null; live.proc = null; live.gain = null; live.playCtx = null;
+}
+
+function stopWakeLane() {
+  const ws = wake.ws;
+  wake.ws = null;
+  if (ws) {
+    try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
+    try { ws.close(); } catch (err) {}
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -440,13 +532,22 @@ function handleLiveEvent(event) {
   } else if (event.type === 'sources') {
     // The companion shows no source list; the session lab carries evidence.
   } else if (event.type === 'closing') {
-    // Companion mode has no idle goodbye; a closing frame still means the
-    // server is ending the line — treat it as a clean end of this line.
+    // The gentle wind-down finished (one wrap-up, one goodbye): let the
+    // scheduled audio play out, then return to DORMANT — power stays on,
+    // only local wake listening remains.
     presence('closing');
+    live.closingSeen = true;
+    const remaining = live.playCtx
+      ? Math.max(0, (live.nextTime - live.playCtx.currentTime) * 1000)
+      : 0;
+    const wsAtClosing = live.ws; // a stale timer must never end a NEW session
+    setTimeout(() => {
+      if (live.ws === wsAtClosing && live.ws) returnToDormancy();
+    }, remaining + 300);
   } else if (event.type === 'notice') {
     showCard('notice', event.text || '', 8000);
   } else if (event.type === 'unavailable') {
-    endLive();
+    endLine();
     presence('offline');
     setPowerVisual('error');
     showCard('error', event.text || 'Live conversation is not available right now.', 0);
@@ -460,18 +561,13 @@ function handleLiveEvent(event) {
 function setPowerVisual(state) {
   document.body.dataset.power = state;
   const label = $('power-label');
-  const on = state === 'on' || state === 'starting';
+  const on = state === 'on' || state === 'starting' || state === 'dormant';
   $('power').setAttribute('aria-checked', on ? 'true' : 'false');
-  label.textContent = state === 'on' ? 'Parker is on'
+  label.textContent = state === 'on' || state === 'dormant' ? 'Parker is on'
     : state === 'starting' ? 'Waking\\u2026'
     : state === 'error' ? 'Try again'
     : 'Turn Parker on';
   updateSrStatus();
-}
-
-function powerIsOn() {
-  const state = document.body.dataset.power;
-  return state === 'on' || state === 'starting';
 }
 
 function persistSettings(fields) {
@@ -485,68 +581,112 @@ function persistSettings(fields) {
 }
 
 async function powerOn(options) {
-  if (live.ws || startingLive) return;
+  if (startingLive || live.ws || wake.ws) return;
   const fromBoot = !!(options && options.fromBoot);
   startingLive = true;
   powerGen++;
   const myGen = powerGen;
   hideCard();
   setPowerVisual('starting');
-  presence('connect', {mode: 'live'});
-  if (!fromBoot) persistSettings({power_on: true});
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
-    });
-  } catch (err) {
-    startingLive = false;
-    if (myGen !== powerGen) return;
+  const granted = await acquireAudio();
+  startingLive = false;
+  if (myGen !== powerGen) { if (granted && !live.ws && !wake.ws) releaseAudio(); return; }
+  if (!granted) {
     presence('error');
     setPowerVisual('error');
     showCard('error',
       fromBoot
         ? 'Turn the switch to wake Parker.'
-        : 'Parker can\\u2019t use the microphone \\u2014 it needs permission on this computer.', 0);
+        : 'Parker can\u2019t use the microphone \u2014 it needs permission on this computer.', 0);
     return;
   }
-  if (!startingLive || myGen !== powerGen) { // powered off while the mic opened
-    try { stream.getTracks().forEach((track) => track.stop()); } catch (err) {}
-    return;
-  }
-  live.playCtx = new (window.AudioContext || window.webkitAudioContext)();
-  live.micCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (fromBoot && (live.playCtx.state === 'suspended' || live.micCtx.state === 'suspended')) {
+  if (fromBoot && (audio.playCtx.state === 'suspended' || audio.micCtx.state === 'suspended')) {
     // Restored power without a user gesture: the browser keeps audio
     // suspended, so a truthful wake needs one flip of the switch.
-    try { stream.getTracks().forEach((track) => track.stop()); } catch (err) {}
-    try { live.playCtx.close(); live.micCtx.close(); } catch (err) {}
-    live.playCtx = null; live.micCtx = null;
-    startingLive = false;
+    releaseAudio();
     setPowerVisual('off');
     showCard('notice', 'Turn the switch to wake Parker.', 0);
     return;
   }
+  startDormant();
+}
+
+function powered() {
+  const state = document.body.dataset.power;
+  return state === 'dormant' || state === 'on' || state === 'starting';
+}
+
+// ---------------------------------------------------------------------------
+// Dormancy: powered but lifeless. The mic feeds ONLY the local wake lane;
+// the cloud line is closed; "Hey Parker" is the one way to wake
+// (docs/plans/2026-09-01-wake-word.md).
+// ---------------------------------------------------------------------------
+
+function startDormant() {
+  if (!audio.stream) return;
+  audio.mode = 'wake';
+  presence('dormant');
+  setPowerVisual('dormant');
   const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const ws = new WebSocket(scheme + location.host + '/parker/converse/realtime?mode=companion');
-  live.ws = ws;
-  live.micStream = stream;
-  const source = live.micCtx.createMediaStreamSource(stream);
-  live.proc = live.micCtx.createScriptProcessor(4096, 1, 1);
-  live.gain = live.micCtx.createGain();
-  live.gain.gain.value = 0;
-  live.proc.onaudioprocess = (event) => {
-    if (!live.ws || live.ws.readyState !== 1) return;
-    const data = event.inputBuffer.getChannelData(0);
-    presenceEnergy({user: micEnergy(data)});
-    const pcm = resamplePCM16(data, live.micCtx.sampleRate, TARGET_LIVE_RATE);
-    live.ws.send(JSON.stringify({type: 'audio', data: bufferToBase64(pcm.buffer)}));
+  const ws = new WebSocket(scheme + location.host + '/parker/converse/wake');
+  wake.ws = ws;
+  ws.onmessage = (message) => {
+    if (ws !== wake.ws) return;
+    let event;
+    try { event = JSON.parse(message.data); } catch (err) { return; }
+    if (!event || typeof event !== 'object') return;
+    if (event.type === 'wake') onWake(event);
+    else if (event.type === 'unavailable') {
+      // The local model is missing: an honest note, then straight-active
+      // (the take-2 behavior) — never a silently dead switch.
+      stopWakeLane();
+      showCard('notice', 'Wake listening needs the local voice model \u2014 Parker will listen right away instead.', 8000);
+      startActive();
+    }
   };
-  source.connect(live.proc);
-  live.proc.connect(live.gain);
-  live.gain.connect(live.micCtx.destination);
+  ws.onclose = () => {
+    if (ws !== wake.ws) return;
+    wake.ws = null;
+    if (audio.mode !== 'wake' || !powered()) return;
+    if (!wake.retried) {
+      wake.retried = true;
+      setTimeout(() => {
+        if (audio.mode === 'wake' && powered() && !wake.ws) startDormant();
+      }, 1500);
+    } else {
+      presence('error');
+      setPowerVisual('error');
+      showCard('error', 'Wake listening hiccuped \u2014 flip the switch to try again.', 0);
+    }
+  };
+  ws.onerror = () => { if (ws === wake.ws) { try { ws.close(); } catch (err) {} } };
+}
+
+function onWake(event) {
+  wake.retried = false;
+  stopWakeLane();
+  presence('wake_detected'); // the POP: eyes snap open, antennae perk
+  chirp();
+  startActive();
+}
+
+// ---------------------------------------------------------------------------
+// The active session: the realtime line over the already-held microphone.
+// ---------------------------------------------------------------------------
+
+function startActive() {
+  if (live.ws) return;
+  audio.mode = 'live';
+  // Truthful phase on EVERY entry path: the wake pop already sits in
+  // 'connecting', where this is a no-op — but the no-model fallback and
+  // the drop-retry arrive from dormant/error and must not stream while
+  // posing as rest (caught by the page-pin suite, 2026-09-01).
+  presence('connect', {mode: 'live'});
+  live.playCtx = audio.playCtx;
+  const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const ws = new WebSocket(scheme + location.host + '/parker/converse/realtime');
+  live.ws = ws;
   watchLivePlayback();
-  startingLive = false;
 
   ws.onopen = () => {
     if (ws !== live.ws) return; // stale open must not restore live state
@@ -562,25 +702,35 @@ async function powerOn(options) {
   };
   ws.onclose = () => {
     if (ws !== live.ws) return;
-    lineDropped();
+    if (live.closingSeen) returnToDormancy();
+    else lineDropped();
   };
   ws.onerror = () => { if (ws === live.ws) lineDropped(); };
 }
 
+// The session wound down naturally (wrap-up -> goodbye -> closing): back
+// to dormant — power stays on, only local wake listening remains.
+function returnToDormancy() {
+  endLine();
+  flushPresenceReceipts();
+  if (powered() && audio.stream) startDormant();
+}
+
 let retryTimer = null;
 function lineDropped() {
-  // The line failed while powered on: one quiet retry, then an honest
-  // error card. Power intent stays ON — flipping the switch also retries.
+  // The line failed while active: one quiet retry, then an honest error
+  // card. Power intent stays ON — flipping the switch also retries.
   const genAtDrop = powerGen;
-  endLive();
+  endLine();
   presence('error');
   setPowerVisual('error');
-  showCard('error', 'The line dropped \\u2014 Parker is reconnecting\\u2026', 0);
+  showCard('error', 'The line dropped \u2014 Parker is reconnecting\u2026', 0);
   clearTimeout(retryTimer);
   retryTimer = setTimeout(() => {
     if (genAtDrop !== powerGen) return; // the switch moved meanwhile
     if (document.body.dataset.power !== 'error') return;
-    powerOn({fromBoot: false, retry: true});
+    hideCard();
+    startActive();
   }, 2500);
 }
 
@@ -588,7 +738,10 @@ function powerOff() {
   powerGen++;
   clearTimeout(retryTimer);
   flushPresenceReceipts();
-  endLive();
+  stopWakeLane();
+  endLine();
+  releaseAudio();
+  wake.retried = false;
   hideCard();
   presence('stopped');
   presence('offline');
@@ -597,8 +750,8 @@ function powerOff() {
 }
 
 $('power').addEventListener('click', () => {
-  if (powerIsOn() || document.body.dataset.power === 'error') powerOff();
-  else powerOn();
+  if (powered() || document.body.dataset.power === 'error') powerOff();
+  else { persistSettings({power_on: true}); powerOn(); }
 });
 $('cc-toggle').addEventListener('click', () => {
   applyCc(!ccOn);
@@ -696,7 +849,9 @@ function releasePage() {
   powerGen++;
   clearTimeout(retryTimer);
   clearTimeout(cardTimer);
-  endLive();
+  stopWakeLane();
+  endLine();
+  releaseAudio();
   try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   const scene = window.ParkerPresence && window.ParkerPresence.scene;
