@@ -2,8 +2,22 @@
 
 Fable ran the overnight implementation of
 [2026-08-31-reachy-mini-converse-ui.md](2026-08-31-reachy-mini-converse-ui.md)
-plus the "yes one" spoken-selection finding. Two PRs, both with green local
-suites; the real-microphone pass is the one gate left for a human.
+plus the "yes one" spoken-selection finding. Two PRs — #36 (yes one) and
+#37 (Reachy 3D) — both with green local suites; the real-microphone pass
+is the one gate left for a human.
+
+## The adversarial review round
+
+A fresh-context 4-lens workflow panel (brief compliance / JS correctness /
+truthfulness+safety / test integrity; 28 agents, every finding
+adversarially verified) reviewed both diffs against the brief: 19
+confirmed findings, all fixed the same night — the biggest: overlay TTLs
+died with no WebGL renderer (the page now owns the `expr.tick()`
+heartbeat), a dropped live line was presented as the user's own Stop (now
+an error with a reconnect line; a post-goodbye close stays a normal end),
+"you two"/"the one" over-selected in the yes-one grammar, and the
+never-claims-execution test was vacuous (now proven over the machine's
+introspected event vocabulary). Refuted findings: 5.
 
 ## What shipped
 
