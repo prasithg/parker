@@ -742,6 +742,21 @@ def test_expression_transitions_journal_bounded_and_allowlisted(
     from app.parker.session_review import RealtimeSessionEvent
 
     monkeypatch.setattr(realtime, "MAX_EXPRESSION_RECEIPTS", 3)
+
+    def journaled() -> int:
+        # Polled from the test thread while bridge threads may hold the
+        # shared harness connection — a transient refusal reads as
+        # not-yet, never as a failure.
+        try:
+            db.expire_all()
+            return (
+                db.query(RealtimeSessionEvent)
+                .filter(RealtimeSessionEvent.kind == "expression")
+                .count()
+            )
+        except Exception:  # noqa: BLE001
+            return -1
+
     upstream["script"]([])
     with client.websocket_connect("/parker/converse/realtime") as ws:
         for i in range(5):
@@ -761,6 +776,11 @@ def test_expression_transitions_journal_bounded_and_allowlisted(
                     "nested": {"a": 1},  # never journaled
                 }
             )
+        # Receipts are best-effort by design: an abrupt hang-up may drop
+        # the in-flight tail (the page's beacon lane carries it instead).
+        # Wait for the cap to land BEFORE closing — the CI runner caught
+        # this test hanging up mid-write (2026-09-01).
+        assert _wait_until(lambda: journaled() >= 3)
         ws.send_json({"type": "end"})
     assert _wait_until(
         lambda: realtime._active_bridges == 0 and realtime._inflight_db_threads == 0
