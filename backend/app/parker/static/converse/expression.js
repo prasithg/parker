@@ -65,7 +65,10 @@
     var state = {
       phase: 'idle',
       mode: null, // 'live' | 'turns' while a session is underway
-      work: {},   // kind -> started-at ms ('context' | 'search' | ...)
+      // kind -> {count, since}: several lookups of one kind can genuinely
+      // be in flight at once; the overlay clears only when the LAST one
+      // finishes (review find, 2026-09-01).
+      work: {},
       action: 'none',
       guard: 'none',
     };
@@ -176,13 +179,21 @@
       work_start: function (data) {
         if (!active()) return false;
         var kind = (data && data.kind) || 'search';
-        state.work[kind] = now();
+        var entry = state.work[kind];
+        if (entry) {
+          entry.count += 1;
+          entry.since = now(); // the freshest dispatch restarts the TTL clock
+        } else {
+          state.work[kind] = { count: 1, since: now() };
+        }
         return true;
       },
       work_done: function (data) {
         var kind = (data && data.kind) || 'search';
-        if (!(kind in state.work)) return false;
-        delete state.work[kind];
+        var entry = state.work[kind];
+        if (!entry) return false;
+        entry.count -= 1;
+        if (entry.count <= 0) delete state.work[kind];
         return true;
       },
       work_failed: function (data) { return handlers.work_done(data); },
@@ -268,7 +279,7 @@
         changed = setPhase(state.mode === 'turns' ? 'idle' : 'listening') || changed;
       }
       for (var kind in state.work) {
-        if (t - state.work[kind] >= opts.workTtlMs) {
+        if (t - state.work[kind].since >= opts.workTtlMs) {
           delete state.work[kind];
           changed = true;
         }
@@ -299,6 +310,9 @@
       tick: tick,
       getState: snapshot,
       subscribe: subscribe,
+      // The complete event vocabulary, introspectable so tests can prove
+      // properties over EVERY real handler (e.g. none reaches 'executed').
+      events: Object.keys(handlers),
     };
   }
 

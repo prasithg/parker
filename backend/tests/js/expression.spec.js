@@ -308,6 +308,22 @@ test('work cannot start outside a session', () => {
 // Action overlay: staged only, never executed
 // ---------------------------------------------------------------------------
 
+test('concurrent same-kind lookups only clear when the LAST one finishes', () => {
+  // The stress deck's real shape: several look_that_up calls in flight at
+  // once. One completion must not silently drop the claim of ongoing work.
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  for (let i = 0; i < 3; i++) c.handleEvent('work_start', { kind: 'search' });
+  c.handleEvent('work_done', { kind: 'search' });
+  assert.deepStrictEqual(c.getState().work, ['search']);
+  c.handleEvent('work_failed', { kind: 'search' });
+  assert.deepStrictEqual(c.getState().work, ['search']);
+  c.handleEvent('work_done', { kind: 'search' });
+  assert.deepStrictEqual(c.getState().work, []);
+  assert.strictEqual(c.handleEvent('work_done', { kind: 'search' }), false);
+});
+
 test('proposal_staged sets the waiting-on-screen overlay', () => {
   const c = makeController();
   c.handleEvent('connect', { mode: 'live' });
@@ -317,13 +333,25 @@ test('proposal_staged sets the waiting-on-screen overlay', () => {
 });
 
 test('no event path can ever claim an executed action', () => {
+  // Proven over the machine's ACTUAL vocabulary, not a guess list: fire
+  // every registered handler inside an active session and assert `action`
+  // never reads executed — and that no execution-shaped event exists at
+  // all (no browser signal proves execution; see the brief).
   const c = makeController();
-  c.handleEvent('connect', { mode: 'live' });
-  c.handleEvent('connected');
-  for (const name of ['action_executed', 'executed', 'action_done', 'confirmed']) {
-    assert.strictEqual(c.handleEvent(name), false, name);
+  assert.ok(Array.isArray(c.events) && c.events.length >= 15);
+  for (const name of c.events) {
+    assert.ok(!/exec|confirm|complete/.test(name), name);
   }
-  assert.strictEqual(c.getState().action, 'none');
+  for (const name of c.events) {
+    const fresh = makeController();
+    fresh.handleEvent('connect', { mode: 'live' });
+    fresh.handleEvent('connected');
+    fresh.handleEvent('proposal_staged');
+    fresh.handleEvent(name, { kind: 'search', mode: 'live' });
+    assert.notStrictEqual(fresh.getState().action, 'executed', name);
+    fresh.tick();
+    assert.notStrictEqual(fresh.getState().action, 'executed', name);
+  }
 });
 
 test('the staged pose relaxes after its TTL; the card is the durable truth', () => {

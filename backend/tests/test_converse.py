@@ -847,8 +847,27 @@ def test_converse_page_forwards_real_signals_to_the_expression_state(db):
     assert "'work_start'" in html and "'work_failed'" in html
     assert "assistant_audio_drained" in html
     assert "micEnergy(" in html  # hearing derives from actual mic level
-    # `clear` yields the scene only when playback was actually flushed.
-    assert "if (flushLivePlayback()) presence('interrupted')" in html
+    # `clear` yields the scene only on a real flush or a cancelled think.
+    assert "flushLivePlayback();" in html
+    assert "if (flushed || thinkingCancelled) presence('interrupted')" in html
+    # The PAGE owns truth housekeeping: overlay TTLs and the interrupt
+    # dwell keep expiring with no WebGL renderer at all (review find).
+    assert "expr.tick()" in html
+    # Repair posture rides the real awaiting state of a finished turn.
+    assert "'repair_offered' : 'repair_resolved'" in html
+
+
+def test_converse_page_separates_stop_from_failure_outcomes(db):
+    """'Stopped' is his; a dropped line is an error he can retry — the
+    page never presents a failure as something he did (review find)."""
+
+    html = client.get("/parker/converse").text
+    assert "endLive('The live line dropped.', 'error')" in html
+    assert "endLive('The live line closed.', 'error')" in html
+    assert "live.closingSeen" in html  # a post-goodbye close stays a normal end
+    assert "presence('offline')" in html  # unavailable is neither stop nor error
+    # a stale goodbye-drain timer can never end a NEW session
+    assert "live.ws === wsAtClosing" in html
 
 
 def test_converse_page_makes_live_primary_when_available(db):

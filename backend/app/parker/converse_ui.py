@@ -277,6 +277,12 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 
 const expr = window.ParkerExpression ? ParkerExpression.createController() : null;
 
+// The page owns the truth heartbeat, not the renderer: overlay TTLs and
+// the interrupt dwell must expire even when WebGL is unavailable and the
+// orb is the whole presence (review find, 2026-09-01). tick() is
+// idempotent, so the renderer's own frame loop calling it too is fine.
+if (expr) setInterval(() => { try { expr.tick(); } catch (err) {} }, 500);
+
 function presence(name, data) {
   if (expr) { try { expr.handleEvent(name, data); } catch (err) {} }
 }
@@ -329,7 +335,7 @@ const STATE_TEXT = {
 // tremor double-tap must never hit the button that just appeared there.
 const TAP_GUARD_MS = 400;
 function guardButtons() {
-  const buttons = ['btn-start', 'btn-done', 'btn-stop', 'btn-again', 'btn-yes', 'btn-no'];
+  const buttons = ['btn-start', 'btn-live', 'btn-done', 'btn-stop', 'btn-again', 'btn-yes', 'btn-no'];
   for (const id of buttons) $(id).disabled = true;
   setTimeout(() => { for (const id of buttons) $(id).disabled = false; }, TAP_GUARD_MS);
 }
@@ -446,6 +452,10 @@ function renderResult(data) {
   wrap.hidden = !showChoices;
   $('yes-no').hidden = pendingAwaiting !== 'yes_no';
 
+  // Repair posture: choices or a yes/no question on screen mean Parker is
+  // asking, attentively — resolved the moment a turn ends with neither.
+  presence(pendingAwaiting ? 'repair_offered' : 'repair_resolved');
+
   lastTimings = data.timings_ms || null;
   renderDev(data);
 }
@@ -542,7 +552,9 @@ async function startListening() {
     startingCapture = false;
     setNotice('Parker can\\u2019t use the microphone (permission needed). You can type instead.');
     showTypeRow(true);
-    setState('idle');
+    // Mic denial is a real problem to fix, not a quiet return to rest
+    // (brief signal mapping); typing stays fully available meanwhile.
+    setState('error', 'The microphone isn\\u2019t allowed yet \\u2014 typing still works.');
     return;
   }
   if (!startingCapture) { // Stop was tapped while the mic was opening
@@ -655,10 +667,15 @@ async function doneTalking() {
 // Speaking: per-sentence TTS queue over speechSynthesis
 // ---------------------------------------------------------------------------
 
-const tts = {gen: -1, outstanding: 0, started: false, finished: false, receipt: null, doneAt: 0};
+const tts = {gen: -1, serial: 0, outstanding: 0, started: false, finished: false, receipt: null, doneAt: 0};
 
 function beginSpeechTurn(gen, doneAt, receipt) {
   tts.gen = gen;
+  // The serial fences settle callbacks: utterances cancelled by the
+  // divergence path (speechSynthesis.cancel + fresh beginSpeechTurn under
+  // the SAME clientGen) still fire onend/onerror asynchronously, and must
+  // not drain the new turn's outstanding count (review find, 2026-09-01).
+  tts.serial += 1;
   tts.outstanding = 0;
   tts.started = false;
   tts.finished = false;
@@ -683,11 +700,12 @@ function finishSpeechTurn() {
 function speakText(text) {
   if (!text || !window.speechSynthesis) return false;
   const gen = tts.gen;
+  const serial = tts.serial;
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = 0.95;
   tts.outstanding += 1;
   utterance.onstart = () => {
-    if (gen !== clientGen) { speechSynthesis.cancel(); return; }
+    if (gen !== clientGen || serial !== tts.serial) { speechSynthesis.cancel(); return; }
     if (!tts.started) {
       tts.started = true;
       if (tts.receipt) {
@@ -706,9 +724,20 @@ function speakText(text) {
     setTimeout(() => presenceEnergy({parker: 0.2}), 160);
   };
   const settle = () => {
+    if (serial !== tts.serial) return; // a cancelled turn's utterance
     tts.outstanding -= 1;
     presenceEnergy({parker: 0});
-    if (tts.outstanding <= 0 && tts.turnComplete) finishSpeechTurn();
+    if (tts.outstanding <= 0 && tts.turnComplete) {
+      finishSpeechTurn();
+    } else if (
+      tts.outstanding <= 0 && !tts.turnComplete
+      && gen === clientGen && document.body.dataset.state === 'speaking'
+    ) {
+      // The thinking cue (or a streamed sentence) finished before the
+      // rest of the answer arrived: Parker is genuinely thinking again,
+      // not talking — the banner and pose must not claim speech.
+      setState('thinking');
+    }
   };
   utterance.onend = settle;
   utterance.onerror = settle;
@@ -879,7 +908,7 @@ function sendText(text) {
 const LIVE_RATE = 24000;
 const live = {ws: null, micCtx: null, micStream: null, proc: null, gain: null,
               playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
-              energyTimer: null, wasPlaying: false};
+              energyTimer: null, wasPlaying: false, closingSeen: false};
 let startingLive = false;
 
 // Output-energy truth for the live lane: each scheduled chunk knows its
@@ -922,7 +951,8 @@ async function startLive() {
   } catch (err) {
     startingLive = false;
     setNotice('Parker can\\u2019t use the microphone (permission needed).');
-    setState('idle');
+    setState('error', 'The microphone isn\\u2019t allowed yet \\u2014 typing still works.');
+    showTypeRow(true);
     return;
   }
   if (!startingLive) { // Stop was tapped while the mic was opening
@@ -960,8 +990,14 @@ async function startLive() {
     if (!event || typeof event !== 'object') return;
     handleLiveEvent(event);
   };
-  ws.onclose = () => { if (ws === live.ws) endLive('The live line closed.'); };
-  ws.onerror = () => { if (ws === live.ws) endLive('The live line dropped.'); };
+  // A close after the server's goodbye handshake is a natural end; any
+  // other close/error is a line failure and reads as one.
+  ws.onclose = () => {
+    if (ws !== live.ws) return;
+    if (live.closingSeen) endLive('The call wrapped up.');
+    else endLive('The live line closed.', 'error');
+  };
+  ws.onerror = () => { if (ws === live.ws) endLive('The live line dropped.', 'error'); };
 }
 
 function handleLiveEvent(event) {
@@ -983,16 +1019,23 @@ function handleLiveEvent(event) {
   } else if (event.type === 'closing') {
     // Parker said goodbye; let the scheduled audio finish before hanging up.
     presence('closing');
+    live.closingSeen = true;
     const remaining = live.playCtx
       ? Math.max(0, (live.nextTime - live.playCtx.currentTime) * 1000)
       : 0;
-    setTimeout(() => { if (liveActive()) endLive('The call wrapped up.'); }, remaining + 300);
+    const wsAtClosing = live.ws; // a stale timer must never end a NEW session
+    setTimeout(() => {
+      if (live.ws === wsAtClosing && liveActive()) endLive('The call wrapped up.');
+    }, remaining + 300);
   } else if (event.type === 'assistant_transcript_delta') {
     appendSpeechText(event.text);
   } else if (event.type === 'clear') {
-    // The scene yields only when playback was actually flushed — the
-    // server sends `clear` on every speech_started, talking or not.
-    if (flushLivePlayback()) presence('interrupted');
+    // The scene yields when playback was actually flushed, or when his
+    // voice cancelled a response still being thought about — but not on
+    // the routine `clear` every speech_started sends while just listening.
+    const flushed = flushLivePlayback();
+    const thinkingCancelled = expr && expr.getState().phase === 'thinking';
+    if (flushed || thinkingCancelled) presence('interrupted');
   } else if (event.type === 'guard_redirect') {
     presence('guard_redirect');
     flushLivePlayback();
@@ -1008,7 +1051,13 @@ function handleLiveEvent(event) {
     setNotice('On the screen to confirm: ' + (event.label || 'a suggested action'));
   } else if (event.type === 'notice' || event.type === 'unavailable') {
     setNotice(event.text || '');
-    if (event.type === 'unavailable') { endLive(''); presence('offline'); }
+    if (event.type === 'unavailable') {
+      // Not something he did, and not an error to retry blindly: the live
+      // lane itself is unavailable. Words and pose both say so.
+      endLive('');
+      setState('error', 'Live conversation is not available right now \\u2014 Start listening and typing still work.');
+      presence('offline');
+    }
   }
 }
 
@@ -1067,7 +1116,7 @@ function speakNow(text) {
   speechSynthesis.speak(utterance);
 }
 
-function endLive(noticeText) {
+function endLive(noticeText, outcome) {
   startingLive = false;
   const ws = live.ws;
   live.ws = null;
@@ -1082,8 +1131,16 @@ function endLive(noticeText) {
   try { live.micCtx && live.micCtx.close(); } catch (err) {}
   try { live.playCtx && live.playCtx.close(); } catch (err) {}
   live.micCtx = null; live.micStream = null; live.proc = null; live.gain = null; live.playCtx = null;
+  live.closingSeen = false;
   if (noticeText) setNotice(noticeText);
-  setState('stopped');
+  // Outcome truth (brief: real signal mapping): 'stopped' is reserved for
+  // his Stop or a natural end of the call; a dropped/failed line is an
+  // ERROR he can retry, never presented as something he did.
+  if (outcome === 'error') {
+    setState('error', 'The live line dropped \\u2014 tap Live conversation to reconnect.');
+  } else {
+    setState('stopped');
+  }
 }
 
 // ---------------------------------------------------------------------------

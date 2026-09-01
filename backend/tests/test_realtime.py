@@ -558,7 +558,16 @@ def test_duplicate_lookup_never_spawns_a_second_worker(
         # the single spawned worker may not have STARTED on its thread yet
         assert _wait_until(lambda: calls)
         assert calls == ["What's the weather?"]
+        # One worker, one presence pair: the duplicate ask must not have
+        # queued a second `started` claim — the frames arrive strictly as
+        # started (dispatch) then done (delivery), nothing between.
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
         release.set()
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "done"
+        }
         ws.send_json({"type": "end"})
 
 
