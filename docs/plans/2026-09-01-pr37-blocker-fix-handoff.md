@@ -83,7 +83,7 @@ reclassification.
 ```markdown
 Delivery state: verified (awaiting independent review)
 Blast tier: T2
-Exact revision: 1698aed (code) on fable/reachy-mini-converse-3d; grammar hotfix 0b9f5d5 on PR #39
+Exact revision: 0beef63 on fable/reachy-mini-converse-3d (1698aed = blocker fixes; 0beef63 = CI-caught test-race fix); grammar hotfix 0b9f5d5 on PR #39
 Intent/acceptance source: docs/reviews/2026-09-01-pr37-independent-review.md + docs/plans/2026-08-31-reachy-mini-converse-ui.md
 Evidence checked: make test 1142 passed; node page spec 10/10 (7/10 fail pre-fix); expression spec 41/41; sidecar smoke PASS + byte-exact serve; real-browser flow readouts
 Independent review: required next — fresh exact-revision Hermes review of PR #37 head and PR #39
