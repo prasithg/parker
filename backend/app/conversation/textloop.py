@@ -820,6 +820,10 @@ _SELECTION_AFFIRMATIONS = {"yes", "yeah", "yep", "okay", "ok", "sure", "alright"
 _SELECTION_FILLERS = {"the", "number", "choice", "option", "um", "uh", "hmm", "mm"}
 # "you" is deliberately NOT a free tail: it only rides "thank" — "you two"
 # and "you first" address a person and must never select (review find).
+# Thanks itself is only a TAIL: "thank you two" / "thanks two" are ordinary
+# ASR homophones of "thank you, too" and must never select — gratitude may
+# follow an already-unambiguous pick ("one, thanks"), never precede the
+# number (independent review find, 2026-09-01).
 _SELECTION_TAILS = {"please", "thanks", "thank"}
 
 
@@ -831,7 +835,7 @@ def _spoken_selection_position(utterance: str, choice_count: int) -> Optional[in
     if not tokens or len(tokens) > 6:
         return None
     position: Optional[int] = None
-    via_ordinal = False
+    thanked = False
     previous = ""
     for token in tokens:
         if token == "you":
@@ -839,23 +843,31 @@ def _spoken_selection_position(utterance: str, choice_count: int) -> Optional[in
                 return None
         elif token in _SELECTION_AFFIRMATIONS or token in _SELECTION_FILLERS:
             pass
+        elif token in {"thank", "thanks"}:
+            if position is None:
+                return None  # gratitude before any number is not a selection
+            thanked = True
         elif token in _SELECTION_TAILS:
             pass
         elif token in _SELECTION_ORDINALS:
-            if position is not None:
+            if position is not None or thanked:
                 return None
             position = _SELECTION_ORDINALS[token]
-            via_ordinal = True
         elif token in _SELECTION_NUMBERS:
+            if thanked:
+                return None  # a number after thanks contradicts the pick
             if position is None:
                 if token == "one" and previous == "the":
                     # Bare "the one" refers to something, it does not pick
                     # choice 1 — "the first one" carries the ordinal.
                     return None
                 position = _SELECTION_NUMBERS[token]
-            elif via_ordinal and token == "one":
-                pass  # "the first one" — 'one' is the noun, not a number
+            elif token == "one" and previous in _SELECTION_ORDINALS:
+                pass  # "the first one" — 'one' is the noun, adjacent only
             else:
+                # A second number, or an ordinal's noun drifting away from
+                # it ("second number one", "second one one"): repeated or
+                # contradictory markers never select.
                 return None
         else:
             return None

@@ -968,13 +968,24 @@ def test_natural_spoken_selection_reaches_other_positions(db, spoken):
         ("1st", 1),
         ("2nd", 2),
         ("Yes, the first one, please.", 1),
-        ("thank you two", 2),  # 'you' rides 'thank', then a clean number
+        ("one thanks", 1),  # gratitude AFTER an unambiguous pick still selects
+        ("two thank you", 2),
+        ("okay one thanks", 1),
         # Never a selection:
+        ("thank you two", None),  # ASR homophone of "thank you, too" —
+        ("thanks two", None),  # gratitude before a number never selects
+        ("thank you one", None),  # (independent review find, 2026-09-01)
         ("you two", None),  # addresses people, not choices (review find)
         ("you first", None),
         ("the one", None),  # a reference, not a pick (review find)
         ("yes the one", None),
         ("one two", None),
+        ("second number one", None),  # ordinal + drifting number: contradictory
+        ("second one one", None),  # effortful repetition never picks silently
+        ("first one one", None),
+        ("one one", None),
+        ("first two", None),
+        ("second first", None),
         ("four", None),  # out of range for three choices
         ("no one", None),
         ("remind me at one", None),
@@ -984,6 +995,23 @@ def test_natural_spoken_selection_reaches_other_positions(db, spoken):
 )
 def test_spoken_selection_position_mapping(utterance, expected):
     assert _spoken_selection_position(utterance, 3) == expected
+
+
+@pytest.mark.parametrize("spoken", ["thank you two", "thanks two", "second number one"])
+def test_gratitude_and_contradictory_numbers_never_capture(db, spoken):
+    """'thank you two' captured the family-message choice in review — a
+    deterministic wrong capture behind the confirmation gate. Gratitude
+    homophones and repeated/contradictory markers re-prompt instead
+    (independent review, 2026-09-01)."""
+
+    session = _session(db)
+    offered = session.handle("Call... the... you know... the one with the garden...")
+    assert offered["kind"] == "choices"
+
+    response = session.handle(spoken)
+
+    assert response.get("via_repair_selection") is not True
+    assert db.query(CapturedIntent).count() == 0
 
 
 @pytest.mark.parametrize(
@@ -1004,6 +1032,28 @@ def test_ambiguous_number_talk_never_selects(db, spoken):
 
     assert response.get("via_repair_selection") is not True
     assert db.query(CapturedIntent).count() == 0
+
+
+def test_yes_one_during_pending_confirmation_defers_never_executes(db):
+    """'Yes one' answers a numbered-choice screen; during a staged-action
+    confirmation it is ambiguous ('yes' + a number with no choices on
+    screen) and must defer — never confirm, never execute (pinned
+    separately from pending choices; independent review, 2026-09-01)."""
+
+    session = _session(db)
+    session.handle("Send Sarah a message that dinner Sunday sounds lovely.")
+    resolve_captured_intents(db)
+    action = stage_resolved_actions(db)[0]
+    assert session.offer_pending_confirmation() is not None
+
+    response = session.handle("yes one")
+
+    db.refresh(action)
+    assert action.status == "staged"
+    assert action.confirmed_at is None
+    assert session.has_pending_confirmation is False  # deferred, not looping
+    assert response["kind"] not in {"executed", "confirmed"}
+    assert db.query(OutboxMessage).count() == 0
 
 
 def test_counting_practice_still_beats_spoken_selection(db):
