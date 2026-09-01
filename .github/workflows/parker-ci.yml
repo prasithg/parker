@@ -1,9 +1,10 @@
 name: Parker CI
 
 on:
+  # Every pull request gets evidence, including stacked PRs whose base is a
+  # feature branch. Limiting this to `main` left PR #40 with no CI at all.
   pull_request:
-    branches:
-      - main
+  workflow_dispatch:
   push:
     branches:
       - main
