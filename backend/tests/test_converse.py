@@ -566,28 +566,35 @@ def test_lab_page_never_speaks_urls(db):
 
 def test_companion_settings_persist_and_default_off(db):
     """Power/CC survive restarts; a fresh install is OFF — Parker never
-    listens until someone deliberately turns it on."""
+    listens until someone deliberately turns it on. Power changes ONLY
+    through the authority route; the settings route refuses it."""
 
     fresh = client.get("/parker/converse/companion/settings").json()
     assert fresh["power_on"] is False and fresh["cc_on"] is False
+    assert fresh["live"] == {"wake": 0, "realtime": 0}
 
-    saved = client.post(
-        "/parker/converse/companion/settings", json={"power_on": True}
+    granted = client.post(
+        "/parker/converse/companion/power", json={"on": True, "client_id": "tab-a"}
     ).json()
-    assert saved["power_on"] is True and saved["cc_on"] is False  # partial update
+    assert granted["power_on"] is True and granted["owner"] and granted["gen"] >= 1
 
     saved = client.post(
         "/parker/converse/companion/settings", json={"cc_on": True}
     ).json()
-    assert saved["power_on"] is True and saved["cc_on"] is True
+    assert saved["power_on"] is True and saved["cc_on"] is True  # partial update
 
     again = client.get("/parker/converse/companion/settings").json()
     assert again["power_on"] is True and again["cc_on"] is True
+    assert again["owner_client"] == "tab-a"
 
-    off = client.post(
+    refused = client.post(
         "/parker/converse/companion/settings", json={"power_on": False}
-    ).json()
-    assert off["power_on"] is False  # off is durable — the restart contract
+    )
+    assert refused.status_code == 400  # a page cannot write power behind the authority
+
+    off = client.post("/parker/converse/companion/power", json={"on": False}).json()
+    assert off["power_on"] is False and off["saved"] is True  # durable — the restart contract
+    assert client.get("/parker/converse/companion/settings").json()["power_on"] is False
 
 
 def test_receipts_route_carries_expression_transitions(db):
@@ -995,6 +1002,48 @@ def test_converse_page_forwards_real_signals_to_the_expression_state(db):
     # Execution truth: only the bridge's real outcome frame may claim it.
     assert "presence('action_executed')" in companion
     assert "presence('action_failed')" in companion
+
+
+def test_companion_cards_are_accessible_live_regions(db):
+    """Exact staged/result/error text must reach VoiceOver: offers and
+    outcomes are a polite, atomic status region; failures, line errors,
+    and the medical redirect are an assertive alert (independent review,
+    2026-09-01, blocker 6)."""
+
+    html = client.get("/parker/converse").text
+    assert '<div id="card" role="status" aria-live="polite" aria-atomic="true" hidden></div>' in html
+    assert '<div id="alert" role="alert" aria-atomic="true" hidden></div>' in html
+    assert "const ALERT_KINDS = {failed: true, error: true, guard: true};" in html
+    # CC-on source truth: bounded labels, never URLs; CC-off shows nothing.
+    assert "'Checked the web'" in html
+    assert ".slice(0, 3)" in html and ".slice(0, 40)" in html
+    assert "if (!ccOn || !items || !items.length) return;" in html
+
+
+def test_companion_reports_its_scene_outcome_as_a_receipt(db):
+    """The packaged WKWebView gate is judged from the engine's own
+    receipts: the page reports webgl_ready or webgl_fallback once."""
+
+    html = client.get("/parker/converse").text
+    assert "sceneReceipt('webgl_ready')" in html
+    assert "sceneReceipt('webgl_fallback')" in html
+    assert "window.ParkerReceipts = {post: postReceipt};" in html
+
+
+def test_companion_power_is_engine_owned(db):
+    """The page claims power, sockets carry the owner credentials, off is
+    released locally first and persisted with visible retries, a missing
+    local wake model fails closed, and reconnects are bounded."""
+
+    html = client.get("/parker/converse").text
+    assert "/parker/converse/companion/power" in html
+    assert "'/parker/converse/wake' + powerQuery()" in html
+    assert "'/parker/converse/realtime' + powerQuery()" in html
+    assert "{type: 'hello', tail: wake.tail || ''}" in html  # the handoff contract
+    assert "const OFF_SAVE_DELAYS = [1000, 3000, 8000];" in html
+    assert "if (live.retries >= 1) {" in html  # one retry per activation
+    assert "powerOff();\n      showCard('error', 'Wake listening needs the local voice model" in html
+    assert "persistSettings({power_on" not in html  # power never bypasses the authority
 
 
 def test_companion_separates_power_off_from_failure_outcomes(db):

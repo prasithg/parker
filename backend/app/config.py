@@ -174,6 +174,17 @@ class Settings(BaseSettings):
     # wake name. Bounds the open microphone: a TV "sure, do it" must never
     # confirm an hours-old offer. 0 disables the bound (not recommended).
     parker_wake_grace_seconds: int = 120
+    # Dormant wake lane (docs/plans/2026-09-01-foundation-closure-overnight.md,
+    # "Wake soak"): with a TV on every hop is energetic, so the local model
+    # ran continuously (~2.6 cores). A hop must also be this many times
+    # louder than the room's trailing median to run inference — a voice
+    # near the mic rises above steady TV; the TV never rises above itself.
+    # Measured: 312 -> 54 inferences per 4 min of TV speech, 2.65 -> 0.46
+    # cores, quiet-room recall unchanged. 0 disables the gate.
+    parker_wake_relative_gate: float = 1.3
+    # faster-whisper CPU threads for the shared local model (0 = library
+    # default, every core). A cap trades a little latency for headroom.
+    parker_asr_cpu_threads: int = 0
 
     # Capability administration (app/parker/contacts.py). Comma-separated
     # family/caregiver contact names the admin has enabled for messages.

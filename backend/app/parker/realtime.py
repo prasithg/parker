@@ -104,7 +104,7 @@ here. Ask it one clear, self-contained question in your own words, tell
 {patient_name} you're checking, and keep the conversation going — never
 sit silent waiting, never call it twice for the same question, and never
 claim to have looked something up before its background note arrives.
-Sources appear on his screen; never read web addresses aloud."""
+Never read web addresses aloud. If he asks where something came from, name the source in plain words (the tournament site, the news) — that is the only place sources are promised."""
 
 _GREETING_INSTRUCTION = (
     "The line just opened. Greet {patient_name} in one short, plain sentence "
@@ -123,6 +123,14 @@ _GOODBYE_INSTRUCTION = (
     "goodbye to {patient_name} (no questions, under ten words so it finishes "
     "before the line drops), mentioning he can start Parker again any time. "
     "Never say it timed out and never remark that he went quiet."
+)
+
+_WAKE_TAIL_GREETING_INSTRUCTION = (
+    "{patient_name} just woke you by saying \u201cHey Parker\u201d and went "
+    "straight on: \u201c{tail}\u201d. Skip the standalone greeting \u2014 answer "
+    "or act on that directly in one short, warm reply (a two-word hello at "
+    "most). If it was only a fragment, ask what he needs in one short "
+    "question. If it needs an action, use propose_action as usual."
 )
 
 # A small cap on simultaneous live lines: this is a single-household
@@ -149,6 +157,13 @@ CLOSING_DRAIN_SECONDS = 10.0
 CONFIRM_WINDOW_SECONDS = 60.0
 _WATCHDOG_TICK_SECONDS = 1.0
 _MAX_TRACKED_EXCHANGES = 50
+# The page's first frame after connect is an optional `hello` carrying the
+# wake tail — the words he said right after "Hey Parker" while the line
+# was still connecting. The bridge waits this long for it before the
+# greeting so the first response can answer the request instead of
+# greeting him and losing it (independent review, 2026-09-01).
+HELLO_WAIT_SECONDS = 0.35
+MAX_WAKE_TAIL_CHARS = 200
 
 
 def try_acquire_bridge_slot() -> bool:
@@ -793,6 +808,9 @@ class RealtimeBridge:
     ) -> None:
         self._browser_send = browser_send
         self._browser_receive = browser_receive
+        self._wake_tail = ""
+        self._early_frames: list[Any] = []
+        self._early_receive: Optional["asyncio.Future[Any]"] = None
         # Resolved at run time through the module so tests can monkeypatch
         # connect_openai without touching every construction site.
         self._upstream_connect = upstream_connect
@@ -906,6 +924,7 @@ class RealtimeBridge:
         try:
             await self._upstream.send(json.dumps(build_session_update()))
             await _tracked_thread(lambda: _ensure_call_log_sync(self._call_sid))
+            await self._await_hello()
             # The greeting never waits for context: speak first, load behind.
             await self._send_system_item(self._greeting_instruction())
             await self._request_nudge()
@@ -1008,7 +1027,39 @@ class RealtimeBridge:
         return settings.patient_name
 
     def _greeting_instruction(self) -> str:
+        if self._wake_tail:
+            return _WAKE_TAIL_GREETING_INSTRUCTION.format(
+                patient_name=self._patient_name(), tail=self._wake_tail
+            )
         return _GREETING_INSTRUCTION.format(patient_name=self._patient_name())
+
+    async def _await_hello(self) -> None:
+        """Read the page's optional first frame (bounded wait).
+
+        A `hello` frame carries the wake tail; anything else is put back
+        for the browser pump. Waiting costs the greeting a fraction of a
+        second only when the page sends nothing — it sends the hello the
+        instant the socket opens.
+        """
+
+        # Never cancel a receive: a frame pulled off the socket by a
+        # cancelled await would be lost. The pending receive is handed to
+        # the browser pump instead when nothing arrives in time.
+        receiving = asyncio.ensure_future(self._browser_receive())
+        done, _pending = await asyncio.wait({receiving}, timeout=HELLO_WAIT_SECONDS)
+        if not done:
+            self._early_receive = receiving
+            return
+        message = receiving.result()
+        if isinstance(message, dict) and message.get("type") == "hello":
+            tail = str(message.get("tail", "") or "").strip()
+            tail = " ".join(tail.split())[:MAX_WAKE_TAIL_CHARS]
+            self._wake_tail = tail
+            if tail:
+                await self._journal("wake_tail", heard=tail)
+            return
+        self._early_frames.append(message)
+
 
     # ------------------------------------------------------------------
     # The injection mechanics: items any time, exactly one nudge emitter.
@@ -1223,7 +1274,13 @@ class RealtimeBridge:
 
     async def _pump_browser(self) -> None:
         while True:
-            message = await self._browser_receive()
+            if self._early_frames:
+                message = self._early_frames.pop(0)  # read during the hello wait
+            elif self._early_receive is not None:
+                receiving, self._early_receive = self._early_receive, None
+                message = await receiving  # the hello wait's still-pending read
+            else:
+                message = await self._browser_receive()
             if not isinstance(message, dict):
                 continue  # a junk frame must not kill the call
             kind = message.get("type")

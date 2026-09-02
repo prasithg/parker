@@ -201,11 +201,43 @@ function createEnv() {
 
   // ------------------------------------------------------------ network
   env.settings = { power_on: false, cc_on: false }; // the persisted store
-  function jsonResponse(body) {
-    return { ok: true, status: 200, json: async () => body, body: null };
+  // The engine's power authority (companion_power.py), as the page sees it:
+  // 'grant' issues owner credentials; 'elsewhere' refuses 409; 'fail' is a
+  // 503 (write failed); 'unreachable' rejects the fetch. `offSave` controls
+  // whether the OFF write lands ({saved:false} otherwise).
+  env.powerMode = 'grant';
+  env.offSave = true;
+  env.powerGen = 0;
+  env.powerClaims = [];
+  env.powerReleases = [];
+  function jsonResponse(body, status) {
+    const code = status || 200;
+    return { ok: code >= 200 && code < 300, status: code, json: async () => body, body: null };
   }
   const fetchImpl = (url, opts) => {
     env.fetches.push({ url, opts });
+    if (String(url).includes('/companion/power')) {
+      let body = {};
+      try { body = JSON.parse(opts.body); } catch (err) {}
+      if (body.on) {
+        env.powerClaims.push(body);
+        if (env.powerMode === 'unreachable') return Promise.reject(new Error('engine down'));
+        if (env.powerMode === 'elsewhere') {
+          return Promise.resolve(jsonResponse({ detail: { reason: 'elsewhere' } }, 409));
+        }
+        if (env.powerMode === 'fail') {
+          return Promise.resolve(jsonResponse({ detail: { reason: 'not_saved' } }, 503));
+        }
+        env.powerGen += 1;
+        env.settings.power_on = true;
+        return Promise.resolve(jsonResponse({ power_on: true, owner: 'tok-' + env.powerGen, gen: env.powerGen }));
+      }
+      env.powerReleases.push(body);
+      if (env.powerMode === 'unreachable') return Promise.reject(new Error('engine down'));
+      env.powerGen += 1;
+      if (env.offSave) env.settings.power_on = false;
+      return Promise.resolve(jsonResponse({ power_on: false, saved: !!env.offSave }));
+    }
     if (String(url).endsWith('/sessions') && opts && opts.method === 'POST') {
       return Promise.resolve(jsonResponse({
         session_id: 'sess-test', realtime_available: true, asr_ready: true,

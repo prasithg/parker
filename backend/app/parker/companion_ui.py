@@ -8,13 +8,21 @@ no transcript panel, no numbered choices. Voice is the whole interface.
 
 Contract (pinned by tests):
 
-- Power is real and persisted server-side: off = microphone stopped,
-  sockets closed, speech cancelled, playback flushed, visibly asleep —
-  and it stays off across restarts. On = DORMANT: the mic feeds only the
-  LOCAL wake lane (no cloud audio) and Reachy rests lifeless with an
-  ember cue until "Hey Parker" pops it awake into the live full-duplex
-  line; the session's gentle wind-down returns it to dormancy
-  (docs/plans/2026-09-01-wake-word.md).
+- Power is real and ENGINE-owned (docs/plans/2026-09-01-foundation-
+  closure-overnight.md): the page claims power and shows ON only after
+  the engine acknowledged; every wake/realtime socket presents the owner
+  token + generation the claim issued; off releases microphone, sockets,
+  speech, and playback here first, then persists (a failed write is
+  retried and said out loud, never swallowed); the engine revokes every
+  other screen's sockets on off, and a second screen cannot displace one
+  that is listening. Off stays off across restarts. On = DORMANT: the mic
+  feeds only the LOCAL wake lane (no cloud audio) and Reachy rests
+  lifeless until "Hey Parker" pops it awake into the live full-duplex
+  line; the words after the wake phrase ride the line's first frame; the
+  session's gentle wind-down returns it to dormancy
+  (docs/plans/2026-09-01-wake-word.md). A missing local wake model fails
+  CLOSED (power off, honest card) — never continuous cloud audio. A
+  dropped line retries once per activation, then rests honestly.
 - CC (closed captions) is optional and persisted: TV-style captions of
   what Parker heard and what it is saying. Off by default.
 - Action truth outranks the avatar: staged offers, execution outcomes,
@@ -83,9 +91,10 @@ COMPANION_PAGE_HTML = """<!doctype html>
   }
   #cc-him { color: #b9c6d8; font-style: italic; }
   #cc-parker { color: #ffffff; font-weight: 600; }
+  #cc-source { color: #8fb3d9; font-size: clamp(1rem, 1.8vw, 1.3rem); }
 
-  /* Action/guard/error truth: one card, above the bottom bar. */
-  #card {
+  /* Action/guard/error truth: one visible card, above the bottom bar. */
+  #card, #alert {
     position: fixed; left: 50%; bottom: calc(7rem + 4vh); transform: translateX(-50%);
     max-width: min(88vw, 46rem);
     border-radius: 18px; padding: 1rem 1.4rem;
@@ -94,10 +103,10 @@ COMPANION_PAGE_HTML = """<!doctype html>
   }
   #card.staged { border-color: #8a6d1a; background: #221b06; color: #ffd166; }
   #card.executed { border-color: #2e6b46; background: #0c2a1c; color: #7fe3a1; }
-  #card.failed { border-color: #a33; background: #2a1114; color: #ff9aa4; }
+  #alert.failed { border-color: #a33; background: #2a1114; color: #ff9aa4; }
   #card.cancelled, #card.notice { border-color: #34435c; background: #0c1420; color: #b9c6d8; }
-  #card.guard { border-color: #8a6d1a; background: #221b06; color: #ffd166; }
-  #card.error { border-color: #a33; background: #2a1114; color: #ff9aa4; }
+  #alert.guard { border-color: #8a6d1a; background: #221b06; color: #ffd166; }
+  #alert.error { border-color: #a33; background: #2a1114; color: #ff9aa4; }
 
   /* The only controls in the room: CC and power. */
   #bottom-bar {
@@ -130,6 +139,8 @@ COMPANION_PAGE_HTML = """<!doctype html>
   body[data-power="dormant"] #power .lamp { background: #3f6b52; animation: breathe 4s ease-in-out infinite; }
   body[data-power="starting"] #power .lamp { background: #ffd166; }
   body[data-power="error"] #power .lamp { background: #ff9aa4; }
+  body[data-power="elsewhere"] #power .lamp { background: #6f7f99; }
+  body[data-power="elsewhere"] #power { border-color: #34435c; background: #10161f; color: #b9c6d8; }
   body[data-power="off"] #power { border-color: #34435c; background: #10161f; color: #b9c6d8; }
   #power:focus-visible, #cc-toggle:focus-visible { outline: 4px solid #ffd166; outline-offset: 3px; }
 </style>
@@ -140,8 +151,12 @@ COMPANION_PAGE_HTML = """<!doctype html>
 <div id="cc" hidden>
   <div class="line" id="cc-him" hidden></div>
   <div class="line" id="cc-parker" hidden></div>
+  <div class="line" id="cc-source" hidden></div>
 </div>
-<div id="card" hidden></div>
+<!-- Truth cards are live regions: offers/outcomes/notices are polite and
+     atomic; failures, line errors, and guard redirects are assertive. -->
+<div id="card" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+<div id="alert" role="alert" aria-atomic="true" hidden></div>
 <div id="sr-status" class="sr-only" aria-live="polite"></div>
 <div id="bottom-bar">
   <button id="cc-toggle" aria-pressed="false" aria-label="Closed captions">CC</button>
@@ -182,16 +197,22 @@ let powerGen = 0;          // bumps on every power flip; fences late work
 // guard redirects, honest errors). Never a control — nothing to tap.
 // ---------------------------------------------------------------------------
 
+// Two live regions, one visible at a time: failures, line errors, and the
+// medical redirect are assertive (role=alert); offers, outcomes, and
+// notices are polite + atomic so VoiceOver reads the whole readback.
+const ALERT_KINDS = {failed: true, error: true, guard: true};
 let cardTimer = null;
 function showCard(kind, text, ttlMs) {
-  const card = $('card');
+  const region = $(ALERT_KINDS[kind] ? 'alert' : 'card');
+  const other = $(ALERT_KINDS[kind] ? 'card' : 'alert');
   clearTimeout(cardTimer);
-  card.className = kind;
-  card.textContent = text;
-  card.hidden = false;
-  if (ttlMs) cardTimer = setTimeout(() => { card.hidden = true; }, ttlMs);
+  other.hidden = true;
+  region.className = kind;
+  region.textContent = text;
+  region.hidden = false;
+  if (ttlMs) cardTimer = setTimeout(() => { region.hidden = true; }, ttlMs);
 }
-function hideCard() { clearTimeout(cardTimer); $('card').hidden = true; }
+function hideCard() { clearTimeout(cardTimer); $('card').hidden = true; $('alert').hidden = true; }
 
 // ---------------------------------------------------------------------------
 // Captions (CC): TV-style, bottom third, expire on their own.
@@ -217,12 +238,27 @@ function appendParkerCaption(text) {
   clearTimeout(parkerTimer);
   parkerTimer = setTimeout(() => { line.hidden = true; line.textContent = ''; }, 8000);
 }
+// CC on: "Checked the web" plus bounded source labels (never URLs, never
+// spoken). CC off: the Reachy work cue and Parker's own words are the
+// whole signal — the zero-chrome contract (independent review, 2026-09-01).
+let sourceTimer = null;
+function captionSources(items) {
+  if (!ccOn || !items || !items.length) return;
+  const labels = items.slice(0, 3)
+    .map((s) => String(s.label || '').trim().slice(0, 40))
+    .filter((l) => l);
+  const line = $('cc-source');
+  line.textContent = 'Checked the web' + (labels.length ? ' · ' + labels.join(' · ') : '');
+  line.hidden = false;
+  clearTimeout(sourceTimer);
+  sourceTimer = setTimeout(() => { line.hidden = true; line.textContent = ''; }, 12000);
+}
 function applyCc(on) {
   ccOn = !!on;
   $('cc').hidden = !ccOn;
   $('cc-toggle').setAttribute('aria-pressed', ccOn ? 'true' : 'false');
   if (!ccOn) {
-    $('cc-him').hidden = true; $('cc-parker').hidden = true;
+    $('cc-him').hidden = true; $('cc-parker').hidden = true; $('cc-source').hidden = true;
   }
 }
 
@@ -273,12 +309,28 @@ const WAKE_RATE = 16000;
 const audio = {stream: null, micCtx: null, playCtx: null, proc: null,
                gain: null, source: null, mode: 'idle'};
 
-const wake = {ws: null, retried: false};
+// Wake lane state: `tail` is what he said right after "Hey Parker" (the
+// wake frame's tail plus any post-wake transcript the lane sends while
+// the line connects); it rides the live socket's first frame.
+const wake = {ws: null, retried: false, tail: '', tailTimer: null};
 
 const live = {ws: null, playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
               energyTimer: null, wasPlaying: false, closingSeen: false,
-              responseOpen: false, guardSpeaking: 0};
+              responseOpen: false, guardSpeaking: 0, retries: 0, revoked: false};
 let startingLive = false;
+
+// Power authority lives in the ENGINE (docs/plans/2026-09-01-foundation-
+// closure-overnight.md): the page claims power, receives an owner token +
+// generation, and every wake/realtime socket presents them. The switch
+// shows ON only after the engine acknowledged; off releases everything
+// here first and then persists, retrying a failed write out loud.
+const clientId = (window.crypto && crypto.randomUUID)
+  ? crypto.randomUUID() : ('page-' + Math.random().toString(36).slice(2));
+const power = {token: null, gen: 0};
+let offSaveTimer = null;
+function powerQuery() {
+  return '?owner=' + encodeURIComponent(power.token || '') + '&gen=' + power.gen;
+}
 
 // Listening may only be claimed when the provider response is done AND
 // everything scheduled actually played (or was flushed) AND no guard
@@ -530,7 +582,13 @@ function handleLiveEvent(event) {
       hideCard();
     }
   } else if (event.type === 'sources') {
-    // The companion shows no source list; the session lab carries evidence.
+    live.sources = event.items || [];
+    captionSources(live.sources); // CC on only; CC off keeps zero chrome
+  } else if (event.type === 'revoked') {
+    // The engine ended this page's authority (someone turned Parker off, or
+    // another screen took over): not a line drop — no retry, honest card.
+    live.revoked = true;
+    onRevoked(event);
   } else if (event.type === 'closing') {
     // The gentle wind-down finished (one wrap-up, one goodbye): let the
     // scheduled audio play out, then return to DORMANT — power stays on,
@@ -561,23 +619,84 @@ function handleLiveEvent(event) {
 function setPowerVisual(state) {
   document.body.dataset.power = state;
   const label = $('power-label');
-  const on = state === 'on' || state === 'starting' || state === 'dormant';
+  const on = state === 'on' || state === 'starting' || state === 'dormant' || state === 'elsewhere';
   $('power').setAttribute('aria-checked', on ? 'true' : 'false');
   label.textContent = state === 'on' || state === 'dormant' ? 'Parker is on'
-    : state === 'starting' ? 'Waking\\u2026'
+    : state === 'starting' ? 'Waking…'
     : state === 'error' ? 'Try again'
+    : state === 'elsewhere' ? 'On another screen'
     : 'Turn Parker on';
   updateSrStatus();
 }
 
 function persistSettings(fields) {
+  // CC only — power is never written here (the engine owns it).
   try {
     fetch('/parker/converse/companion/settings', {
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify(fields),
     }).catch(() => {});
-  } catch (err) { /* persistence is best-effort; the switch still works */ }
+  } catch (err) { /* CC persistence is best-effort */ }
+}
+
+async function claimPower() {
+  let res;
+  try {
+    res = await fetch('/parker/converse/companion/power', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({on: true, client_id: clientId}),
+    });
+  } catch (err) { return {ok: false, reason: 'unreachable'}; }
+  if (res.status === 409) return {ok: false, reason: 'elsewhere'};
+  if (!res.ok) return {ok: false, reason: 'not_saved'};
+  let data;
+  try { data = await res.json(); } catch (err) { return {ok: false, reason: 'not_saved'}; }
+  if (!data || !data.owner) return {ok: false, reason: 'not_saved'};
+  power.token = data.owner;
+  power.gen = data.gen;
+  return {ok: true};
+}
+
+// Off is already true on this screen before this runs; the engine call
+// revokes every other screen and persists. A failed write is retried a
+// bounded number of times and then said out loud — never swallowed.
+const OFF_SAVE_DELAYS = [1000, 3000, 8000];
+function releasePower(attempt) {
+  clearTimeout(offSaveTimer);
+  const genAtCall = powerGen;
+  const failed = () => {
+    if (genAtCall !== powerGen) return;
+    if (attempt < OFF_SAVE_DELAYS.length) {
+      offSaveTimer = setTimeout(() => releasePower(attempt + 1), OFF_SAVE_DELAYS[attempt]);
+    } else {
+      showCard('error', 'Parker is off on this screen, but the setting didn’t save — it may come back on after a restart.', 0);
+    }
+  };
+  let pending;
+  try {
+    pending = fetch('/parker/converse/companion/power', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({on: false, client_id: clientId}),
+    });
+  } catch (err) { failed(); return; }
+  pending.then(async (res) => {
+    if (!res.ok) { failed(); return; }
+    let data = null;
+    try { data = await res.json(); } catch (err) {}
+    if (!data || data.saved !== true) failed();
+  }).catch(failed);
+}
+
+function onRevoked(event) {
+  const reason = event && event.reason;
+  if (!powered() && document.body.dataset.power !== 'elsewhere') return;
+  powerOff({silent: true}); // the engine already turned us off; do not turn off the new owner
+  showCard('notice', reason === 'power_off'
+    ? 'Parker was turned off.'
+    : 'Parker is on another screen now.', 0);
 }
 
 async function powerOn(options) {
@@ -586,8 +705,27 @@ async function powerOn(options) {
   startingLive = true;
   powerGen++;
   const myGen = powerGen;
+  clearTimeout(offSaveTimer);
   hideCard();
   setPowerVisual('starting');
+  live.retries = 0;
+  const claim = await claimPower();
+  if (myGen !== powerGen) { startingLive = false; return; }
+  if (!claim.ok) {
+    // Nothing is on. The switch stays off (or shows where Parker IS on).
+    startingLive = false;
+    if (claim.reason === 'elsewhere') {
+      setPowerVisual('elsewhere');
+      showCard('notice', 'Parker is on another screen. Use the switch here to turn it off everywhere.', 0);
+    } else {
+      presence('error');
+      setPowerVisual('off');
+      showCard('error', claim.reason === 'unreachable'
+        ? 'Parker can’t reach its engine right now — try the switch again in a moment.'
+        : 'Parker couldn’t save the switch — nothing is on. Try again.', 0);
+    }
+    return;
+  }
   const granted = await acquireAudio();
   startingLive = false;
   if (myGen !== powerGen) { if (granted && !live.ws && !wake.ws) releaseAudio(); return; }
@@ -615,6 +753,10 @@ function powered() {
   const state = document.body.dataset.power;
   return state === 'dormant' || state === 'on' || state === 'starting';
 }
+function switchedOn() {
+  const state = document.body.dataset.power;
+  return powered() || state === 'error' || state === 'elsewhere';
+}
 
 // ---------------------------------------------------------------------------
 // Dormancy: powered but lifeless. The mic feeds ONLY the local wake lane;
@@ -628,7 +770,7 @@ function startDormant() {
   presence('dormant');
   setPowerVisual('dormant');
   const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const ws = new WebSocket(scheme + location.host + '/parker/converse/wake');
+  const ws = new WebSocket(scheme + location.host + '/parker/converse/wake' + powerQuery());
   wake.ws = ws;
   ws.onmessage = (message) => {
     if (ws !== wake.ws) return;
@@ -636,18 +778,25 @@ function startDormant() {
     try { event = JSON.parse(message.data); } catch (err) { return; }
     if (!event || typeof event !== 'object') return;
     if (event.type === 'wake') onWake(event);
-    else if (event.type === 'unavailable') {
-      // The local model is missing: an honest note, then straight-active
-      // (the take-2 behavior) — never a silently dead switch.
+    else if (event.type === 'tail') {
+      // More of his same-breath request, transcribed while the line connects.
+      if (typeof event.text === 'string' && event.text) wake.tail = event.text.slice(0, 200);
+    } else if (event.type === 'revoked') {
+      onRevoked(event);
+    } else if (event.type === 'unavailable') {
+      // No local wake model: FAIL CLOSED. Dormant privacy promised no cloud
+      // audio until "Hey Parker"; without a way to hear that, Parker stays
+      // off and says why (independent review, 2026-09-01).
       stopWakeLane();
-      showCard('notice', 'Wake listening needs the local voice model \u2014 Parker will listen right away instead.', 8000);
-      startActive();
+      powerOff();
+      showCard('error', 'Wake listening needs the local voice model on this computer, so Parker stayed off. Ask the family to run make voice-deps.', 0);
     }
   };
   ws.onclose = () => {
     if (ws !== wake.ws) return;
     wake.ws = null;
     if (audio.mode !== 'wake' || !powered()) return;
+    if (live.ws || startingLive) return; // a line is opening — not dormancy's business
     if (!wake.retried) {
       wake.retried = true;
       setTimeout(() => {
@@ -656,7 +805,7 @@ function startDormant() {
     } else {
       presence('error');
       setPowerVisual('error');
-      showCard('error', 'Wake listening hiccuped \u2014 flip the switch to try again.', 0);
+      showCard('error', 'Wake listening hiccuped — flip the switch to try again.', 0);
     }
   };
   ws.onerror = () => { if (ws === wake.ws) { try { ws.close(); } catch (err) {} } };
@@ -664,9 +813,15 @@ function startDormant() {
 
 function onWake(event) {
   wake.retried = false;
-  stopWakeLane();
+  live.retries = 0; // his wake is the interaction that re-arms one retry
+  wake.tail = (event && typeof event.tail === 'string') ? event.tail.slice(0, 200) : '';
   presence('wake_detected'); // the POP: eyes snap open, antennae perk
   chirp();
+  // The wake lane stays open (mic frames keep going to it) so the rest of
+  // "Hey Parker, can you help me" is transcribed while the line connects;
+  // the line's open ends it, or this bound does.
+  clearTimeout(wake.tailTimer);
+  wake.tailTimer = setTimeout(() => { if (wake.ws) stopWakeLane(); }, 3000);
   startActive();
 }
 
@@ -676,20 +831,29 @@ function onWake(event) {
 
 function startActive() {
   if (live.ws) return;
-  audio.mode = 'live';
+  // Mic frames keep feeding the wake lane's tail until the line is OPEN;
+  // every other entry (drop-retry) streams live from here.
+  if (!wake.ws) audio.mode = 'live';
   // Truthful phase on EVERY entry path: the wake pop already sits in
-  // 'connecting', where this is a no-op — but the no-model fallback and
-  // the drop-retry arrive from dormant/error and must not stream while
-  // posing as rest (caught by the page-pin suite, 2026-09-01).
+  // 'connecting', where this is a no-op — but the drop-retry arrives from
+  // error and must not stream while posing as rest (page-pin suite).
   presence('connect', {mode: 'live'});
   live.playCtx = audio.playCtx;
+  live.revoked = false;
   const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const ws = new WebSocket(scheme + location.host + '/parker/converse/realtime');
+  const ws = new WebSocket(scheme + location.host + '/parker/converse/realtime' + powerQuery());
   live.ws = ws;
   watchLivePlayback();
 
   ws.onopen = () => {
     if (ws !== live.ws) return; // stale open must not restore live state
+    // The handoff contract: hello (with the tail) is the FIRST frame, then
+    // the wake lane ends and the mic streams to this line.
+    try { ws.send(JSON.stringify({type: 'hello', tail: wake.tail || ''})); } catch (err) {}
+    wake.tail = '';
+    clearTimeout(wake.tailTimer);
+    stopWakeLane();
+    audio.mode = 'live';
     presence('connected');
     setPowerVisual('on');
   };
@@ -702,10 +866,11 @@ function startActive() {
   };
   ws.onclose = () => {
     if (ws !== live.ws) return;
+    if (live.revoked) return; // handled by onRevoked — never a retry
     if (live.closingSeen) returnToDormancy();
     else lineDropped();
   };
-  ws.onerror = () => { if (ws === live.ws) lineDropped(); };
+  ws.onerror = () => { if (ws === live.ws && !live.revoked) lineDropped(); };
 }
 
 // The session wound down naturally (wrap-up -> goodbye -> closing): back
@@ -718,13 +883,22 @@ function returnToDormancy() {
 
 let retryTimer = null;
 function lineDropped() {
-  // The line failed while active: one quiet retry, then an honest error
-  // card. Power intent stays ON — flipping the switch also retries.
+  // The line failed while active: ONE quiet retry per activation, then an
+  // honest note and back to rest — local wake still works, so "Hey Parker"
+  // is the way back. Never a reconnect loop (independent review, 2026-09-01).
   const genAtDrop = powerGen;
   endLine();
+  if (live.retries >= 1) {
+    live.retries = 0;
+    showCard('notice', 'The line dropped. Say “Hey Parker” to try again.', 12000);
+    if (powered() && audio.stream) startDormant();
+    else { presence('error'); setPowerVisual('error'); }
+    return;
+  }
+  live.retries += 1;
   presence('error');
   setPowerVisual('error');
-  showCard('error', 'The line dropped \u2014 Parker is reconnecting\u2026', 0);
+  showCard('error', 'The line dropped — Parker is reconnecting…', 0);
   clearTimeout(retryTimer);
   retryTimer = setTimeout(() => {
     if (genAtDrop !== powerGen) return; // the switch moved meanwhile
@@ -734,24 +908,30 @@ function lineDropped() {
   }, 2500);
 }
 
-function powerOff() {
+function powerOff(options) {
+  const silent = !!(options && options.silent); // revoked by the engine: it is already off
   powerGen++;
   clearTimeout(retryTimer);
+  clearTimeout(offSaveTimer);
+  clearTimeout(wake.tailTimer);
   flushPresenceReceipts();
   stopWakeLane();
   endLine();
   releaseAudio();
   wake.retried = false;
+  wake.tail = '';
+  live.retries = 0;
   hideCard();
   presence('stopped');
   presence('offline');
   setPowerVisual('off');
-  persistSettings({power_on: false});
+  power.token = null;
+  if (!silent) releasePower(0);
 }
 
 $('power').addEventListener('click', () => {
-  if (powered() || document.body.dataset.power === 'error') powerOff();
-  else { persistSettings({power_on: true}); powerOn(); }
+  if (switchedOn()) powerOff();
+  else powerOn();
 });
 $('cc-toggle').addEventListener('click', () => {
   applyCc(!ccOn);
@@ -771,6 +951,7 @@ function updateSrStatus() {
   $('sr-status').textContent =
     state === 'off' ? 'Parker is off. Nothing is listening.'
     : state === 'error' ? 'Parker hit a snag. Use the power switch to try again.'
+    : state === 'elsewhere' ? 'Parker is on another screen. Use the switch here to turn it off everywhere.'
     : ParkerExpression.describe(expr.getState());
 }
 
@@ -808,7 +989,7 @@ function recordPresenceTransition(next, cause) {
 }
 
 function postReceipt(marks) {
-  if (!sessionId) return;
+  if (!sessionId) return false; // the boot session is still being opened
   const body = JSON.stringify(marks);
   try {
     navigator.sendBeacon(
@@ -816,6 +997,7 @@ function postReceipt(marks) {
       new Blob([body], {type: 'application/json'})
     );
   } catch (err) { /* best-effort */ }
+  return true;
 }
 
 function flushPresenceReceipts() {
@@ -836,6 +1018,7 @@ if (expr) {
   });
 }
 window.ParkerPresence = {controller: expr};
+window.ParkerReceipts = {post: postReceipt};
 
 // ---------------------------------------------------------------------------
 // Page teardown: leaving the page releases everything (independent
@@ -848,6 +1031,8 @@ function releasePage() {
   pageReleased = true;
   powerGen++;
   clearTimeout(retryTimer);
+  clearTimeout(offSaveTimer);
+  clearTimeout(wake.tailTimer);
   clearTimeout(cardTimer);
   stopWakeLane();
   endLine();
@@ -910,9 +1095,26 @@ window.addEventListener('pageshow', (event) => {
     if (scene) {
       document.getElementById('orb-fallback').hidden = true;
       window.ParkerPresence.scene = scene;
+      sceneReceipt('webgl_ready');
+    } else {
+      sceneReceipt('webgl_fallback');
     }
-  } catch (err) { /* no WebGL / no module: the dot remains the presence */ }
+  } catch (err) { sceneReceipt('webgl_fallback'); /* no WebGL / no module: the dot remains the presence */ }
 })();
+// One aggregate receipt so the engine's own records say whether THIS
+// screen rendered the Reachy or fell back to the dot — the packaged
+// WKWebView lifecycle is judged from evidence, not screenshots.
+function sceneReceipt(outcome) {
+  // The scene usually boots before the receipts session id exists (the
+  // packaged WKWebView probe caught exactly that): retry until it sends.
+  let attempts = 0;
+  const send = () => {
+    const sent = !!(window.ParkerReceipts && window.ParkerReceipts.post
+      && window.ParkerReceipts.post({outcome}));
+    if (!sent && attempts++ < 20) setTimeout(send, 500);
+  };
+  send();
+}
 </script>
 </body>
 </html>
