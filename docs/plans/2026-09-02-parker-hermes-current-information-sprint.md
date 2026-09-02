@@ -294,3 +294,102 @@ A sprint PASS requires executable receipts plus an exact-revision independent re
 ## Fable launch brief
 
 Use `/parker-session` with this plan as the intent source. Work phase by phase. After each phase: run the named local gates, push a coherent checkpoint, require green exact-head CI, run a fresh-context `/parker-review`, fix every confirmed blocker, and update this plan with revision/evidence/untested scope. Continue automatically only when the next phase's dependency is objectively PASS. Never merge power/wake/session-end work or claim human/device acceptance without Pras/Hermes review.
+
+## Phase 0 ledger (2026-09-02, integration session)
+
+Delivery on one integration branch, `fable/companion-integration` (draft
+PR #49 → `main`), built from exact live `main` be91ecc with #37/#40/#43/#45/
+#46/#48 merged explicitly (all clean; no blanket ours/theirs), then the
+review fixes as commits on top. The stacked PRs are superseded by #49.
+
+### Decisions taken on the review open questions
+
+- Cancel plumbing: a contextvar (`realtime_workers.CURRENT_CANCEL`) set by
+  the bridge's worker thread; provider cancel = socket shutdown through
+  `app/brain/transport.py` (measured: `httpx.Client.close()` does not wake a
+  blocked read on macOS; `sock.shutdown` does).
+- Power-off route: in-memory release → revoke every socket → then persist;
+  the ack still awaits the write so `saved` stays truthful. The authority
+  remembers it released power in this process so a revoked page reads OFF
+  during the write window (negative-space review blocker).
+- Same-breath tail: text path (growing post-wake window, `tail_end` →
+  final tail → one `tail` frame → one user-role item + one nudge,
+  `TAIL_WAIT_SECONDS = 1.5`); PCM replay deferred to a live experiment.
+- Greeting latch `GREETING_LATCH_SECONDS = 6.0` (audio time; measured
+  silence envelope 7.0 s wakes / 7.1 s quiet, pinned at 6.8/7.4), reset on
+  ≥ 3 non-greeting tokens; F5 give-up applies to the dormant lane only.
+- Soft closer = compound closers only (`OK, thanks`, `that's helpful,
+  thanks`); bare thanks stays conversation; the goodbye owes its own nudge
+  and `closing` rides the goodbye's done (real VAD order).
+- My Day: reminders by `execute_after` / pending `CapturedIntent.due_at` in a
+  home-tz local-day window; undated → "no time on record"; notes labelled
+  within 7 days, older omitted; the reminder cap says "…and N more".
+  Naive due strings are home wall time, stored as naive UTC.
+- Reduced motion: one universal `* {animation:none; transition:none}` block.
+  Mic denial releases the claim; a click from `error` retries; realtime
+  `unavailable` returns to dormancy with the honest card.
+- `anthropic` pinned `<1`: 1.x moved to `httpx2` and rejects the httpx
+  cancellable client (found by exact-SHA CI at 1038242; the local venv was
+  0.109.1). The builder now logs the swallowed constructor error.
+
+### Acceptance status
+
+P0.1 — all eight PR #40 blockers implemented with red-then-green tests
+(strict power-off + provider-boundary cancel; ordered same-breath handoff
+with a user-role tail; bounded greeting latch; playback/citation split;
+fail-closed missing model; mic-denial retry; universal reduced motion;
+truthful evidence harness/probe/provenance). P0.2 — compound closers only,
+delayed follow-up survives, VAD-order goodbye. P0.3 — date-grounded My Day
+through the real capture pipeline. P0.4 — semantic union on exact live
+main (contribution matrix: `docs/reviews/2026-09-02-p0-contribution-
+matrix.md`, 0 MISSING), production-shaped SQLite contention tests,
+`--as-of` cannot mint a dated report, scene receipts retry (pinned).
+
+### Evidence by revision
+
+| revision | what | evidence |
+|---|---|---|
+| 6f3e3ed | pure merge tip (main + six PRs) | backend 1254 passed; Rust 16; exact-SHA CI green (run 33671007914) |
+| 89c00be | bridge slice (F1 shutdown, F2 user-role tail, P0.2) | backend 1261 passed; live realtime probe PASS with `--wake-tail "can you help me with the tv" --pending` (first reply answered the tail, tail as a user item, never in a system item, API accepted the payload) |
+| f757fd3 | probe extension | exact-SHA CI green (run 33680754506) |
+| 1038242 | six implementation slices merged + reconciliation | backend 1319 passed; concurrency/power deck 9/9 ×5; Rust 17; Node companion spec 49/49; packaged chain PASS (sidecar → smoke → `cargo tauri build` → probe bound to 1038242: engine + shell report the SHA, sidecar exited 0.5 s after the shell, webgl_ready receipt, no power claim, no wake socket); real-model wake soak shakedown (report in the session scratchpad: recall 48/48, over-TV labelled with achieved SNR, paused positives 16/24, stale quiet 6/6, 1 TV false wake `hey i'm parker` from the single-window grammar, gate FAIL — see below); exact-SHA CI **FAILED** (run 33682939430): anthropic 1.3.0 rejected the httpx client → fixed at ef66a17 |
+| 1038242 | fresh-context review (nine lenses, adversarially verified) | all lenses NEEDS_FIX; 15 blocker/major candidates, 13 confirmed, 2 reframed as coverage gaps (now pinned by tests) |
+| ef66a17 | review fix round (bridge/route/power/pin) | backend 1325 passed; concurrency deck 10/10 |
+| aacd751 | fix round merged (page, evidence, My Day, transport/latch tests) | Rust 17; backend suite: __SUITE_AACD751__ |
+| __FINAL_REV__ | final tree | wake soak regenerated: __SOAK__; packaged chain: __PACKAGED__; live probe: __LIVE__; exact-SHA CI: __CI__; fresh final-tree review: __FABLE_FINAL__; cross-family (Hermes) review: __HERMES__ |
+
+### What the wake soak says (real base model, synthesized voices)
+
+Recall on isolated phrases 48/48. Over the TV the labels are now the
+achieved SNR after mixing (bed attenuated instead of clipping): +12 and +6
+dB wake 4/4 each, 0 and −6 dB 0/8 — the documented measured limit. The
+paused-greeting section is new evidence: with real silence between "hey"
+and the name, Samantha/Daniel at 175 wpm wake through the latch (latch_s
+2.3–3.8 s); the misses are the local ASR hearing nothing usable for a lone
+slow "Parker" (transcripts `Hey.`, `Okay`, `today.`, ``), not the latch
+logic; a synthesized bare "a" is heard as a greeting by the model in 4/12
+cases (an ASR artefact; the unit pin keeps `a` from arming the latch). The
+one ambient-TV false wake, `Hey, I'm Parker something`, matches the
+pre-existing single-window grammar (one token tolerated between greeting
+and name — the chairman's Dad calibration), not the latch. CPU/latency
+figures from that shakedown ran under load and are not evidence.
+
+### Untested / open
+
+- Human/device gates (unchanged, NOT claimed): Pras's packaged real-mic
+  power-off (TCC transition, true revocation); real-mic session end
+  (intended "OK, thanks" ends; mid-conversation "thanks" + long pause +
+  follow-up does not); Dad-like wake recall, paused greeting, ambient TV,
+  same-breath request, stop/barge-in in the room; VoiceOver order, no-WebGL,
+  reduced-motion runtime; Reachy motion quality.
+- The realtime lane still stores no due time for spoken reminders
+  (`propose_action` has no `when`); every spoken reminder reads "no time on
+  record" until that follow-up.
+- `anthropic` 1.x / `httpx2`: the cancellable transport must be ported
+  before lifting the pin.
+- Realtime `unavailable` (no OpenAI key) now rests honestly with a card;
+  a real-key-missing packaged run is a human gate.
+- The wake soak's paused-greeting section is gated and currently FAILs on
+  ASR misses for two voices at 120 wpm; whether to keep it gated or report
+  it is Pras's call (the acceptance bullet asks for the latch and the
+  temporal tests, which pass).
