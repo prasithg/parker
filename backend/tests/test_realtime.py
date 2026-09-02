@@ -281,8 +281,8 @@ def test_session_config_carries_persona_vad_transcription_and_tools(
     # output rate is required by the live API — its absence voided the whole
     # session.update (tools included) on the first real probe
     assert session["audio"]["output"]["format"] == {"type": "audio/pcm", "rate": 24000}
-    # brainless -> propose_action stays the only tool
-    assert [tool["name"] for tool in session["tools"]] == ["propose_action"]
+    # brainless -> no web lookup; my_day is local and always offered
+    assert [tool["name"] for tool in session["tools"]] == ["propose_action", "my_day"]
     assert "Parkinson" in session["instructions"]
     # Spoken confirmation (companion take 2, 2026-09-01): the model reads
     # the action back and asks for his yes/no — it never tells him to tap.
@@ -298,10 +298,7 @@ def test_brained_session_offers_look_that_up_and_says_so(
     db, realtime_enabled, brained
 ):
     session = realtime.build_session_update()["session"]
-    assert [tool["name"] for tool in session["tools"]] == [
-        "propose_action",
-        "look_that_up",
-    ]
+    assert [tool["name"] for tool in session["tools"]] == ["propose_action", "my_day", "look_that_up"]
     # only stageable types are advertised — never a promise that dies at the gate
     enum = session["tools"][0]["parameters"]["properties"]["action_type"]["enum"]
     assert "reminder" in enum and "appointment_note" not in enum
@@ -1688,3 +1685,83 @@ def test_brainless_instructions_never_claim_web_search(db, realtime_enabled, bra
     instructions = realtime.build_session_update()["session"]["instructions"]
     assert "do NOT have web search" in instructions
     assert "never claim to have looked something up" in instructions
+
+
+# ---------------------------------------------------------------------------
+# my_day: his own day from Parker's records, never the web (session 3,
+# call 41: "what do I have today" went to search, which had no calendar).
+# ---------------------------------------------------------------------------
+
+
+def _my_day_event(call_id="day-1", about="today"):
+    return {
+        "type": "response.done",
+        "response": {
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "my_day",
+                    "call_id": call_id,
+                    "arguments": json.dumps({"about": about}),
+                }
+            ]
+        },
+    }
+
+
+def test_my_day_is_offered_without_a_brain_and_the_prompt_steers_to_it(
+    db, realtime_enabled, brainless
+):
+    update = realtime.build_session_update()["session"]
+    names = [tool["name"] for tool in update["tools"]]
+    assert "my_day" in names and "look_that_up" not in names
+    assert "call my_day" in update["instructions"]
+    assert "there is no calendar" in update["instructions"]
+
+
+def test_my_day_answers_from_local_records_never_a_dose(
+    db, realtime_enabled, brainless, upstream
+):
+    from app.db.models import Medication
+    from app.memory.store import save_memory
+
+    db.add(Medication(name="Sinemet", dosage="25-100 mg", schedule_times='["08:00", "14:00", "20:00"]', active=True))
+    db.commit()
+    save_memory(db, "Sarah moved the neurologist appointment to Friday at two.", "event")
+    fake = upstream["script"]([_my_day_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "started"}
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
+        assert _wait_until(lambda: any("Sinemet" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+    outputs = _function_outputs(fake)
+    assert outputs and json.loads(outputs[0]["item"]["output"])["status"] == "working"
+    note = next(i for i in _system_items(fake) if "Sinemet" in i)
+    assert "8 AM, 2 PM and 8 PM" in note
+    assert "25-100" not in note and "mg" not in note  # names and times only
+    assert "neurologist appointment" in note
+    assert "no calendar" in note
+    assert "Right now it is" in note
+
+
+def test_my_day_with_nothing_on_record_says_so(db, realtime_enabled, brainless, upstream):
+    fake = upstream["script"]([_my_day_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "working"
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
+        assert _wait_until(lambda: any("Nothing is on record" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+
+
+def test_my_day_lists_the_reminder_he_set(db, realtime_enabled, brainless, upstream):
+    fake = upstream["script"]([_propose_event(call_id="p1")])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        fake.feed(_heard("yes"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        assert ws.receive_json()["status"] == "executed"
+        fake.feed(_my_day_event())
+        assert ws.receive_json()["type"] == "working"
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
+        assert _wait_until(lambda: any("water the plants" in i and "(set)" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
