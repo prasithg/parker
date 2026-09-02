@@ -39,6 +39,14 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 QUESTION = "When does Alcaraz play next at the US Open, and what channel is it on?"
 SESSION_SECONDS = 45
 
+# --wake-tail "<words>": the page's same-breath handoff (P0.1 F2) — the
+# hello carries what he said after "Hey Parker"; with --pending the final
+# words arrive on a later `tail` frame. The bridge must send the wake
+# instruction, his words as a USER item, one nudge — and the live API must
+# accept that payload (the one-probe-per-payload-change rule).
+WAKE_TAIL = ""
+PENDING = False
+
 
 class ReceiptCollector(logging.Handler):
     def __init__(self) -> None:
@@ -103,10 +111,36 @@ async def main() -> int:
         return await to_bridge.get()
 
     bridge = realtime.RealtimeBridge(browser_send, browser_receive)
+    upstream_sent: list[dict] = []
+    if WAKE_TAIL:
+        # The page's first frame: the hello with the wake tail. Record what
+        # the bridge sends upstream so the payload shape can be judged.
+        hello_tail = WAKE_TAIL if not PENDING else " ".join(WAKE_TAIL.split()[:2])
+        await to_bridge.put({"type": "hello", "tail": hello_tail, "pending": PENDING})
+        real_connect = realtime.connect_openai
+
+        async def recording_connect():
+            upstream = await real_connect()
+            real_send = upstream.send
+
+            async def send(raw):
+                try:
+                    upstream_sent.append(json.loads(raw))
+                except (TypeError, ValueError):
+                    pass
+                await real_send(raw)
+
+            upstream.send = send
+            return upstream
+
+        realtime.connect_openai = recording_connect
     run_task = asyncio.create_task(bridge.run())
     started = time.monotonic()
 
     try:
+        if WAKE_TAIL and PENDING:
+            await asyncio.sleep(0.6)  # the lane's last inference
+            await to_bridge.put({"type": "tail", "text": WAKE_TAIL})
         await asyncio.sleep(6)  # let the greeting stream and the card land
         print(f"\n[probe->] typing the question upstream: {QUESTION!r}")
         await bridge._upstream.send(
@@ -155,9 +189,41 @@ async def main() -> int:
     print(f"search result injected cleanly: {got_result}")
     print(f"sources reached the screen:     {got_sources}")
     ok = spoke and got_ack and got_result and got_sources
+    if WAKE_TAIL:
+        items = [
+            (e["item"].get("role"), e["item"]["content"][0]["text"])
+            for e in upstream_sent
+            if e.get("type") == "conversation.item.create"
+            and e.get("item", {}).get("type") == "message"
+        ]
+        user_items = [text for role, text in items if role == "user"]
+        system_texts = [text for role, text in items if role == "system"]
+        tail_as_user = user_items[:1] == [WAKE_TAIL]
+        tail_never_system = not any(WAKE_TAIL in text for text in system_texts)
+        wake_instruction_first = bool(system_texts) and "his own message" in system_texts[0]
+        hiccup = any(
+            e.get("type") == "notice" and "hiccuped" in str(e.get("text", ""))
+            for e in browser_events
+        )
+        print(f"wake tail sent as a USER item:  {tail_as_user}  {user_items[:1]}")
+        print(f"tail never in a system item:    {tail_never_system}")
+        print(f"wake instruction (no greeting): {wake_instruction_first}")
+        print(f"live API accepted the payload:  {not hiccup}")
+        ok = ok and tail_as_user and tail_never_system and wake_instruction_first and not hiccup
     print(f"\n{'PASS' if ok else 'FAIL'}: fast-voice orchestrator live probe")
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--wake-tail", default="", help="hello tail: his words after 'Hey Parker'")
+    parser.add_argument(
+        "--pending", action="store_true",
+        help="mark the hello pending and deliver the full tail on a later frame",
+    )
+    args = parser.parse_args()
+    WAKE_TAIL = " ".join(args.wake_tail.split())
+    PENDING = bool(args.pending and WAKE_TAIL)
     sys.exit(asyncio.run(main()))
