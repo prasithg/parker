@@ -262,9 +262,23 @@ Findings so far:
   rest ([plan](2026-09-02-spoken-session-end.md)).
 - **PR #44** `fix/search-worker-date-grounding` (from main, per the
   merge policy): the search worker knows today's date/zone.
-- `fable/my-day-worker` (on PR #43): the local "my day" tool — medicine
-  times by name, reminders he set, family notes, and the honest "no
-  calendar" limit ([plan](2026-09-02-my-day-worker.md)).
+- **PR #45** `fable/my-day-worker` (on PR #43): the local "my day" tool —
+  medicine times by name, reminders he set, family notes, and the honest
+  "no calendar" limit ([plan](2026-09-02-my-day-worker.md)); fix round
+  after its fresh review (limit line unconditional; honest store failure).
+- **PR #46** `fable/reachy-motion-vocabulary` (on PR #45): the beat layer
+  from Hermes's motion reference — staged wake beat, acknowledgment,
+  phrase micro-nods from real transcript punctuation, restrained outcome
+  beats, idle weight shift, `advance()` for numeric verification
+  ([plan](2026-09-02-reachy-motion-vocabulary.md)).
+- `fable/wake-burst-window` (on PR #40, experiment): a second look at just
+  the loud burst when a hop rises above the room, aimed at the measured
+  over-TV miss; judged by the soak's over-TV rows and a TV false-wake soak.
+
+Each stacked PR had a fresh-context review and a fix round where it
+returned NEEDS_FIX; every fix round added the pin that would have caught
+it. Every head was run on real CI (dispatched manually where the
+`pull_request` event did not fire).
 
 ## Next-slice candidates surfaced tonight (not started)
 
