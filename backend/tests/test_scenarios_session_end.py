@@ -73,12 +73,28 @@ def _end_events(world) -> list[RealtimeSessionEvent]:
 
 def test_hard_enders_and_gratitude_are_deterministic():
     for text in ("That's all.", "goodbye Parker", "Bye, Parker!", "I'm done",
-                 "go back to sleep", "stop listening", "OK that's all", "that's it for now"):
+                 "go back to sleep", "stop listening", "OK that's all", "that's it for now",
+                 # bounded leads and trailers (fresh review of PR #43)
+                 "okay that's all for now", "that's all for today", "that's all thanks",
+                 "that's all thank you parker", "alright that's all thank you",
+                 "goodbye parker thanks", "that's it thanks parker", "i'm done now",
+                 "okay i'm done thanks", "you can go to sleep now", "go to sleep parker",
+                 "goodnight", "good night", "goodbye", "we're done", "i'm finished",
+                 "no thanks, I'm done", "see you later parker"):
         assert spoken_session_end(text) == "hard", text
-    for text in ("OK, thanks.", "Thanks!", "thank you Parker", "great, thanks"):
+    for text in ("OK, thanks.", "Thanks!", "thank you Parker", "great, thanks",
+                 "thanks so much", "thanks very much", "thank you so much parker",
+                 "great thank you", "okay, thank you, parker", "that's helpful, thanks"):
         assert spoken_session_end(text) == "gratitude", text
     for text in ("stop", "bye", "ok", "thanks for nothing tell me more",
-                 "I'm done with the tennis, what about golf?", "that's all I know about him"):
+                 "I'm done with the tennis, what about golf?", "that's all I know about him",
+                 # questions and reports that merely END with an ender phrase
+                 # (fresh review of PR #43): never hang up on him mid-thought
+                 "should I go to sleep?", "when should I go to sleep", "is it time to go to sleep",
+                 "I can't go to sleep", "you said that's all", "what do you mean that's all",
+                 "he said I'm done", "why did you stop listening", "you can rest now?",
+                 "did you go to sleep", "that's it", "nothing else", "talk to you later",
+                 "that's enough for now", "thanks bye"):
         assert spoken_session_end(text) is None, text
 
 
@@ -144,6 +160,7 @@ def test_thanks_after_parker_asked_a_question_keeps_listening(voice_world):
                 "Sure. Would you like it for this afternoon or tomorrow morning?")
         fake.feed(user_said("thanks"))
         assert ws.receive_json()["type"] == "user_transcript"
+        fake.feed(done())  # the auto-response to "thanks" finishes: no closing may ride it
         _no_closing(ws, fake)
         assert not any("sounds finished" in i for i in _system_items(fake))
         ws.send_json({"type": "end"})
@@ -278,7 +295,55 @@ def test_bare_stop_never_ends_the_session(voice_world):
         world.settle_open(fake, expect_card=False)
         fake.feed(user_said("stop"))
         assert ws.receive_json()["type"] == "user_transcript"
+        fake.feed(done())
         _no_closing(ws, fake)
+        ws.send_json({"type": "end"})
+    assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
+    assert _end_events(world) == []
+
+
+# ---------------------------------------------------------------------------
+# S09 — his voice during a SOFT goodbye cancels it too
+# ---------------------------------------------------------------------------
+
+
+def test_speaking_during_the_soft_goodbye_cancels_the_end(voice_world):
+    world = voice_world
+    world.disable_brain()
+    fake = world.script([])
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        _answer(world, ws, fake, "what's the weather like",
+                "It is warm and sunny this afternoon, around twenty-six degrees.")
+        fake.feed(user_said("OK, thanks."))
+        assert ws.receive_json()["type"] == "user_transcript"
+        assert _wait_until(lambda: any("sounds finished" in i for i in _system_items(fake)))
+        fake.feed(model_said("Any time. Say"))
+        assert ws.receive_json()["type"] == "assistant_transcript_delta"
+        fake.feed({"type": "input_audio_buffer.speech_started"})  # "actually —"
+        assert ws.receive_json() == {"type": "clear"}
+        fake.feed(done())
+        _no_closing(ws, fake, sentinel="actually, one more thing")
+        ws.send_json({"type": "end"})
+    assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
+
+
+# ---------------------------------------------------------------------------
+# S10 — a question that merely ends with an ender phrase is conversation
+# ---------------------------------------------------------------------------
+
+
+def test_a_question_ending_in_go_to_sleep_never_hangs_up(voice_world):
+    world = voice_world
+    world.disable_brain()
+    fake = world.script([])
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        fake.feed(user_said("Should I go to sleep?"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        fake.feed(done())
+        _no_closing(ws, fake)
+        assert not any("said he is done" in i for i in _system_items(fake))
         ws.send_json({"type": "end"})
     assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
     assert _end_events(world) == []
