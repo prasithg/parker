@@ -141,37 +141,93 @@ _SOFT_CLOSE_INSTRUCTION = (
 # conversation or mean "stop talking" (Hermes review, 2026-09-01).
 _HARD_ENDERS = (
     "goodbye parker", "bye parker", "good night parker", "goodnight parker",
-    "that's all", "that's all parker", "that is all", "that's it for now",
-    "that's it thanks", "that's it thank you", "i'm done", "i am done",
-    "go back to sleep", "go to sleep", "stop listening", "you can rest now",
-    "that's everything", "nothing else thanks", "nothing else thank you",
+    "goodbye", "good night", "goodnight",
+    "that's all", "that's all parker", "that is all", "that's all for today",
+    "that's all for tonight", "that's it for now", "that's it thanks",
+    "that's it thank you", "i'm done", "i am done", "we're done", "i'm finished",
+    "go back to sleep", "go to sleep", "you can go to sleep", "stop listening",
+    "you can rest now", "that's everything", "nothing else thanks",
+    "nothing else thank you", "see you later parker", "bye bye parker", "bye bye",
+    "that's it for tonight", "that's it for today", "see you tomorrow parker",
 )
-_GRATITUDE = (
-    "thanks", "thank you", "ok thanks", "okay thanks", "thanks parker",
-    "thank you parker", "ok thank you", "okay thank you", "great thanks",
-    "that's helpful", "that's helpful thanks", "perfect thanks", "good thanks",
-    "alright thanks", "all right thanks", "thanks a lot", "thank you very much",
+# What may come BEFORE an ender at the end of an utterance ("ok that's
+# all", "no thanks, I'm done", "hey parker go to sleep") — a bounded
+# whitelist of PHRASES like the confirmation grammar's, never free text:
+# "should I go to sleep", "I can't go to sleep", "you said that's all",
+# and a first-person report like "and I go to sleep" are not exits.
+_ENDER_LEADS = frozenset(
+    ["ok", "okay", "no", "yes", "yeah", "yep", "alright", "all right", "right", "well",
+     "fine", "great", "thanks", "thank you", "no thanks", "i think", "parker", "hey",
+     "hey parker", "um", "uh", "so", "and", "ok so", "okay so", "um okay", "um ok",
+     "okay thanks", "ok thanks", "and now", "right then"]
+)
+# What may come AFTER an ender ("that's all, thanks Parker", "I'm done now").
+# Longest first, so "for now" is stripped as a whole, never as "now".
+_ENDER_TRAILERS = tuple(sorted((
+    "thanks parker", "thank you parker", "thanks", "thank you", "parker", "now",
+    "for now", "for today", "for tonight", "please",
+), key=len, reverse=True))
+_GRATITUDE_RE = __import__("re").compile(
+    r"^(?:(?:ok|okay|alright|all right|great|perfect|good|wonderful|lovely|fine|"
+    r"right) ?)*(?:that's helpful|that helps|thanks|thank you)"
+    r"(?: (?:so much|very much|a lot|a bunch|again))?(?: (?:thanks|thank you))?(?: parker)?$"
 )
 
 
 def spoken_session_end(transcript: str) -> Optional[str]:
     """``"hard"`` for an explicit ender, ``"gratitude"`` for a thank-you that
-    may be a soft close (the bridge decides with context), else None."""
+    may be a soft close (the bridge decides with context), else None.
+
+    A question is never an exit ("should I go to sleep?"); an ender counts
+    as the whole utterance, or its ending after a bounded lead
+    ("ok that's all"), optionally followed by a bounded trailer ("that's
+    all, thanks Parker"). Free text before an ender ("I can't go to
+    sleep", "you said that's all") is conversation.
+    """
 
     import re as _re
 
-    normalized = _re.sub(r"[,.!?]+", " ", (transcript or "").lower())
+    raw = (transcript or "").strip()
+    if raw.endswith("?"):
+        return None
+    normalized = _re.sub(r"[,.!;:]+", " ", raw.lower())
     normalized = " ".join(normalized.replace("\u2019", "'").split())
     if not normalized:
         return None
-    for phrase in _HARD_ENDERS:
-        # Whole utterance or its ending — never a prefix: "I'm done with the
-        # tennis, what about golf?" is a question, not an exit.
-        if normalized == phrase or normalized.endswith(" " + phrase):
-            return "hard"
-    if normalized in _GRATITUDE:
+    if _GRATITUDE_RE.match(normalized):
         return "gratitude"
+    # Every way of peeling up to two trailers off the end ("that's it,
+    # thanks Parker" must still find "that's it thanks" as well as "that's it").
+    candidates = [normalized]
+    frontier = [normalized]
+    for _ in range(2):
+        peeled = []
+        for text in frontier:
+            for trailer in _ENDER_TRAILERS:
+                if text.endswith(" " + trailer):
+                    shorter = text[: -len(trailer) - 1].strip()
+                    if shorter and shorter not in candidates:
+                        candidates.append(shorter)
+                        peeled.append(shorter)
+        frontier = peeled
+    for core in candidates:  # the full utterance first ("bye parker"), then peeled forms
+        for phrase in _HARD_ENDERS:
+            if core == phrase:
+                return "hard"
+            if core.endswith(" " + phrase):
+                lead = core[: -len(phrase)].strip()
+                # A whitelisted lead, a thank-you ("thank you so much Parker,
+                # that's all"), or an ender before an ender ("that's all. goodbye.").
+                if lead in _ENDER_LEADS or _GRATITUDE_RE.match(lead) or _ender_after_ender(lead):
+                    return "hard"
     return None
+
+
+def _ender_after_ender(lead: str) -> bool:
+    """"that's all. goodbye." — an ender followed by an ender is an exit."""
+
+    return any(lead == phrase or lead.endswith(" " + phrase) and lead[: -len(phrase)].strip() in _ENDER_LEADS
+               for phrase in _HARD_ENDERS)
 
 
 _GOODBYE_INSTRUCTION = (
@@ -1341,6 +1397,7 @@ class RealtimeBridge:
                 # speech must not stand itself down) — back to normal.
                 self._wrapup_asked = False
                 self._goodbye_requested = False
+                self._session_end_kind = ""
                 continue
             if not self._wrapup_asked and idle >= IDLE_WRAPUP_SECONDS:
                 self._wrapup_asked = True
