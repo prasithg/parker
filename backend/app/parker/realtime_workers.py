@@ -364,7 +364,7 @@ def _my_day_reminder_lines(db: Any) -> list[str]:
         subject = str(payload.get("subject") or payload.get("intent_text") or "").strip()
         if not subject:
             continue
-        state = "set" if action.status == "executed" else "waiting for his yes"
+        state = "waiting for his yes" if action.status == "staged" else "set"
         lines.append(f"A reminder ({state}): {subject}.")
     return lines
 
@@ -372,14 +372,23 @@ def _my_day_reminder_lines(db: Any) -> list[str]:
 def _my_day_note_lines(db: Any) -> list[str]:
     """Family/context notes that read like plans — appointments, events."""
 
+    import re as _re
+
     keywords = ("appointment", "visit", "tomorrow", "today", "tonight", "friday",
                 "monday", "tuesday", "wednesday", "thursday", "saturday", "sunday",
                 "o'clock", " at ", "coming", "bring")
     lines = []
+    section = ""
     for line in _memory_lines(db):
-        lowered = line.lower()
+        if not line.startswith("- "):
+            section = line.strip().lower()  # a header: "Recent memories:", "Ongoing concerns:"
+            continue
+        if "concern" in section:
+            continue  # worries are not plans
+        text = _re.sub(r"^- (\[[^\]]+\] )?", "", line).strip()
+        lowered = text.lower()
         if any(key in lowered for key in keywords):
-            lines.append(line)
+            lines.append(f"A note the family left: {text}")
     return lines[:4]
 
 
@@ -389,6 +398,7 @@ def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
     started = time.time()
     lines: list[str] = [f"Right now it is {local_date_line()}."]
     db = None
+    failed_sources: list[str] = []
     try:
         db = make_db()
         for name, source in (
@@ -400,8 +410,15 @@ def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
                 lines.extend(source(db))
             except Exception:  # noqa: BLE001 — one failing source never kills the answer
                 logger.debug("my_day source %s failed", name, exc_info=True)
-    except Exception:  # noqa: BLE001
-        logger.debug("my_day worker could not open the store", exc_info=True)
+                failed_sources.append(name)
+    except Exception:  # noqa: BLE001 — the store itself: an honest error, never "nothing on record"
+        logger.warning("my_day worker could not open the store", exc_info=True)
+        return WorkerResult(
+            kind="my_day",
+            error="could not read his notes",
+            started_at=started,
+            finished_at=time.time(),
+        )
     finally:
         if db is not None:
             try:
@@ -409,10 +426,16 @@ def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
             except Exception:  # noqa: BLE001
                 pass
     safe = [line for line in lines if not speech_violates_medical_boundary(line)]
-    if len(safe) == 1:
+    if failed_sources:
+        safe.append(
+            "Parker could not read his " + " and ".join(failed_sources) + " just now."
+        )
+    elif len(safe) == 1:
         safe.append("Nothing is on record for him today — no reminders and no notes.")
+    # The limit line is unconditional: cap BEFORE appending it.
+    safe = safe[:11]
     safe.append(MY_DAY_LIMIT_LINE)
-    speech = "\n".join(safe[:12])
+    speech = "\n".join(safe)
     if speech_violates_medical_boundary(speech):
         speech = f"Right now it is {local_date_line()}.\n{MY_DAY_LIMIT_LINE}"
     return WorkerResult(kind="my_day", speech=speech, started_at=started, finished_at=time.time())
@@ -421,6 +444,13 @@ def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
 def render_my_day_item(result: WorkerResult) -> str:
     """The system item narrating his day back to the front model."""
 
+    if result.error:
+        return (
+            "Parker could not read his notes just now.\n"
+            f"Internal reason, never to be said aloud: {result.error}.\n"
+            "Tell him honestly that you couldn't check his notes and offer to "
+            "try again in a moment. Never say nothing is on record."
+        )
     return (
         "Here is what Parker has on record for him — from Parker's own local "
         "notes, never a calendar. Tell him plainly in one or two short "

@@ -1785,15 +1785,15 @@ class RealtimeBridge:
 
         asked = time.monotonic()
         about = str(arguments.get("about", "")).strip()[:80]
-        if "my_day" in self._inflight_lookups:
+        if "my_day:" in self._inflight_lookups:
             ack = {"status": "already_working", "detail": "Still gathering that — keep chatting."}
         else:
-            self._inflight_lookups.add("my_day")
+            self._inflight_lookups.add("my_day:")  # namespaced: never a search question
             await self._browser_send({"type": "working", "kind": "my_day", "status": "started"})
             self._spawn_worker(
                 "my_day",
                 lambda: realtime_workers.run_my_day_worker(_make_db),
-                inflight_key="my_day",
+                inflight_key="my_day:",
                 question=about,
             )
             ack = {

@@ -1765,3 +1765,61 @@ def test_my_day_lists_the_reminder_he_set(db, realtime_enabled, brainless, upstr
         assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
         assert _wait_until(lambda: any("water the plants" in i and "(set)" in i for i in _system_items(fake)))
         ws.send_json({"type": "end"})
+
+
+def test_my_day_always_ends_with_the_limit_line_even_on_a_busy_day(db, realtime_enabled, brainless, upstream):
+    """Fresh review of PR #45: with a full day the twelve-line cap dropped
+    the unconditional \"no calendar\" line. Six reminders, four notes, a
+    medicine — the limit line is still last."""
+
+    import json as _json
+
+    from app.db.models import CallLog, CapturedIntent, Medication, ResolutionResult, StagedAction
+    from app.memory.store import save_memory
+
+    db.add(Medication(name="Sinemet", dosage="25-100 mg", schedule_times='["08:00"]', active=True))
+    call = CallLog(call_sid="BUSY", call_type="converse")
+    db.add(call)
+    db.commit()
+    for i in range(6):
+        intent = CapturedIntent(call_log_id=call.id, intent_text=f"remind me about thing {i}", requested_action="remind", subject=f"thing {i}", status="resolved")
+        db.add(intent)
+        db.flush()
+        rr = ResolutionResult(captured_intent_id=intent.id, status="staged", action_type="reminder", reversible=True, summary="x")
+        db.add(rr)
+        db.flush()
+        db.add(StagedAction(resolution_result_id=rr.id, status="executed", action_type="reminder", action_payload=_json.dumps({"subject": f"thing {i}"}), reversible=True))
+    db.commit()
+    for i in range(4):
+        save_memory(db, f"Sarah moved the appointment {i} to Friday at two.", "event")
+    fake = upstream["script"]([_my_day_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "working"
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
+        assert _wait_until(lambda: any("Sinemet" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+    note = next(i for i in _system_items(fake) if "Sinemet" in i)
+    assert "Parker keeps no calendar" in note
+    after = note.split("Parker keeps no calendar", 1)[1]
+    assert "thing" not in after and "appointment" not in after  # the limit line is the last content
+    content = [l for l in note.splitlines() if l.startswith(("His ", "A reminder", "A note", "Right now", "Parker keeps"))]
+    assert len(content) <= 12 and content[-1].startswith("Parker keeps no calendar")
+
+
+def test_my_day_store_failure_is_honest_never_nothing_on_record(db, realtime_enabled, brainless, upstream, monkeypatch):
+    """Fresh review of PR #45: a locked/unavailable store must not make
+    Parker deny reminders he holds."""
+
+    def broken():
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(realtime, "_make_db", broken)
+    fake = upstream["script"]([_my_day_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "working"
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "failed"}
+        assert _wait_until(lambda: any("could not read his notes" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+    item = next(i for i in _system_items(fake) if "could not read his notes" in i)
+    assert "Never say nothing is on record" in item
+    assert "nothing written down" not in item
