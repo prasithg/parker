@@ -314,7 +314,9 @@ const audio = {stream: null, micCtx: null, playCtx: null, proc: null,
 // the line connects); it rides the live socket's first frame.
 const wake = {ws: null, retried: false, head: '', tail: '', tailTimer: null};
 
-const live = {ws: null, playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
+// `playing` holds the scheduled AudioBufferSourceNodes a flush must stop —
+// nothing else is ever written there (source citations are captions only).
+const live = {ws: null, playCtx: null, nextTime: 0, playing: [], chunkMeta: [],
               energyTimer: null, wasPlaying: false, closingSeen: false,
               responseOpen: false, guardSpeaking: 0, retries: 0, revoked: false};
 let startingLive = false;
@@ -381,8 +383,8 @@ function playLivePcm(encoded) {
     const at = Math.max(live.playCtx.currentTime + 0.05, live.nextTime);
     src.start(at);
     live.nextTime = at + buffer.duration;
-    live.sources.push(src);
-    src.onended = () => { live.sources = live.sources.filter((s) => s !== src); };
+    live.playing.push(src);
+    src.onended = () => { live.playing = live.playing.filter((s) => s !== src); };
     let sum = 0;
     for (let i = 0; i < floats.length; i++) sum += floats[i] * floats[i];
     live.chunkMeta.push({
@@ -394,9 +396,9 @@ function playLivePcm(encoded) {
 }
 
 function flushLivePlayback() {
-  const hadAudio = live.sources.length > 0;
-  for (const src of live.sources) { try { src.stop(); } catch (err) {} }
-  live.sources = [];
+  const hadAudio = live.playing.length > 0;
+  for (const src of live.playing) { try { src.stop(); } catch (err) {} }
+  live.playing = [];
   live.chunkMeta = [];
   live.nextTime = 0;
   live.wasPlaying = false;
@@ -584,8 +586,7 @@ function handleLiveEvent(event) {
       hideCard();
     }
   } else if (event.type === 'sources') {
-    live.sources = event.items || [];
-    captionSources(live.sources); // CC on only; CC off keeps zero chrome
+    captionSources(event.items || []); // CC on only; CC off keeps zero chrome
   } else if (event.type === 'revoked') {
     // The engine ended this page's authority (someone turned Parker off, or
     // another screen took over): not a line drop — no retry, honest card.

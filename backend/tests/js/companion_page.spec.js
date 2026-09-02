@@ -68,6 +68,10 @@ function wakeSockets(env) {
 function liveSockets(env) {
   return env.sockets.filter((s) => s.url.includes('/converse/realtime'));
 }
+function scheduled(env) {
+  // Every AudioBufferSourceNode the page started, across its audio contexts.
+  return env.audioContexts.flatMap((c) => c.startedSources);
+}
 
 async function poweredDormant(env) {
   await env.context.powerOn();
@@ -552,6 +556,45 @@ async function poweredActive(env) {
     assert.ok(line.textContent.length < 140, 'bounded');
     env.advance(12100);
     assert.ok(line.hidden, 'expires on its own');
+  });
+
+  await test('source citations never displace scheduled audio: audio -> sources -> clear stops every old node', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.message({ type: 'user_transcript', text: 'who won the open' });
+    ws.message({ type: 'audio', data: env.pcmBase64(24000) });
+    ws.message({ type: 'sources', items: [{ label: 'ESPN', url: 'https://y' }] });
+    ws.message({ type: 'audio', data: env.pcmBase64(24000) });
+    assert.strictEqual(scheduled(env).length, 2);
+    ws.message({ type: 'clear' });
+    assert.ok(scheduled(env).every((s) => s.stopped),
+      'every old node is stopped, not just the ones after the citations');
+    assert.strictEqual(phase(env), 'interrupted', 'real audio was cut: the scene yields');
+  });
+
+  await test('the guard flush also stops audio scheduled before the citations arrived', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.message({ type: 'user_transcript', text: 'should i change my dose' });
+    ws.message({ type: 'audio', data: env.pcmBase64(24000) });
+    ws.message({ type: 'sources', items: [{ label: 'ESPN', url: 'https://y' }] });
+    ws.message({ type: 'guard_redirect', text: 'That one is for your doctor.' });
+    assert.ok(scheduled(env).every((s) => s.stopped), 'old speech never plays under the redirect');
+  });
+
+  await test('citations alone are not buffered audio: clear after drained audio does not yield', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.message({ type: 'user_transcript', text: 'who won' });
+    ws.message({ type: 'audio', data: env.pcmBase64(2400) });
+    ws.message({ type: 'sources', items: [{ label: 'ESPN', url: 'https://y' }] });
+    scheduled(env)[0].onended(); // the node finished; the response is still open
+    env.advance(400);
+    assert.strictEqual(phase(env), 'talking');
+    ws.message({ type: 'clear' });
+    assert.strictEqual(phase(env), 'talking', 'nothing was cut off: no interrupt yield');
+    assert.ok(!ws.sent.some((f) => f.type === 'expression' && f.reason === 'interrupted'),
+      'no interrupted receipt in the journal');
   });
 
   await test('a sentence ending in Parker\'s real transcript is one phrase beat', async () => {
