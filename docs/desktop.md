@@ -144,19 +144,29 @@ planned path once builds are signed.
 ## Developer corner
 
 ```bash
-make sidecar                      # PyInstaller onedir → backend/dist/parker/
+make sidecar                      # PyInstaller onedir → backend/dist/parker/ (stamps app/_build_info.py: git sha)
 scripts/sidecar_smoke.sh          # clean-shell gate: selftest+natives, /health, doctor
-scripts/packaged_companion_probe.sh  # headless: the built app opens the companion in WKWebView,
-                                     # renders the scene (webgl_ready receipt), touches no mic
-cd desktop/src-tauri && cargo tauri build   # → Parker.app + .dmg
+cd desktop/src-tauri && cargo tauri build   # → Parker.app + .dmg (build.rs stamps the shell's git sha)
+cd ../.. && scripts/packaged_companion_probe.sh --expect-sha "$(git rev-parse HEAD)"
+    # headless, AFTER the build: the .app's engine (`parker version --json`) and shell
+    # (`parker-desktop <ver> git=…` on stdout) must both be that revision; then the
+    # companion opens in WKWebView, renders the scene (webgl_ready receipt), the engine
+    # sees no power claim / wake socket, and the sidecar exits with the shell.
+    # Mic/TCC state is not observed; the power/wake click stays the human gate.
 ```
+
+Build order matters: the probe binds the .app to a commit, so run it on
+the bundle you just built, at a clean tree (a `-dirty` expectation fails
+unless `--allow-dirty`). Provenance is visible on any engine as
+`parker version --json` → `{version, git_sha, frozen}` and on `/health`.
 
 Rust via rustup (this repo built with rustc 1.96.1, tauri-cli 2.11.4,
 Tauri 2.x). The shell finds the engine via bundle resources; `cargo
 tauri dev` falls back to `backend/dist/parker/parker`, and
-`PARKER_ENGINE_BIN` overrides both. Dev flows (`make run`,
-`make talk-loop`, tests) are unaffected by the app: in a repo checkout
-`PARKER_HOME` defaults to `backend/`, so nothing moves.
+`PARKER_ENGINE_BIN` overrides both (the probe unsets it for its own
+run). Dev flows (`make run`, `make talk-loop`, tests) are unaffected by
+the app: in a repo checkout `PARKER_HOME` defaults to `backend/`, so
+nothing moves.
 
 Known quirks, honestly held:
 
