@@ -547,6 +547,8 @@ function handleLiveEvent(event) {
     $('cc-parker').hidden = true; $('cc-parker').textContent = '';
   } else if (event.type === 'assistant_transcript_delta') {
     appendParkerCaption(event.text);
+    // A sentence ended in Parker's real words: one motion beat (micro-nod).
+    if (typeof event.text === 'string' && /[.?!]/.test(event.text)) presence('phrase_boundary');
   } else if (event.type === 'working') {
     const status = event.status === 'started' ? 'work_start'
       : event.status === 'failed' ? 'work_failed' : 'work_done';
@@ -1054,6 +1056,10 @@ function flushPresenceReceipts() {
 if (expr) {
   prevPresence = expr.getState();
   expr.subscribe((s, cause) => {
+    // A phrase beat is motion, not a presence transition: it never
+    // reaches the session journal (400-receipt cap, review surface) and
+    // never rewrites the screen-reader status (no re-announcement).
+    if (cause === 'phrase_boundary') return;
     updateSrStatus();
     recordPresenceTransition(s, cause);
   });

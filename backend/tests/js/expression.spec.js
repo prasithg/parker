@@ -660,6 +660,22 @@ test('search overlay reads as checking, not as an answer', () => {
 // Report
 // ---------------------------------------------------------------------------
 
+test('a phrase boundary is a beat only while talking, never a phase change', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  assert.strictEqual(c.getState().beats, 0);
+  assert.strictEqual(c.handleEvent('phrase_boundary'), false); // listening: nothing
+  assert.strictEqual(c.getState().beats, 0);
+  c.handleEvent('user_transcript');
+  c.handleEvent('assistant_audio');
+  assert.strictEqual(c.getState().phase, 'talking');
+  assert.strictEqual(c.handleEvent('phrase_boundary'), true);
+  assert.strictEqual(c.handleEvent('phrase_boundary'), true);
+  assert.strictEqual(c.getState().beats, 2);
+  assert.strictEqual(c.getState().phase, 'talking', 'a beat never changes the phase');
+});
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) {
   process.stdout.write((r.ok ? 'ok  ' : 'FAIL') + '  ' + r.name + (r.ok ? '' : '  — ' + r.error) + '\n');

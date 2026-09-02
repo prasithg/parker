@@ -119,6 +119,8 @@ function poseFor(state) {
       POSE.headPitch = -0.05; POSE.eyeOpen = 0.92; POSE.eyeGlow = 0.7;
       POSE.antennaL = -0.05; POSE.antennaR = 0.05;
       POSE.breathRate = 0.3; POSE.breathAmp = 0.015 + user * 0.01;
+      // Waiting reads as alive: a slow weight shift (~8 s), never a fidget.
+      POSE.bodyYaw = Math.sin(state.sincePhaseMs / 1300) * 0.03;
       POSE.saccades = true; POSE.gazeCamera = true;
       break;
     case 'hearing':   // leaning in — head sway rides HIS real energy
@@ -466,6 +468,72 @@ const SPRING_OMEGA = {
 const ANTICIPATION_KEYS = ['headYaw', 'headPitch', 'headRoll'];
 const ANTICIPATION_GAIN = 3.2;
 
+// ---------------------------------------------------------------------------
+// Beats: short, bounded, self-decaying offsets layered ABOVE the pose
+// springs and below the antenna physics (docs/plans/2026-09-02-reachy-
+// motion-vocabulary.md, after the official Reachy Mini motion reference).
+// The spring owns each degree of freedom's target; a beat adds an offset
+// that returns to zero on its own, so nothing ever snaps and a phase
+// change into rest simply clears the list. Each beat is a list of
+// [key, amplitude, startMs, durationMs] channels shaped by a curve.
+// ---------------------------------------------------------------------------
+
+const BEAT_KEYS = ['headPitch', 'headYaw', 'headRoll', 'headDrop', 'antennaL', 'antennaR'];
+
+// dip-then-rise: anticipation below zero, overshoot above, settle. u in [0,1].
+function curveAnticipate(u) {
+  if (u < 0.22) return -Math.sin((u / 0.22) * Math.PI) * 0.55;      // the compress
+  const v = (u - 0.22) / 0.78;
+  return Math.sin(v * Math.PI) * Math.exp(-2.2 * v);                 // overshoot, settle
+}
+// one soft bump (a nod, an antenna punctuation)
+function curveBump(u) { return Math.sin(u * Math.PI); }
+// slow ease down and hold, then release (a restrained "oh")
+function curveDwell(u) { return u < 0.3 ? Math.sin((u / 0.3) * Math.PI / 2) : Math.cos(((u - 0.3) / 0.7) * Math.PI / 2); }
+
+const BEATS = {
+  // The staged wake: compress, rise on the spring, antennae perk ~150 ms
+  // later with one overshoot, settle. Total under a second.
+  // Signs: headDrop + = lower, headPitch + = chin down, antennaL + = perk
+  // (toward 0 from the drooped -1). The anticipation curve goes negative
+  // first, so the amplitude sign is chosen for the SETTLE direction:
+  // head ends up higher/chin up, antennae end up perked.
+  wake: [
+    ['headDrop', -0.10, 0, 260, curveAnticipate],
+    ['headPitch', -0.06, 0, 300, curveAnticipate],
+    ['antennaL', 0.30, 150, 700, curveAnticipate],
+    ['antennaR', -0.30, 150, 700, curveAnticipate],
+  ],
+  // "I heard you": one small nod and an antenna dip.
+  acknowledge: [
+    ['headPitch', 0.06, 0, 260, curveBump],
+    ['antennaL', 0.10, 40, 320, curveBump],
+    ['antennaR', -0.10, 40, 320, curveBump],
+  ],
+  // A sentence ended: a micro-nod and a tiny alternating antenna tick.
+  phrase: [
+    ['headPitch', 0.035, 0, 200, curveBump],
+    ['antennaL', 0.06, 30, 220, curveBump],
+  ],
+  phraseAlt: [
+    ['headPitch', 0.035, 0, 200, curveBump],
+    ['antennaR', -0.06, 30, 220, curveBump],
+  ],
+  // The real result landed: a small head-up bounce (the antenna hop is physics).
+  executed: [
+    ['headPitch', -0.08, 0, 420, curveBump],
+  ],
+  // Restrained, distinct, never theatrical.
+  failed: [
+    ['headPitch', 0.09, 0, 900, curveDwell],
+    ['headRoll', -0.05, 0, 900, curveDwell],
+  ],
+  cancelled: [
+    ['antennaL', 0.12, 0, 500, curveDwell],
+    ['antennaR', -0.12, 0, 500, curveDwell],
+  ],
+};
+
 export function createReachyScene(container, controller, options) {
   const opts = options || {};
   let renderer;
@@ -565,15 +633,19 @@ export function createReachyScene(container, controller, options) {
   // ---- Apply the DOF state to the scene graph ----
   function applyToScene(pose) {
     applyLights(dof.sceneLight);
-    // Head: springs + talking micro-nod that rides the REAL voice envelope.
+    // Head: springs + beat offsets + talking micro-nod on the REAL voice envelope.
     const nod = -voiceEnv * 0.05;
-    parts.head.rotation.set(dof.headPitch + nod, dof.headYaw, dof.headRoll);
+    parts.head.rotation.set(
+      dof.headPitch + beatOffset.headPitch + nod,
+      dof.headYaw + beatOffset.headYaw,
+      dof.headRoll + beatOffset.headRoll
+    );
     parts.robot.rotation.y = dof.headYaw * 0.22 + pose.bodyYaw;
 
     // Volume-preserving breath: chest swells out, height compensates.
     const breathe = 1 + Math.sin(breathPhase) * pose.breathAmp;
     parts.torso.scale.set(breathe, 1 / Math.max(breathe, 0.0001), breathe);
-    parts.head.position.y = 1.28 - dof.headDrop * 0.16
+    parts.head.position.y = 1.28 - (dof.headDrop + beatOffset.headDrop) * 0.16
       + Math.sin(breathPhase) * pose.breathAmp * 0.6;
 
     // Eyes: openness x blink, glow, gaze saccade offsets.
@@ -595,8 +667,8 @@ export function createReachyScene(container, controller, options) {
     // Antennae: pose splay on the arm, physics swing on the pivot.
     // Sign flip: the pose table is authored as negative-L / positive-R
     // = OUTWARD splay; the pivots' z-axis runs the other way.
-    parts.antL.arm.rotation.z = -dof.antennaL;
-    parts.antR.arm.rotation.z = -dof.antennaR;
+    parts.antL.arm.rotation.z = -(dof.antennaL + beatOffset.antennaL);
+    parts.antR.arm.rotation.z = -(dof.antennaR + beatOffset.antennaR);
     parts.antL.pivot.rotation.z = antPhys.zL;
     parts.antR.pivot.rotation.z = antPhys.zR;
     parts.antL.pivot.rotation.x = antPhys.x;
@@ -614,11 +686,14 @@ export function createReachyScene(container, controller, options) {
 
   function frame(timeMs) {
     if (disposed) return;
-    const dt = Math.min(0.05, last === null ? 0.016 : (timeMs - last) / 1000);
+    const dt = Math.max(0, Math.min(0.05, last === null ? 0.016 : (timeMs - last) / 1000));
     last = timeMs;
     controller.tick();
     const state = controller.getState();
     const pose = poseFor(state);
+
+    triggerBeats(state, timeMs);
+    stepBeats(timeMs);
 
     // ---- Anticipation beat on phase/action changes ----
     if (lastPhase !== null && state.phase !== lastPhase) {
@@ -691,6 +766,7 @@ export function createReachyScene(container, controller, options) {
     springStep('headYaw', pose.headYaw, dt);
     springStep('headPitch', pose.headPitch, dt);
     springStep('headRoll', pose.headRoll, dt);
+    springStep('headDrop', pose.headDrop, dt); // never stepped before: the live loop never sank the head
     springStep('eyeOpen', pose.eyeOpen, dt);
     springStep('eyeGlow', pose.eyeGlow, dt);
     springStep('antennaL', pose.antennaL, dt);
@@ -733,6 +809,70 @@ export function createReachyScene(container, controller, options) {
     renderer.render(scene, camera);
   }
 
+  // ---- Beats (see BEATS above) ----
+  const activeBeats = []; // {channels, t0}
+  const beatOffset = {};
+  for (let i = 0; i < BEAT_KEYS.length; i++) beatOffset[BEAT_KEYS[i]] = 0;
+  let phraseTick = 0;
+  let lastBeats = 0;
+  let lastKnownPhase = null;
+  let lastKnownAction = null;
+
+  function startBeat(name, nowMs) {
+    if (opts.reducedMotion) return;
+    // Replace, never stack: a new beat of the same name restarts it.
+    for (let i = activeBeats.length - 1; i >= 0; i--) {
+      if (activeBeats[i].name === name) activeBeats.splice(i, 1);
+    }
+    activeBeats.push({ name: name, channels: BEATS[name], t0: nowMs });
+  }
+
+  function clearBeats() { activeBeats.length = 0; }
+
+  function stepBeats(nowMs) {
+    for (let i = 0; i < BEAT_KEYS.length; i++) beatOffset[BEAT_KEYS[i]] = 0;
+    for (let b = activeBeats.length - 1; b >= 0; b--) {
+      const beat = activeBeats[b];
+      let alive = false;
+      for (let c = 0; c < beat.channels.length; c++) {
+        const ch = beat.channels[c];
+        const local = nowMs - beat.t0 - ch[2];
+        if (local < 0) { alive = true; continue; }
+        const u = local / ch[3];
+        if (u >= 1) continue;
+        alive = true;
+        beatOffset[ch[0]] += ch[1] * ch[4](u);
+      }
+      if (!alive) activeBeats.splice(b, 1);
+    }
+  }
+
+  const ASLEEP = { offline: true, dormant: true, stopped: true, error: true, closing: true };
+
+  function triggerBeats(state, nowMs) {
+    if (lastKnownPhase !== null && state.phase !== lastKnownPhase) {
+      if (ASLEEP[state.phase]) clearBeats();
+      else if (state.phase === 'connecting' && ASLEEP[lastKnownPhase]) startBeat('wake', nowMs);
+      else if (state.phase === 'listening' && lastKnownPhase === 'hearing') startBeat('acknowledge', nowMs);
+    }
+    if (state.action !== lastKnownAction) {
+      if (state.action === 'executed') startBeat('executed', nowMs);
+      else if (state.action === 'failed') startBeat('failed', nowMs);
+      else if (lastKnownAction === 'staged' && state.action === 'none' && !ASLEEP[state.phase]) {
+        startBeat('cancelled', nowMs); // the offer lapsed: his "no", or the window expired
+      }
+    }
+    if (state.beats !== lastBeats) {
+      if (state.phase === 'talking' && state.beats > lastBeats) {
+        phraseTick += 1;
+        startBeat(phraseTick % 2 ? 'phrase' : 'phraseAlt', nowMs);
+      }
+      lastBeats = state.beats;
+    }
+    lastKnownPhase = state.phase;
+    lastKnownAction = state.action;
+  }
+
   let unsubscribe = null;
   let reducedTimer = null;
 
@@ -753,6 +893,9 @@ export function createReachyScene(container, controller, options) {
     breathPhase = 0;
     antPhys.zL = antPhys.zR = antPhys.x = 0;
     antPhys.vzL = antPhys.vzR = antPhys.vx = 0;
+    clearBeats();
+    for (let i = 0; i < BEAT_KEYS.length; i++) beatOffset[BEAT_KEYS[i]] = 0;
+    lastKnownPhase = state.phase; lastKnownAction = state.action; lastBeats = state.beats;
     eyeColor.setHex(pose.eyeColor);
     parts.antR.tip.material.emissiveIntensity = state.work.length > 0 ? 0.9 : 0;
     parts.antR.tip.scale.setScalar(state.work.length > 0 ? 1.15 : 1);
@@ -772,7 +915,9 @@ export function createReachyScene(container, controller, options) {
   if (opts.reducedMotion) {
     // One truthful static pose per semantic change; a slow interval lets
     // TTL/dwell housekeeping settle without a render loop.
-    unsubscribe = controller.subscribe(renderStatic);
+    unsubscribe = controller.subscribe(function (s, cause) {
+      if (cause !== 'phrase_boundary') renderStatic(); // a beat is not a pose change
+    });
     renderStatic();
     reducedTimer = setInterval(function () {
       controller.tick();
@@ -793,6 +938,9 @@ export function createReachyScene(container, controller, options) {
         workGlow: parts.antR.tip.material.emissiveIntensity,
         sceneLight: dof.sceneLight,
         lightIntensity: { hemi: hemi.intensity, key: key.intensity, rim: rim.intensity },
+        beatOffset: Object.assign({}, beatOffset),
+        activeBeats: activeBeats.map((b) => b.name),
+        bodyYaw: parts.robot.rotation.y,
         headRotation: {
           x: parts.head.rotation.x, y: parts.head.rotation.y, z: parts.head.rotation.z,
         },
@@ -808,6 +956,20 @@ export function createReachyScene(container, controller, options) {
       if (!paused) last = null;
     },
     renderOnce: function () { renderStatic(); },
+    // Deterministic stepping for verification: advance the live frame
+    // loop by a virtual interval (ms) and render — beats become readouts
+    // over time instead of eyeballed motion.
+    advance: function (ms) {
+      // Verification only: takes over the clock. The live rAF loop is
+      // stopped first so a later real frame can never see a negative dt
+      // (setPaused(false) resumes it with a fresh `last`).
+      if (opts.reducedMotion || disposed) return;
+      if (!paused) { paused = true; renderer.setAnimationLoop(null); }
+      const step = Math.max(1, Math.min(50, ms || 16));
+      let t = (last === null ? 0 : last);
+      const end = t + (ms || 16);
+      while (t < end) { t = Math.min(end, t + step); frame(t); }
+    },
     dispose: function () {
       if (disposed) return;
       disposed = true;

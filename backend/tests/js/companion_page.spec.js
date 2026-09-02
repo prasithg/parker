@@ -554,6 +554,24 @@ async function poweredActive(env) {
     assert.ok(line.hidden, 'expires on its own');
   });
 
+  await test('a sentence ending in Parker\'s real transcript is one phrase beat', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.message({ type: 'user_transcript', text: 'what is the weather' });
+    ws.message({ type: 'audio', data: env.pcmBase64(2400) });
+    assert.strictEqual(phase(env), 'talking');
+    const c = env.context.ParkerPresence.controller;
+    ws.message({ type: 'assistant_transcript_delta', text: 'It is warm' });
+    assert.strictEqual(c.getState().beats, 0, 'mid-sentence: no beat');
+    ws.message({ type: 'assistant_transcript_delta', text: ' and sunny.' });
+    assert.strictEqual(c.getState().beats, 1, 'the full stop is the beat');
+    ws.message({ type: 'assistant_transcript_delta', text: ' Anything else?' });
+    assert.strictEqual(c.getState().beats, 2);
+    // …and none of that reached the journal: no expression receipt per sentence.
+    assert.ok(!ws.sent.some((f) => f.type === 'expression' && f.reason === 'phrase_boundary'),
+      'a phrase beat is motion, not a presence transition');
+  });
+
   await test('page hide releases microphone, audio, sockets, TTS, timers, and the scene', async () => {
     const env = await bootedEnv();
     const ws = await poweredActive(env);

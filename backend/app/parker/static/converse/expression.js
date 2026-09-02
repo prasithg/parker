@@ -74,6 +74,7 @@
 
     var state = {
       phase: 'idle',
+      beats: 0, // phrase boundaries in Parker's real speech, counted while talking
       mode: null, // 'live' | 'turns' while a session is underway
       // kind -> {count, since}: several lookups of one kind can genuinely
       // be in flight at once; the overlay clears only when the LAST one
@@ -99,6 +100,7 @@
       var work = Object.keys(state.work).sort();
       return {
         phase: state.phase,
+        beats: state.beats,
         mode: state.mode,
         work: work,
         action: state.action,
@@ -315,6 +317,14 @@
       },
 
       notice: function () { return false; }, // recoverable text; never a pose change
+      // A sentence boundary in Parker's REAL transcript: a motion beat for
+      // the renderer (a micro-nod), never a phase change, and only while
+      // Parker is actually talking (docs/plans/2026-09-02-reachy-motion-vocabulary.md).
+      phrase_boundary: function () {
+        if (state.phase !== 'talking') return false;
+        state.beats += 1;
+        return true;
+      },
     };
 
     function handleEvent(name, data) {
