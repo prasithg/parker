@@ -1802,8 +1802,9 @@ def test_my_day_always_ends_with_the_limit_line_even_on_a_busy_day(db, realtime_
     assert "Parker keeps no calendar" in note
     after = note.split("Parker keeps no calendar", 1)[1]
     assert "thing" not in after and "appointment" not in after  # the limit line is the last content
-    content = [l for l in note.splitlines() if l.startswith(("His ", "A reminder", "A note", "Right now", "Parker keeps"))]
+    content = [l for l in note.splitlines() if l.startswith(("His ", "A reminder", "A note", "Right now", "Parker keeps", "…and"))]
     assert len(content) <= 12 and content[-1].startswith("Parker keeps no calendar")
+    assert any(l.startswith("…and") and "more Parker did not list" in l for l in content), "a cut is never silent"
 
 
 def test_my_day_store_failure_is_honest_never_nothing_on_record(db, realtime_enabled, brainless, upstream, monkeypatch):

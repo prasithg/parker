@@ -428,12 +428,16 @@ def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
     safe = [line for line in lines if not speech_violates_medical_boundary(line)]
     if failed_sources:
         safe.append(
-            "Parker could not read his " + " and ".join(failed_sources) + " just now."
+            "Parker could not read his " + " and ".join(failed_sources)
+            + " just now — never say he has none; say you couldn't check those."
         )
     elif len(safe) == 1:
         safe.append("Nothing is on record for him today — no reminders and no notes.")
-    # The limit line is unconditional: cap BEFORE appending it.
-    safe = safe[:11]
+    # The limit line is unconditional: cap BEFORE appending it, and never
+    # cut silently — a cut item must not read as "nothing written down".
+    if len(safe) > 11:
+        dropped = len(safe) - 10
+        safe = safe[:10] + [f"…and {dropped} more Parker did not list here — never say he has none."]
     safe.append(MY_DAY_LIMIT_LINE)
     speech = "\n".join(safe)
     if speech_violates_medical_boundary(speech):
