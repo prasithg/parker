@@ -29,6 +29,7 @@ function createEnv() {
     pageshow: [],
     keydown: [],
     audioContexts: [],
+    processors: [],
     streams: [],
     reloads: 0,
     getUserMediaMode: 'grant', // or 'deny'
@@ -62,6 +63,9 @@ function createEnv() {
       focus() {},
       remove() {},
       querySelector() { return fakeElement('anon'); },
+      _attrs: {},
+      setAttribute(name, value) { this._attrs[name] = String(value); },
+      getAttribute(name) { return this._attrs[name] ?? null; },
     };
   }
 
@@ -113,6 +117,7 @@ function createEnv() {
   class FakeAudioContext {
     constructor() {
       this.closed = false;
+      this.state = 'running';
       this.sampleRate = 48000;
       this.destination = {};
       this.startedSources = [];
@@ -125,7 +130,9 @@ function createEnv() {
     }
     createMediaStreamSource() { return { connect() {} }; }
     createScriptProcessor() {
-      return { onaudioprocess: null, connect() {}, disconnect() {} };
+      const proc = { onaudioprocess: null, connect() {}, disconnect() {} };
+      env.processors.push(proc);
+      return proc;
     }
     createBuffer(channels, length, rate) {
       const data = new Float32Array(length);
@@ -193,15 +200,59 @@ function createEnv() {
   };
 
   // ------------------------------------------------------------ network
-  function jsonResponse(body) {
-    return { ok: true, status: 200, json: async () => body, body: null };
+  env.settings = { power_on: false, cc_on: false }; // the persisted store
+  // The engine's power authority (companion_power.py), as the page sees it:
+  // 'grant' issues owner credentials; 'elsewhere' refuses 409; 'fail' is a
+  // 503 (write failed); 'unreachable' rejects the fetch. `offSave` controls
+  // whether the OFF write lands ({saved:false} otherwise).
+  env.powerMode = 'grant';
+  env.offSave = true;
+  env.powerGen = 0;
+  env.powerClaims = [];
+  env.powerReleases = [];
+  env.ownerClient = null; // settings GET: who owns power (null = "this page" by default)
+  env.gateSettings = null; // a promise the settings GET awaits (models real fetch latency)
+  function jsonResponse(body, status) {
+    const code = status || 200;
+    return { ok: code >= 200 && code < 300, status: code, json: async () => body, body: null };
   }
   const fetchImpl = (url, opts) => {
     env.fetches.push({ url, opts });
+    if (String(url).includes('/companion/power')) {
+      let body = {};
+      try { body = JSON.parse(opts.body); } catch (err) {}
+      if (body.on) {
+        env.powerClaims.push(body);
+        if (env.powerMode === 'unreachable') return Promise.reject(new Error('engine down'));
+        if (env.powerMode === 'elsewhere') {
+          return Promise.resolve(jsonResponse({ detail: { reason: 'elsewhere' } }, 409));
+        }
+        if (env.powerMode === 'fail') {
+          return Promise.resolve(jsonResponse({ detail: { reason: 'not_saved' } }, 503));
+        }
+        env.powerGen += 1;
+        env.settings.power_on = true;
+        return Promise.resolve(jsonResponse({ power_on: true, owner: 'tok-' + env.powerGen, gen: env.powerGen }));
+      }
+      env.powerReleases.push(body);
+      if (env.powerMode === 'unreachable') return Promise.reject(new Error('engine down'));
+      env.powerGen += 1;
+      if (env.offSave) env.settings.power_on = false;
+      return Promise.resolve(jsonResponse({ power_on: false, saved: !!env.offSave }));
+    }
     if (String(url).endsWith('/sessions') && opts && opts.method === 'POST') {
       return Promise.resolve(jsonResponse({
         session_id: 'sess-test', realtime_available: true, asr_ready: true,
       }));
+    }
+    if (String(url).includes('/companion/settings')) {
+      if (opts && opts.method === 'POST') {
+        try { Object.assign(env.settings, JSON.parse(opts.body)); } catch (err) {}
+        return Promise.resolve(jsonResponse(env.settings));
+      }
+      const body = () => jsonResponse(Object.assign({ owner_client: env.ownerClient == null ? 'this-page' : env.ownerClient }, env.settings));
+      if (env.gateSettings) return env.gateSettings.then(body);
+      return Promise.resolve(body());
     }
     return Promise.resolve(jsonResponse({}));
   };
@@ -265,6 +316,13 @@ function createEnv() {
   env.firePageshow = (persisted) => env.pageshow.forEach((fn) => fn({ persisted: !!persisted }));
   env.flush = () => new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
   env.pcmBase64 = (samples) => Buffer.alloc(samples * 2).toString('base64');
+  env.micFrame = (level) => {
+    const proc = env.processors[env.processors.length - 1];
+    if (!proc || !proc.onaudioprocess) return false;
+    const data = new Float32Array(4096).fill(level == null ? 0.2 : level);
+    proc.onaudioprocess({ inputBuffer: { getChannelData: () => data } });
+    return true;
+  };
 
   env.boot = function boot(pageScriptPath) {
     const expressionSource = fs.readFileSync(

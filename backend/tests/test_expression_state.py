@@ -60,32 +60,28 @@ def test_reachy_renderer_module_parses_as_esm():
     assert result.returncode == 0, result.stderr
 
 
-def _extract_page_script() -> str:
-    """The inline conversation script from the real page HTML."""
+def _extract_page_script(html: str) -> str:
+    """The first inline script (the conversation runtime) from a page."""
 
     import re
 
-    from app.parker.converse_ui import CONVERSE_PAGE_HTML
-
     scripts = [
         s
-        for s in re.findall(
-            r"<script(?:\s[^>]*)?>(.*?)</script>", CONVERSE_PAGE_HTML, re.S
-        )
+        for s in re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.S)
         if s.strip()
     ]
-    assert scripts, "no inline scripts found in the Converse page"
+    assert scripts, "no inline scripts found in the page"
     return scripts[0]
 
 
-def test_converse_page_lifecycle_spec_passes(tmp_path):
-    """The REAL page script, executed under Node against stubbed browser
-    surfaces — pinning the interleavings the independent review proved
-    broken (guard TTS vs Stop/close, drain-vs-response truth, stale socket
-    opens, page-hide teardown, repeated cycles, transition receipts)."""
+def test_lab_page_lifecycle_spec_passes(tmp_path):
+    """The REAL lab page script under Node: boot, capture teardown on page
+    hide, Stop terminality + receipt flushing."""
 
-    page_script = tmp_path / "converse-page.js"
-    page_script.write_text(_extract_page_script())
+    from app.parker.converse_ui import CONVERSE_PAGE_HTML
+
+    page_script = tmp_path / "lab-page.js"
+    page_script.write_text(_extract_page_script(CONVERSE_PAGE_HTML))
     result = _run_node(
         str(TESTS_DIR / "js" / "converse_page.spec.js"), str(page_script)
     )
@@ -93,25 +89,43 @@ def test_converse_page_lifecycle_spec_passes(tmp_path):
     assert "FAIL" not in result.stdout
 
 
+def test_companion_page_lifecycle_spec_passes(tmp_path):
+    """The REAL companion page script under Node — real power semantics,
+    persisted settings, CC, spoken-confirmation cards, and every
+    interleaving the independent review proved broken on the live lane
+    (guard TTS vs off/close, drain-vs-response truth, stale opens,
+    page-hide teardown, transition receipts)."""
+
+    from app.parker.companion_ui import COMPANION_PAGE_HTML
+
+    page_script = tmp_path / "companion-page.js"
+    page_script.write_text(_extract_page_script(COMPANION_PAGE_HTML))
+    result = _run_node(
+        str(TESTS_DIR / "js" / "companion_page.spec.js"), str(page_script)
+    )
+    assert result.returncode == 0, f"\n{result.stdout}\n{result.stderr}"
+    assert "FAIL" not in result.stdout
+
+
 def test_converse_page_inline_scripts_parse(tmp_path):
-    # The page's JavaScript lives inside a Python string; a stray escape
+    # Both pages' JavaScript lives inside Python strings; a stray escape
     # or syntax slip must fail here, not in the living room. (The module
-    # boot script uses only dynamic import(), which parses in the classic
+    # boot scripts use only dynamic import(), which parses in the classic
     # goal too.)
     import re
 
+    from app.parker.companion_ui import COMPANION_PAGE_HTML
     from app.parker.converse_ui import CONVERSE_PAGE_HTML
 
-    scripts = [
-        s
-        for s in re.findall(
-            r"<script(?:\s[^>]*)?>(.*?)</script>", CONVERSE_PAGE_HTML, re.S
-        )
-        if s.strip()
-    ]
-    assert len(scripts) >= 2, "expected the conversation script and the scene boot"
-    for index, source in enumerate(scripts):
-        path = tmp_path / f"inline-{index}.js"
-        path.write_text(source)
-        result = _run_node("--check", str(path))
-        assert result.returncode == 0, f"inline script {index}:\n{result.stderr}"
+    for page_name, html in (("lab", CONVERSE_PAGE_HTML), ("companion", COMPANION_PAGE_HTML)):
+        scripts = [
+            s
+            for s in re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.S)
+            if s.strip()
+        ]
+        assert len(scripts) >= 2, f"{page_name}: expected the runtime script and the scene boot"
+        for index, source in enumerate(scripts):
+            path = tmp_path / f"{page_name}-inline-{index}.js"
+            path.write_text(source)
+            result = _run_node("--check", str(path))
+            assert result.returncode == 0, f"{page_name} inline script {index}:\n{result.stderr}"

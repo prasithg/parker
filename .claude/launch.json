@@ -6,6 +6,12 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": ["-c", "cd backend && ./.venv/bin/uvicorn app.main:app --port 8000"],
       "port": 8000
+    },
+    {
+      "name": "parker-backend-alt",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd backend && ./.venv/bin/uvicorn app.main:app --port 8322"],
+      "port": 8322
     }
   ]
 }

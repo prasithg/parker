@@ -1,9 +1,12 @@
-"""Single-file Patient Curiosity Loop page — GET /parker/converse.
+"""The conversation lab — GET /parker/converse/lab.
 
-The first-user surface from the 2026-08-29 strategy doc: tap Start, take
-your time (pauses never cut you off — only your own Done ends the turn),
-see what Parker heard, get a brief current answer with its source named on
-screen, ask a follow-up, and Stop instantly.
+The developer/accessibility harness (chairman direction 2026-09-01: the
+person-facing /parker/converse is the companion embodiment; this page is
+where family/developers use Start/Done, typing, and timing details): tap
+Start, take your time (pauses never cut you off — only your own Done ends
+the turn), see what Parker heard, get a brief current answer with its
+source named on screen, ask a follow-up, and Stop instantly. The live
+full-duplex lane lives on the companion page only.
 
 Design contract (pinned by tests):
 
@@ -17,9 +20,7 @@ Design contract (pinned by tests):
   earcons — never a silent dead wait. The scene is driven by the
   semantic expression state (static/converse/expression.js) fed only by
   real signals; the orb + full text experience remain the complete
-  fallback. When realtime is configured, Live conversation is the
-  primary control and Start/Done is the labeled push-to-talk fallback
-  (first human-tester finding, 2026-08-31). Answers stream sentence-by-sentence
+  fallback. Answers stream sentence-by-sentence
   (the ndjson turn endpoint) so speech starts after the first sentence;
   if nothing has arrived within ~1.2 s Parker says a short truthful cue
   ("Let me check.") instead of leaving dead air.
@@ -172,12 +173,6 @@ CONVERSE_PAGE_HTML = """<!doctype html>
   }
   .big:disabled { opacity: .75; }
   #btn-start { background: #133c1f; color: #7fe3a1; border-color: #2e6b2e; }
-  #btn-live  { background: #0c2a1c; color: #7fe3a1; border-color: #2e6b46; flex: 2; }
-  /* With Live available, Start/Done is the labeled push-to-talk fallback. */
-  body.live-primary #btn-start {
-    background: #1a2432; color: #b9c6d8; border-color: #34435c; flex: 1;
-  }
-  body[data-state="live"] #orb { background: #6db3ff; box-shadow: 0 0 44px 6px rgba(109,179,255,.4); animation: breathe 2s ease-in-out infinite; }
   #btn-done  { background: #4a3a08; color: #ffd166; border-color: #8a6d1a; }
   #btn-stop  { background: #431a1f; color: #ff9aa4; border-color: #a33; }
   #btn-again { background: #1a2432; color: #b9c6d8; border-color: #34435c; }
@@ -234,7 +229,6 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 </main>
 
 <div id="controls">
-  <button class="big" id="btn-live" hidden>Live conversation</button>
   <button class="big" id="btn-start">Start listening</button>
   <button class="big" id="btn-done" hidden>Done talking</button>
   <button class="big" id="btn-stop" hidden>Stop Parker</button>
@@ -269,10 +263,9 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 //
 // Presence rides beside it: the semantic expression controller
 // (ParkerExpression) receives the SAME real signals and drives the Reachy
-// scene + the live-lane status label. It never invents state — the
-// Start/Done lane forwards its own control states, the live lane forwards
-// its websocket/audio events, and mic/output energy comes from the actual
-// audio graph.
+// scene. It never invents state — the Start/Done lane forwards its own
+// control states, and mic/output energy comes from the actual audio
+// graph. (The live full-duplex lane lives on the companion page.)
 // ---------------------------------------------------------------------------
 
 const expr = window.ParkerExpression ? ParkerExpression.createController() : null;
@@ -292,8 +285,7 @@ function presenceEnergy(levels) {
 }
 
 // The Start/Done lane's control machine already runs on real signals; map
-// its states onto the semantic phases so the two can never disagree. The
-// live lane wires its own richer events and is skipped here.
+// its states onto the semantic phases so the two can never disagree.
 const TURNS_PRESENCE = {
   idle: 'ready',
   preparing: 'connect',
@@ -313,7 +305,6 @@ let startingCapture = false;
 let lastTimings = null;
 let pendingAwaiting = '';
 let cueTimer = null;
-let realtimeAvailable = false;
 
 const $ = (id) => document.getElementById(id);
 const statusText = $('status-text');
@@ -328,14 +319,13 @@ const STATE_TEXT = {
   speaking: 'Parker is talking. Stop any time.',
   stopped: 'Stopped. Nothing else will happen until you start again.',
   error: 'Parker hit a snag on this laptop. Tap Start listening to try again.',
-  live: 'Live — just talk, and talk over Parker any time. Stop ends it.',
 };
 
 // Controls swap identity in the same screen footprint on state change; a
 // tremor double-tap must never hit the button that just appeared there.
 const TAP_GUARD_MS = 400;
 function guardButtons() {
-  const buttons = ['btn-start', 'btn-live', 'btn-done', 'btn-stop', 'btn-again', 'btn-yes', 'btn-no'];
+  const buttons = ['btn-start', 'btn-done', 'btn-stop', 'btn-again', 'btn-yes', 'btn-no'];
   for (const id of buttons) $(id).disabled = true;
   setTimeout(() => { for (const id of buttons) $(id).disabled = false; }, TAP_GUARD_MS);
 }
@@ -346,13 +336,13 @@ function setState(state, text) {
   statusText.textContent = text || STATE_TEXT[state] || '';
   const resting = state === 'idle' || state === 'stopped' || state === 'error';
   $('btn-start').hidden = !resting;
-  $('btn-live').hidden = !(resting && realtimeAvailable);
   $('btn-done').hidden = state !== 'listening';
-  $('btn-stop').hidden = !(state === 'preparing' || state === 'listening' || state === 'thinking' || state === 'speaking' || state === 'live');
+  $('btn-stop').hidden = !(state === 'preparing' || state === 'listening' || state === 'thinking' || state === 'speaking');
   $('btn-again').hidden = !(state === 'stopped' || state === 'error');
   if (previous !== state) guardButtons();
-  // Presence for the Start/Done lane; the live lane forwards its own events.
-  if (previous !== state && state !== 'live' && !liveActive() && !startingLive) {
+  // Presence for the Start/Done lane: its control machine runs on real
+  // signals, mapped onto the semantic phases.
+  if (previous !== state) {
     const event = TURNS_PRESENCE[state];
     if (event === 'connect') presence('connect', {mode: 'turns'});
     else if (event) presence(event);
@@ -494,17 +484,6 @@ async function createSession() {
     if (!res.ok) throw new Error('session create failed: ' + res.status);
     const data = await res.json();
     sessionId = data.session_id;
-    realtimeAvailable = !!data.realtime_available;
-    if (realtimeAvailable) {
-      // Live is the lane you meet (first human-tester finding, 2026-08-31):
-      // the flagship experience leads, Start/Done stays as the clearly
-      // available push-button fallback.
-      document.body.classList.add('live-primary');
-      STATE_TEXT.idle = 'Tap Live conversation, then just talk.';
-      const hint = document.querySelector('footer span');
-      if (hint) hint.textContent =
-        'Live conversation is easiest \\u2014 just talk. Start listening is the push-button way.';
-    }
     if (!data.asr_ready) {
       setNotice('Voice recognition is not ready on this laptop — typing still works.');
       showTypeRow(true);
@@ -908,321 +887,10 @@ function sendText(text) {
 }
 
 // ---------------------------------------------------------------------------
-// Live conversation: full-duplex over the server relay (gpt-realtime).
-// Parker's server stays the policy boundary; this side is mic in, audio out,
-// live captions, and one big way out.
-// ---------------------------------------------------------------------------
-
-const LIVE_RATE = 24000;
-const live = {ws: null, micCtx: null, micStream: null, proc: null, gain: null,
-              playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
-              energyTimer: null, wasPlaying: false, closingSeen: false,
-              // Output-truth gates: the provider response that produced
-              // the audio being played, and any guard speech via browser
-              // TTS. "Listening" may not be claimed while either is open.
-              responseOpen: false, guardSpeaking: 0};
-let startingLive = false;
-
-// The one place "Parker finished talking" is decided (independent review
-// blocker, 2026-09-01): the local queue being empty proves nothing while
-// the provider response is still active (network jitter between chunks) or
-// guard speech is still audible. Drained means: response done AND all
-// scheduled audio played (or flushed) AND no guard TTS outstanding. The
-// expression controller ignores the event unless it is actually talking,
-// so calling this liberally is safe.
-function maybeOutputDrained() {
-  if (!liveActive()) return;
-  if (live.responseOpen || live.guardSpeaking > 0 || live.wasPlaying) return;
-  if (live.playCtx && live.chunkMeta.length) return;
-  presence('assistant_audio_drained');
-}
-
-// Output-energy truth for the live lane: each scheduled chunk knows its
-// window and loudness; a light timer reads whichever chunk is actually
-// playing NOW and reports drain once the queue really empties.
-function watchLivePlayback() {
-  if (live.energyTimer) return;
-  live.energyTimer = setInterval(() => {
-    if (!live.playCtx) return;
-    const now = live.playCtx.currentTime;
-    live.chunkMeta = live.chunkMeta.filter((c) => c.at + c.dur > now);
-    const current = live.chunkMeta.find((c) => c.at <= now);
-    if (current) {
-      live.wasPlaying = true;
-      presenceEnergy({parker: current.energy});
-    } else {
-      presenceEnergy({parker: 0});
-      if (live.wasPlaying && now >= live.nextTime) {
-        live.wasPlaying = false;
-        maybeOutputDrained();
-      }
-    }
-  }, 120);
-}
-
-function liveActive() { return !!live.ws; }
-
-async function startLive() {
-  if (liveActive() || startingLive || capture || startingCapture) return;
-  startingLive = true; // one live line, one opening at a time
-  window.speechSynthesis && speechSynthesis.cancel();
-  clearResult();
-  presence('connect', {mode: 'live'});
-  setState('preparing');
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
-    });
-  } catch (err) {
-    startingLive = false;
-    setNotice('Parker can\\u2019t use the microphone (permission needed).');
-    setState('error', 'The microphone isn\\u2019t allowed yet \\u2014 typing still works.');
-    showTypeRow(true);
-    return;
-  }
-  if (!startingLive) { // Stop was tapped while the mic was opening
-    try { stream.getTracks().forEach((track) => track.stop()); } catch (err) {}
-    return;
-  }
-  const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const ws = new WebSocket(scheme + location.host + '/parker/converse/realtime');
-  live.ws = ws;
-  live.micStream = stream;
-  live.playCtx = new (window.AudioContext || window.webkitAudioContext)();
-  live.micCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const source = live.micCtx.createMediaStreamSource(stream);
-  live.proc = live.micCtx.createScriptProcessor(4096, 1, 1);
-  live.gain = live.micCtx.createGain();
-  live.gain.gain.value = 0;
-  live.proc.onaudioprocess = (event) => {
-    if (!live.ws || live.ws.readyState !== 1) return;
-    const data = event.inputBuffer.getChannelData(0);
-    presenceEnergy({user: micEnergy(data)}); // real mic level -> hearing
-    const pcm = resamplePCM16(data, live.micCtx.sampleRate, LIVE_RATE);
-    live.ws.send(JSON.stringify({type: 'audio', data: bufferToBase64(pcm.buffer)}));
-  };
-  source.connect(live.proc);
-  live.proc.connect(live.gain);
-  live.gain.connect(live.micCtx.destination);
-  watchLivePlayback();
-
-  startingLive = false;
-  // The identity fence on EVERY socket callback (open included): a socket
-  // that finishes opening after Stop must not restore live controls
-  // (independent review, 2026-09-01).
-  ws.onopen = () => {
-    if (ws !== live.ws) return;
-    earcon('listen'); presence('connected'); setState('live');
-  };
-  ws.onmessage = (message) => {
-    if (ws !== live.ws) return; // a frame from a dead line must change nothing
-    let event;
-    try { event = JSON.parse(message.data); } catch (err) { return; }
-    if (!event || typeof event !== 'object') return;
-    handleLiveEvent(event);
-  };
-  // A close after the server's goodbye handshake is a natural end; any
-  // other close/error is a line failure and reads as one.
-  ws.onclose = () => {
-    if (ws !== live.ws) return;
-    if (live.closingSeen) endLive('The call wrapped up.');
-    else endLive('The live line closed.', 'error');
-  };
-  ws.onerror = () => { if (ws === live.ws) endLive('The live line dropped.', 'error'); };
-}
-
-function handleLiveEvent(event) {
-  if (event.type === 'audio') {
-    // Audio implies its provider response is still open; only the
-    // bridge's authoritative response_state frame closes it.
-    live.responseOpen = true;
-    playLivePcm(event.data);
-  } else if (event.type === 'response_state') {
-    if (event.status === 'done') {
-      live.responseOpen = false;
-      maybeOutputDrained();
-    }
-  } else if (event.type === 'user_transcript') {
-    presence('user_transcript');
-    renderHeard(event.text);
-    $('speech').textContent = '';
-    $('answer-block').hidden = true;
-    $('sources').hidden = true; // last turn's evidence must not linger
-  } else if (event.type === 'sources') {
-    renderSources(event.items);
-  } else if (event.type === 'working') {
-    // Real background-work presence from the bridge: started / done / failed.
-    const status = event.status === 'started' ? 'work_start'
-      : event.status === 'failed' ? 'work_failed' : 'work_done';
-    presence(status, {kind: event.kind || 'search'});
-  } else if (event.type === 'closing') {
-    // Parker said goodbye; let the scheduled audio finish before hanging up.
-    presence('closing');
-    live.closingSeen = true;
-    const remaining = live.playCtx
-      ? Math.max(0, (live.nextTime - live.playCtx.currentTime) * 1000)
-      : 0;
-    const wsAtClosing = live.ws; // a stale timer must never end a NEW session
-    setTimeout(() => {
-      if (live.ws === wsAtClosing && liveActive()) endLive('The call wrapped up.');
-    }, remaining + 300);
-  } else if (event.type === 'assistant_transcript_delta') {
-    appendSpeechText(event.text);
-  } else if (event.type === 'clear') {
-    // The scene yields when playback was actually flushed, or when his
-    // voice cancelled a response still being thought about — but not on
-    // the routine `clear` every speech_started sends while just listening.
-    const flushed = flushLivePlayback();
-    const thinkingCancelled = expr && expr.getState().phase === 'thinking';
-    if (flushed || thinkingCancelled) presence('interrupted');
-  } else if (event.type === 'guard_redirect') {
-    presence('guard_redirect');
-    flushLivePlayback();
-    $('speech').textContent = event.text;
-    $('answer-block').hidden = false;
-    // The model's audio was cancelled server-side; the redirect must be
-    // HEARD, not just shown — speakNow bypasses the turn-generation queue
-    // (found by the adversarial verifier: speakText's stale-gen check
-    // silently cancelled it on a fresh page).
-    speakNow(event.text);
-  } else if (event.type === 'proposal_staged') {
-    presence('proposal_staged');
-    setNotice('On the screen to confirm: ' + (event.label || 'a suggested action'));
-  } else if (event.type === 'notice' || event.type === 'unavailable') {
-    setNotice(event.text || '');
-    if (event.type === 'unavailable') {
-      // Not something he did, and not an error to retry blindly: the live
-      // lane itself is unavailable. Words and pose both say so.
-      endLive('');
-      setState('error', 'Live conversation is not available right now \\u2014 Start listening and typing still work.');
-      presence('offline');
-    }
-  }
-}
-
-function playLivePcm(encoded) {
-  try {
-    if (!live.playCtx) return;
-    const raw = atob(encoded);
-    const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-    const usable = bytes.length - (bytes.length % 2);
-    if (!usable) return;
-    const pcm = new Int16Array(bytes.buffer, 0, usable / 2);
-    const floats = new Float32Array(pcm.length);
-    for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
-    const buffer = live.playCtx.createBuffer(1, floats.length, LIVE_RATE);
-    buffer.getChannelData(0).set(floats);
-    const src = live.playCtx.createBufferSource();
-    src.buffer = buffer;
-    src.connect(live.playCtx.destination);
-    const at = Math.max(live.playCtx.currentTime + 0.05, live.nextTime);
-    src.start(at);
-    live.nextTime = at + buffer.duration;
-    live.sources.push(src);
-    src.onended = () => { live.sources = live.sources.filter((s) => s !== src); };
-    // Presence: audio is genuinely scheduled — talking, with the chunk's
-    // own loudness carried for audio-reactive motion.
-    let sum = 0;
-    for (let i = 0; i < floats.length; i++) sum += floats[i] * floats[i];
-    live.chunkMeta.push({
-      at: at, dur: buffer.duration,
-      energy: Math.min(1, Math.sqrt(sum / floats.length) * 4),
-    });
-    presence('assistant_audio');
-    const orb = $('orb');
-    orb.classList.add('pulse');
-    setTimeout(() => orb.classList.remove('pulse'), 90);
-  } catch (err) { /* one bad chunk must not end the call */ }
-}
-
-function flushLivePlayback() {
-  const hadAudio = live.sources.length > 0;
-  for (const src of live.sources) { try { src.stop(); } catch (err) {} }
-  live.sources = [];
-  live.chunkMeta = [];
-  live.nextTime = 0;
-  live.wasPlaying = false;
-  presenceEnergy({parker: 0});
-  return hadAudio;
-}
-
-function speakNow(text) {
-  // Immediate speech for the live-lane guard redirect — but never outside
-  // the output lifecycle: it is fenced to THIS session's socket, counted
-  // by the drain gate (Reachy shows talking, not listening, while it is
-  // audible), and cancelled by Stop/end/page-hide like every other output
-  // (independent review, 2026-09-01).
-  if (!text || !window.speechSynthesis) return;
-  const ws = live.ws;
-  if (!ws) return; // the line is already gone; nothing may speak for it
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 0.95;
-  live.guardSpeaking += 1;
-  utterance.onstart = () => {
-    if (ws !== live.ws) { speechSynthesis.cancel(); return; }
-    presence('assistant_audio');
-    presenceEnergy({parker: 0.6});
-  };
-  const settle = () => {
-    if (ws !== live.ws) return; // a dead line's speech changes nothing
-    live.guardSpeaking = Math.max(0, live.guardSpeaking - 1);
-    presenceEnergy({parker: 0});
-    maybeOutputDrained();
-  };
-  utterance.onend = settle;
-  utterance.onerror = settle;
-  speechSynthesis.speak(utterance);
-}
-
-function endLive(noticeText, outcome) {
-  startingLive = false;
-  const ws = live.ws;
-  live.ws = null;
-  if (live.energyTimer) { clearInterval(live.energyTimer); live.energyTimer = null; }
-  flushLivePlayback();
-  // Stop/end silences EVERY output this session owns — browser TTS (the
-  // guard redirect) included, not just WebAudio (independent review,
-  // 2026-09-01). The generation fence above makes late TTS callbacks
-  // from this session inert.
-  try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
-  live.guardSpeaking = 0;
-  live.responseOpen = false;
-  if (ws) {
-    try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
-    try { ws.close(); } catch (err) {}
-  }
-  try { live.proc && live.proc.disconnect(); live.gain && live.gain.disconnect(); } catch (err) {}
-  try { live.micStream && live.micStream.getTracks().forEach((track) => track.stop()); } catch (err) {}
-  try { live.micCtx && live.micCtx.close(); } catch (err) {}
-  try { live.playCtx && live.playCtx.close(); } catch (err) {}
-  live.micCtx = null; live.micStream = null; live.proc = null; live.gain = null; live.playCtx = null;
-  live.closingSeen = false;
-  if (noticeText) setNotice(noticeText);
-  // Outcome truth (brief: real signal mapping): 'stopped' is reserved for
-  // his Stop or a natural end of the call; a dropped/failed line is an
-  // ERROR he can retry, never presented as something he did.
-  if (outcome === 'error') {
-    setState('error', 'The live line dropped \\u2014 tap Live conversation to reconnect.');
-  } else {
-    setState('stopped');
-  }
-  flushPresenceReceipts(); // the socket is gone; the beacon lane carries the tail
-}
-
-// ---------------------------------------------------------------------------
 // Stop: cancel speech, abort the request, invalidate both generations.
 // ---------------------------------------------------------------------------
 
 function stopParker() {
-  if (liveActive() || startingLive) {
-    // In live mode there is one big way out: silence now, line closed —
-    // including a microphone that is still opening.
-    earcon('stop');
-    endLive('');
-    return;
-  }
   const tapped = performance.now();
   clientGen++;
   startingCapture = false; // discard a microphone that is still opening
@@ -1254,7 +922,6 @@ function tryAgain() { clearResult(); startListening(); }
 function showTypeRow(show) { $('type-row').hidden = !show; if (show) $('type-input').focus(); }
 
 $('btn-start').addEventListener('click', startListening);
-$('btn-live').addEventListener('click', startLive);
 $('btn-done').addEventListener('click', doneTalking);
 $('btn-stop').addEventListener('click', stopParker);
 $('btn-again').addEventListener('click', tryAgain);
@@ -1270,9 +937,9 @@ $('type-row').addEventListener('submit', (event) => {
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') stopParker(); });
 
 // Page-level teardown: leaving the page must release EVERYTHING the page
-// holds — microphone tracks, audio contexts, the live socket, browser TTS,
-// timers, the GL scene — not just send an end beacon (independent review,
-// 2026-09-01). Idempotent: safe to call from pagehide and unload both.
+// holds — microphone tracks, audio contexts, browser TTS, timers, the GL
+// scene — not just send an end beacon (independent review, 2026-09-01).
+// Idempotent: safe to call from pagehide and unload both.
 let pageReleased = false;
 function releasePage() {
   if (pageReleased) return;
@@ -1282,7 +949,6 @@ function releasePage() {
   clearTimeout(cueTimer);
   try { abortCtl && abortCtl.abort(); } catch (err) {}
   teardownCapture();
-  if (liveActive() || startingLive) endLive('');
   try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   try { earcuCtx && earcuCtx.close(); } catch (err) {}
@@ -1339,11 +1005,6 @@ function recordPresenceTransition(next, cause) {
   prevPresence = next;
   if (presenceReceipts.length >= PRESENCE_RECEIPT_CAP) presenceDropped += 1;
   else presenceReceipts.push(entry);
-  if (live.ws && live.ws.readyState === 1) {
-    try {
-      live.ws.send(JSON.stringify(Object.assign({type: 'expression'}, entry)));
-    } catch (err) { /* receipts are best-effort, never call-breaking */ }
-  }
 }
 
 function flushPresenceReceipts() {
@@ -1356,16 +1017,12 @@ function flushPresenceReceipts() {
   presenceDropped = 0;
 }
 
-// The live lane's status label reads from the semantic state, so the words
-// and the pose can never disagree; the Start/Done lane keeps its longer
-// coaching lines. Exposed on window for the renderer module (and for
-// driving the real controller with synthetic fixtures during testing).
+// Exposed on window for the renderer module (and for driving the real
+// controller with synthetic fixtures during testing). The Start/Done
+// lane keeps its own longer coaching lines for the status banner.
 if (expr) {
   prevPresence = expr.getState();
   expr.subscribe((s, cause) => {
-    if (document.body.dataset.state === 'live') {
-      statusText.textContent = ParkerExpression.describe(s);
-    }
     recordPresenceTransition(s, cause);
   });
 }

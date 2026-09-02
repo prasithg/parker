@@ -83,11 +83,17 @@ like lookup, note, card, or research assistant — just talk. It is fine to
 explain in plain, general terms what a medicine or treatment is and how
 it works — that is education, not advice; doses, changes, and whether
 something applies to him go to his doctor or family. When you call
-propose_action, tell {patient_name} the action is written on the screen
-waiting for him to confirm — he taps it there, and nothing happens until
-he does — never that it is done, and if Parker replies that it could not
-be saved, say so honestly. If anything sounds urgent, say to call
-emergency services or get a family member right away.
+propose_action and it stages, Parker's reply hands you the exact
+readback: say it back to him in one short sentence and ask him to say
+yes to do it or no to cancel — then ask NOTHING else until he answers.
+For anything about HIS OWN day — his schedule, appointments, reminders,
+or when his medicines are — call my_day (Parker's own notes and
+reminders; there is no calendar) and never look_that_up.
+Never tell him to tap, touch, or press anything; his voice is the whole
+interface. Never say it is done before Parker reports the outcome, and
+if Parker replies that it could not be saved or did not work, say so
+honestly. If anything sounds urgent, say to call emergency services or
+get a family member right away.
 Right now it is {clock_line} (when this call began)."""
 
 _NO_SEARCH_PARAGRAPH = """In this live mode you do NOT have web search or any live data —
@@ -101,7 +107,7 @@ here. Ask it one clear, self-contained question in your own words, tell
 {patient_name} you're checking, and keep the conversation going — never
 sit silent waiting, never call it twice for the same question, and never
 claim to have looked something up before its background note arrives.
-Sources appear on his screen; never read web addresses aloud."""
+Never read web addresses aloud. If he asks where something came from, name the source in plain words (the tournament site, the news) — that is the only place sources are promised."""
 
 _GREETING_INSTRUCTION = (
     "The line just opened. Greet {patient_name} in one short, plain sentence "
@@ -115,11 +121,128 @@ _WRAPUP_INSTRUCTION = (
     "clear there's no rush and staying quiet is fine too."
 )
 
+# Spoken session end (docs/plans/2026-09-02-spoken-session-end.md): he
+# said he is done — hard ("that's all", "goodbye Parker") or the soft
+# closer (gratitude after a real answer, nothing pending). Parker says one
+# short goodbye, then the line winds down to dormancy.
+_SESSION_END_INSTRUCTION = (
+    "{patient_name} just said he is done for now. Say one short, warm "
+    "goodbye (under ten words, no question), mentioning he can say "
+    "\u201cHey Parker\u201d any time. Do not ask anything else."
+)
+_SOFT_CLOSE_INSTRUCTION = (
+    "{patient_name} thanked you and sounds finished. Say one short, warm "
+    "goodbye (under ten words, no question), mentioning he can say "
+    "\u201cHey Parker\u201d any time. Do not ask anything else."
+)
+
+# Deterministic enders on HIS transcript — never the model's judgment.
+# Bare "stop", "thanks", "bye", "ok" are not enders: they occur mid-
+# conversation or mean "stop talking" (Hermes review, 2026-09-01).
+_HARD_ENDERS = (
+    "goodbye parker", "bye parker", "good night parker", "goodnight parker",
+    "goodbye", "good night", "goodnight",
+    "that's all", "that's all parker", "that is all", "that's all for today",
+    "that's all for tonight", "that's it for now", "that's it thanks",
+    "that's it thank you", "i'm done", "i am done", "we're done", "i'm finished",
+    "go back to sleep", "go to sleep", "you can go to sleep", "stop listening",
+    "you can rest now", "that's everything", "nothing else thanks",
+    "nothing else thank you", "see you later parker", "bye bye parker", "bye bye",
+    "that's it for tonight", "that's it for today", "see you tomorrow parker",
+)
+# What may come BEFORE an ender at the end of an utterance ("ok that's
+# all", "no thanks, I'm done", "hey parker go to sleep") — a bounded
+# whitelist of PHRASES like the confirmation grammar's, never free text:
+# "should I go to sleep", "I can't go to sleep", "you said that's all",
+# and a first-person report like "and I go to sleep" are not exits.
+_ENDER_LEADS = frozenset(
+    ["ok", "okay", "no", "yes", "yeah", "yep", "alright", "all right", "right", "well",
+     "fine", "great", "thanks", "thank you", "no thanks", "i think", "parker", "hey",
+     "hey parker", "um", "uh", "so", "and", "ok so", "okay so", "um okay", "um ok",
+     "okay thanks", "ok thanks", "and now", "right then"]
+)
+# What may come AFTER an ender ("that's all, thanks Parker", "I'm done now").
+# Longest first, so "for now" is stripped as a whole, never as "now".
+_ENDER_TRAILERS = tuple(sorted((
+    "thanks parker", "thank you parker", "thanks", "thank you", "parker", "now",
+    "for now", "for today", "for tonight", "please",
+), key=len, reverse=True))
+_GRATITUDE_RE = __import__("re").compile(
+    r"^(?:(?:ok|okay|alright|all right|great|perfect|good|wonderful|lovely|fine|"
+    r"right) ?)*(?:that's helpful|that helps|thanks|thank you)"
+    r"(?: (?:so much|very much|a lot|a bunch|again))?(?: (?:thanks|thank you))?(?: parker)?$"
+)
+
+
+def spoken_session_end(transcript: str) -> Optional[str]:
+    """``"hard"`` for an explicit ender, ``"gratitude"`` for a thank-you that
+    may be a soft close (the bridge decides with context), else None.
+
+    A question is never an exit ("should I go to sleep?"); an ender counts
+    as the whole utterance, or its ending after a bounded lead
+    ("ok that's all"), optionally followed by a bounded trailer ("that's
+    all, thanks Parker"). Free text before an ender ("I can't go to
+    sleep", "you said that's all") is conversation.
+    """
+
+    import re as _re
+
+    raw = (transcript or "").strip()
+    if raw.endswith("?"):
+        return None
+    normalized = _re.sub(r"[,.!;:]+", " ", raw.lower())
+    normalized = " ".join(normalized.replace("\u2019", "'").split())
+    if not normalized:
+        return None
+    if _GRATITUDE_RE.match(normalized):
+        return "gratitude"
+    # Every way of peeling up to two trailers off the end ("that's it,
+    # thanks Parker" must still find "that's it thanks" as well as "that's it").
+    candidates = [normalized]
+    frontier = [normalized]
+    for _ in range(2):
+        peeled = []
+        for text in frontier:
+            for trailer in _ENDER_TRAILERS:
+                if text.endswith(" " + trailer):
+                    shorter = text[: -len(trailer) - 1].strip()
+                    if shorter and shorter not in candidates:
+                        candidates.append(shorter)
+                        peeled.append(shorter)
+        frontier = peeled
+    for core in candidates:  # the full utterance first ("bye parker"), then peeled forms
+        for phrase in _HARD_ENDERS:
+            if core == phrase:
+                return "hard"
+            if core.endswith(" " + phrase):
+                lead = core[: -len(phrase)].strip()
+                # A whitelisted lead, a thank-you ("thank you so much Parker,
+                # that's all"), or an ender before an ender ("that's all. goodbye.").
+                if lead in _ENDER_LEADS or _GRATITUDE_RE.match(lead) or _ender_after_ender(lead):
+                    return "hard"
+    return None
+
+
+def _ender_after_ender(lead: str) -> bool:
+    """"that's all. goodbye." — an ender followed by an ender is an exit."""
+
+    return any(lead == phrase or lead.endswith(" " + phrase) and lead[: -len(phrase)].strip() in _ENDER_LEADS
+               for phrase in _HARD_ENDERS)
+
+
 _GOODBYE_INSTRUCTION = (
     "Still quiet — the line closes on its own now. Say one short, warm "
     "goodbye to {patient_name} (no questions, under ten words so it finishes "
     "before the line drops), mentioning he can start Parker again any time. "
     "Never say it timed out and never remark that he went quiet."
+)
+
+_WAKE_TAIL_GREETING_INSTRUCTION = (
+    "{patient_name} just woke you by saying \u201cHey Parker\u201d and went "
+    "straight on: \u201c{tail}\u201d. Skip the standalone greeting \u2014 answer "
+    "or act on that directly in one short, warm reply (a two-word hello at "
+    "most). If it was only a fragment, ask what he needs in one short "
+    "question. If it needs an action, use propose_action as usual."
 )
 
 # A small cap on simultaneous live lines: this is a single-household
@@ -139,8 +262,20 @@ WORKER_TIMEOUT_SECONDS = 30.0
 IDLE_WRAPUP_SECONDS = 90.0
 IDLE_GOODBYE_SECONDS = 30.0
 CLOSING_DRAIN_SECONDS = 10.0
+# A staged action waits this long for his spoken yes/no before the offer
+# quietly expires (the action stays staged on the family review surface;
+# nothing executes). Short on purpose: a stray "yes" to some LATER
+# question must not execute an old offer (companion take 2, 2026-09-01).
+CONFIRM_WINDOW_SECONDS = 60.0
 _WATCHDOG_TICK_SECONDS = 1.0
 _MAX_TRACKED_EXCHANGES = 50
+# The page's first frame after connect is an optional `hello` carrying the
+# wake tail — the words he said right after "Hey Parker" while the line
+# was still connecting. The bridge waits this long for it before the
+# greeting so the first response can answer the request instead of
+# greeting him and losing it (independent review, 2026-09-01).
+HELLO_WAIT_SECONDS = 0.35
+MAX_WAKE_TAIL_CHARS = 200
 
 
 def try_acquire_bridge_slot() -> bool:
@@ -218,6 +353,14 @@ def build_session_update() -> dict[str, Any]:
             "parameters": propose_schema,
         }
     ]
+    tools.append(
+        {
+            "type": "function",
+            "name": realtime_workers.MY_DAY_TOOL["name"],
+            "description": realtime_workers.MY_DAY_TOOL["description"],
+            "parameters": realtime_workers.MY_DAY_TOOL["parameters"],
+        }
+    )
     if search_available:
         tools.append(
             {
@@ -635,13 +778,121 @@ def _stage_proposal_sync(arguments: dict[str, Any], call_sid: str) -> dict[str, 
                         "waiting there, and offer to try again."
                     ),
                 }
+            contract = _action_contract(staged)
+            readback = _action_readback(contract)
             return {
                 "status": "staged",
                 "detail": (
-                    "Staged and shown on the screen for confirmation. Nothing runs "
-                    "until it is confirmed there."
+                    f"Staged and shown on the screen for spoken confirmation. "
+                    f"Read it back to him now — {readback} — and ask him to say "
+                    "yes to do it or no to cancel. Ask nothing else until he "
+                    "answers. Nothing runs until he says yes."
                 ),
+                "action_id": staged.id,
+                "contract": contract,
+                "readback": readback,
             }
+        finally:
+            db.close()
+
+
+def _action_contract(action: Any) -> dict[str, str]:
+    """Fields read back to him that must still match before spoken execution.
+
+    Mirrors the turns lane's confirmation contract exactly — the spoken
+    "yes" binds to what was offered, never to whatever the row says later.
+    """
+
+    try:
+        payload = json.loads(action.action_payload or "{}")
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "action_type": str(action.action_type or "").strip(),
+        "recipient": str(payload.get("recipient") or "").strip(),
+        "subject": str(payload.get("subject") or "").strip(),
+        "intent_text": str(payload.get("intent_text") or "").strip(),
+    }
+
+
+def _action_readback(contract: dict[str, str]) -> str:
+    """One plain speakable line describing exactly what would run."""
+
+    subject = contract.get("subject") or "that"
+    kind = contract.get("action_type")
+    if kind == "family_message":
+        recipient = contract.get("recipient") or "family"
+        body = contract.get("intent_text") or subject
+        return f"a message to {recipient} saying “{body}”"
+    if kind == "exercise_start":
+        return f"starting {subject}"
+    if kind == "reminder":
+        return f"a reminder about “{subject}”"
+    return f"{kind or 'an action'}: {subject}"
+
+
+def _confirm_execute_sync(action_id: int, offered_contract: dict[str, str]) -> dict[str, Any]:
+    """His spoken yes: re-verify the offered contract, confirm, execute.
+
+    The same deterministic gate the turns lane ships: the action must
+    still exist, still be staged, and still match every field that was
+    read back — a row mutated between offer and yes is cancelled and
+    reported as a mismatch, never executed.
+    """
+
+    from app.parker.pipeline import (
+        cancel_staged_action,
+        confirm_staged_action,
+        execute_staged_action,
+    )
+
+    with _db_write_lock:
+        db = _make_db()
+        try:
+            from app.db.models import StagedAction
+
+            action = db.get(StagedAction, action_id)
+            if (
+                action is None
+                or action.status != "staged"
+                or _action_contract(action) != offered_contract
+            ):
+                if action is not None and action.status in {"staged", "confirmed"}:
+                    cancel_staged_action(
+                        db, action_id, cancelled_by="confirmation_contract_mismatch"
+                    )
+                return {"status": "failed", "detail": "it changed before he confirmed"}
+            confirmed = confirm_staged_action(db, action_id, confirmed_by="patient")
+            if (
+                confirmed.status != "confirmed"
+                or _action_contract(confirmed) != offered_contract
+            ):
+                cancel_staged_action(
+                    db, action_id, cancelled_by="confirmation_contract_mismatch"
+                )
+                return {"status": "failed", "detail": "it changed before he confirmed"}
+            executed = execute_staged_action(db, action_id)
+            if executed.status == "executed":
+                return {"status": "executed", "detail": str(executed.execution_result or "")[:200]}
+            return {
+                "status": "failed",
+                "detail": str(executed.execution_result or executed.status)[:200],
+            }
+        finally:
+            db.close()
+
+
+def _cancel_staged_sync(action_id: int) -> None:
+    """His spoken no: cancel the staged action (idempotent, best-effort)."""
+
+    from app.parker.pipeline import cancel_staged_action
+
+    with _db_write_lock:
+        db = _make_db()
+        try:
+            cancel_staged_action(db, action_id, cancelled_by="patient")
         finally:
             db.close()
 
@@ -677,6 +928,9 @@ class RealtimeBridge:
     ) -> None:
         self._browser_send = browser_send
         self._browser_receive = browser_receive
+        self._wake_tail = ""
+        self._early_frames: list[Any] = []
+        self._early_receive: Optional["asyncio.Future[Any]"] = None
         # Resolved at run time through the module so tests can monkeypatch
         # connect_openai without touching every construction site.
         self._upstream_connect = upstream_connect
@@ -711,6 +965,8 @@ class RealtimeBridge:
         self._wrapup_asked = False
         self._goodbye_requested = False
         self._closing_sent = False
+        self._last_assistant_speech = ""  # the soft closer needs a real answer before it
+        self._session_end_kind = ""  # "hard" | "soft" once he ended it
         # Session journal (the human-testing flywheel): every turn,
         # injection, ack, and proposal lands in realtime_session_events so
         # the review surface can show the finished session back to a human.
@@ -719,6 +975,11 @@ class RealtimeBridge:
         self._lookup_asked: dict[str, float] = {}
         self._pending_turn_writer: Optional[Callable[[], None]] = None
         self._expression_receipts = 0
+        # One spoken confirmation at a time: {action_id, contract, label,
+        # readback, offered_at}. His next transcript is parsed by the same
+        # deterministic yes/no grammar the turns lane executes on; anything
+        # else defers, and the offer expires after CONFIRM_WINDOW_SECONDS.
+        self._pending_confirm: Optional[dict[str, Any]] = None
 
     def _event_writer(
         self,
@@ -754,6 +1015,32 @@ class RealtimeBridge:
         writer = self._event_writer(kind, heard=heard, said=said, detail=detail)
         await _tracked_thread(lambda: _with_local_write_retries("session event", writer))
 
+    def _journal_in_background(
+        self,
+        kind: str,
+        heard: str = "",
+        said: str = "",
+        detail: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Journal without holding the caller: the browser pump forwards his
+        audio and must never queue behind a SQLite lock/retry (Hermes
+        review, blocker 7). The write is a tracked task: shutdown drains
+        it like a worker, and the thread counter still covers the thread."""
+
+        writer = self._event_writer(kind, heard=heard, said=said, detail=detail)
+
+        async def run() -> None:
+            try:
+                await _tracked_thread(lambda: _with_local_write_retries("session event", writer))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — evidence never breaks the call
+                logger.debug("background journal write failed", exc_info=True)
+
+        task = asyncio.create_task(run())
+        self._worker_tasks.add(task)
+        task.add_done_callback(self._worker_tasks.discard)
+
     async def _journal_expression(self, message: dict[str, Any]) -> None:
         """Journal one browser-reported semantic expression transition.
 
@@ -777,7 +1064,7 @@ class RealtimeBridge:
                 detail[field] = int(value)
         if self._expression_receipts == MAX_EXPRESSION_RECEIPTS:
             detail["truncated"] = True  # later transitions are dropped
-        await self._journal("expression", detail=detail)
+        self._journal_in_background("expression", detail=detail)
 
     async def run(self) -> None:
         connect = self._upstream_connect or globals()["connect_openai"]
@@ -785,6 +1072,7 @@ class RealtimeBridge:
         try:
             await self._upstream.send(json.dumps(build_session_update()))
             await _tracked_thread(lambda: _ensure_call_log_sync(self._call_sid))
+            await self._await_hello()
             # The greeting never waits for context: speak first, load behind.
             await self._send_system_item(self._greeting_instruction())
             await self._request_nudge()
@@ -887,7 +1175,39 @@ class RealtimeBridge:
         return settings.patient_name
 
     def _greeting_instruction(self) -> str:
+        if self._wake_tail:
+            return _WAKE_TAIL_GREETING_INSTRUCTION.format(
+                patient_name=self._patient_name(), tail=self._wake_tail
+            )
         return _GREETING_INSTRUCTION.format(patient_name=self._patient_name())
+
+    async def _await_hello(self) -> None:
+        """Read the page's optional first frame (bounded wait).
+
+        A `hello` frame carries the wake tail; anything else is put back
+        for the browser pump. Waiting costs the greeting a fraction of a
+        second only when the page sends nothing — it sends the hello the
+        instant the socket opens.
+        """
+
+        # Never cancel a receive: a frame pulled off the socket by a
+        # cancelled await would be lost. The pending receive is handed to
+        # the browser pump instead when nothing arrives in time.
+        receiving = asyncio.ensure_future(self._browser_receive())
+        done, _pending = await asyncio.wait({receiving}, timeout=HELLO_WAIT_SECONDS)
+        if not done:
+            self._early_receive = receiving
+            return
+        message = receiving.result()
+        if isinstance(message, dict) and message.get("type") == "hello":
+            tail = str(message.get("tail", "") or "").strip()
+            tail = " ".join(tail.split())[:MAX_WAKE_TAIL_CHARS]
+            self._wake_tail = tail
+            if tail:
+                self._journal_in_background("wake_tail", heard=tail)
+            return
+        self._early_frames.append(message)
+
 
     # ------------------------------------------------------------------
     # The injection mechanics: items any time, exactly one nudge emitter.
@@ -985,6 +1305,18 @@ class RealtimeBridge:
                 detail={"worker": "context", "worker_ms": worker_ms},
             )
             return
+        if result.kind == "my_day":
+            await self._send_system_item(realtime_workers.render_my_day_item(result))
+            await self._browser_send(
+                {"type": "working", "kind": "my_day", "status": "failed" if result.error else "done"}
+            )
+            await self._request_nudge()
+            await self._journal(
+                "injection",
+                said=result.speech,
+                detail={"worker": "my_day", "worker_ms": worker_ms},
+            )
+            return
         age_seconds = max(0.0, time.time() - result.started_at)
         await self._send_system_item(
             realtime_workers.render_search_item(result, age_seconds=age_seconds)
@@ -1046,6 +1378,13 @@ class RealtimeBridge:
             await asyncio.sleep(_WATCHDOG_TICK_SECONDS)
             now = time.monotonic()
             idle = now - self._last_activity
+            if (
+                self._pending_confirm is not None
+                and now - self._pending_confirm["offered_at"] > CONFIRM_WINDOW_SECONDS
+            ):
+                # The offer quietly lapses: the card clears, the action
+                # stays staged on the family review surface, nothing runs.
+                await self._expire_confirmation("no spoken answer in the window")
             if self._closing_sent:
                 # Goodbye fully sent; give the browser time to drain audio
                 # and hang up itself, then close from this side regardless.
@@ -1058,6 +1397,7 @@ class RealtimeBridge:
                 # speech must not stand itself down) — back to normal.
                 self._wrapup_asked = False
                 self._goodbye_requested = False
+                self._session_end_kind = ""
                 continue
             if not self._wrapup_asked and idle >= IDLE_WRAPUP_SECONDS:
                 self._wrapup_asked = True
@@ -1095,7 +1435,13 @@ class RealtimeBridge:
 
     async def _pump_browser(self) -> None:
         while True:
-            message = await self._browser_receive()
+            if self._early_frames:
+                message = self._early_frames.pop(0)  # read during the hello wait
+            elif self._early_receive is not None:
+                receiving, self._early_receive = self._early_receive, None
+                message = await receiving  # the hello wait's still-pending read
+            else:
+                message = await self._browser_receive()
             if not isinstance(message, dict):
                 continue  # a junk frame must not kill the call
             kind = message.get("type")
@@ -1168,6 +1514,8 @@ class RealtimeBridge:
             self._last_activity = self._last_user_activity = time.monotonic()
             if transcript:
                 await self._browser_send({"type": "user_transcript", "text": transcript})
+                await self._maybe_resolve_confirmation(transcript)
+                await self._maybe_end_session(transcript)
         elif etype == "input_audio_buffer.speech_started":
             # Barge-in: he started talking — whatever is queued goes silent.
             self._user_speaking = True
@@ -1176,8 +1524,10 @@ class RealtimeBridge:
                 # His voice stands the wrap-up/goodbye down HERE, not on the
                 # next watchdog tick — the goodbye's response.done otherwise
                 # wins the race and hangs up on him mid-word (verifier find).
+                # A spoken end he interrupts is cancelled the same way.
                 self._wrapup_asked = False
                 self._goodbye_requested = False
+                self._session_end_kind = ""
             await self._browser_send({"type": "clear"})
         elif etype == "input_audio_buffer.speech_stopped":
             self._user_speaking = False
@@ -1227,6 +1577,8 @@ class RealtimeBridge:
         # that double-counts the exchange.
         heard_now = self._user_transcript
         guard_tripped = self._guard_tripped
+        if speech:
+            self._last_assistant_speech = speech
         self._assistant_transcript = ""
         self._guard_tripped = False
         self._user_transcript = ""
@@ -1263,6 +1615,8 @@ class RealtimeBridge:
                 await self._handle_propose_action(item, arguments)
             elif name == LOOK_THAT_UP_TOOL["name"]:
                 await self._handle_look_that_up(item, arguments)
+            elif name == realtime_workers.MY_DAY_TOOL["name"]:
+                await self._handle_my_day(item, arguments)
 
         if self._goodbye_requested and not self._closing_sent:
             # The goodbye just finished streaming; hand the browser the
@@ -1294,15 +1648,41 @@ class RealtimeBridge:
                     "item": {
                         "type": "function_call_output",
                         "call_id": item.get("call_id", ""),
-                        "output": json.dumps(outcome),
+                        # The model gets status + instructions only — never
+                        # ids or contract internals it could parrot aloud.
+                        "output": json.dumps(
+                            {
+                                "status": outcome.get("status", ""),
+                                "detail": outcome.get("detail", ""),
+                            }
+                        ),
                     },
                 }
             )
         )
         await self._request_nudge()
         if outcome.get("status") == "staged":
+            label = str(arguments.get("label", ""))[:80] or str(outcome.get("readback", ""))
+            if self._pending_confirm is not None:
+                # A newer offer replaces the old one — "yes" must never be
+                # ambiguous about which action it executes.
+                await self._journal(
+                    "action_result",
+                    detail={"label": self._pending_confirm["label"], "status": "replaced"},
+                )
+            self._pending_confirm = {
+                "action_id": outcome["action_id"],
+                "contract": outcome["contract"],
+                "label": label,
+                "readback": str(outcome.get("readback", "")),
+                "offered_at": time.monotonic(),
+            }
             await self._browser_send(
-                {"type": "proposal_staged", "label": str(arguments.get("label", ""))[:80]}
+                {
+                    "type": "proposal_staged",
+                    "label": label,
+                    "readback": str(outcome.get("readback", ""))[:200],
+                }
             )
         await self._journal(
             "proposal",
@@ -1312,6 +1692,192 @@ class RealtimeBridge:
                 "status": str(outcome.get("status", "")),
                 "note": str(outcome.get("detail", ""))[:200],
             },
+        )
+
+    async def _maybe_end_session(self, transcript: str) -> None:
+        """His words end the session — deterministically for a hard ender,
+        and for gratitude only when the conversation has nothing open:
+        a substantive answer just landed (not a question), no offer is
+        waiting for his yes/no, no lookup is in flight, no wind-down is
+        already underway. Otherwise "thanks" is just conversation."""
+
+        if self._closing_sent or self._session_end_kind:
+            return
+        kind = spoken_session_end(transcript)
+        if kind is None:
+            return
+        if kind == "gratitude":
+            last = self._last_assistant_speech.strip()
+            substantive = len(last.split()) >= 6 and not last.endswith("?")
+            if (
+                not substantive
+                or self._pending_confirm is not None
+                or self._inflight_lookups
+                or self._wrapup_asked
+                or self._goodbye_requested
+            ):
+                return
+            kind = "soft"
+        pending_offer = self._pending_confirm is not None
+        if pending_offer:
+            # Nothing runs after he says he is done: the offer lapses (it
+            # stays staged on the family review surface) before the goodbye.
+            await self._expire_confirmation("he ended the session")
+        self._session_end_kind = kind
+        now = time.monotonic()
+        self._wrapup_asked = True
+        self._goodbye_requested = True
+        self._goodbye_at = now
+        self._escalation_at = now
+        instruction = _SESSION_END_INSTRUCTION if kind == "hard" else _SOFT_CLOSE_INSTRUCTION
+        await self._send_system_item(instruction.format(patient_name=self._patient_name()))
+        await self._request_nudge()
+        await self._journal(
+            "session_end",
+            heard=transcript,
+            detail={
+                "kind": kind,
+                "pending_offer_expired": pending_offer,
+                "lookups_in_flight": len(self._inflight_lookups),
+            },
+        )
+
+    async def _expire_confirmation(self, reason: str) -> None:
+        expired = self._pending_confirm
+        self._pending_confirm = None
+        if expired is None:
+            return
+        await self._browser_send(
+            {"type": "action_result", "status": "expired", "label": expired["label"]}
+        )
+        await self._journal(
+            "action_result",
+            detail={"label": expired["label"], "status": "expired", "reason": reason},
+        )
+
+    async def _maybe_resolve_confirmation(self, transcript: str) -> None:
+        """His spoken answer to a staged offer — the same deterministic
+        yes/no grammar the turns lane executes on (companion take 2,
+        2026-09-01: no taps; voice is the whole interface).
+
+        Anything that is not a clear yes/no DEFERS: the offer stays open
+        for its window and the conversation continues — never cancel,
+        never execute on ambiguity. The model is instructed to ask
+        nothing else while the offer is open, and the short window bounds
+        the stray-"yes" risk.
+        """
+
+        pending = self._pending_confirm
+        if pending is None:
+            return
+        if time.monotonic() - pending["offered_at"] > CONFIRM_WINDOW_SECONDS:
+            await self._expire_confirmation("answer arrived after the window")
+            return
+        import re as _re
+
+        from app.conversation.textloop import _confirmation_reply_kind
+
+        normalized = _re.sub(r"[,.!?]+", " ", transcript).strip().lower()
+        normalized = _re.sub(r"\s+", " ", normalized)
+        reply = _confirmation_reply_kind(normalized)
+        if reply is None:
+            return
+        self._pending_confirm = None
+        label = pending["label"]
+        asked = time.monotonic()
+        if reply == "no":
+            try:
+                await _tracked_thread(lambda: _cancel_staged_sync(pending["action_id"]))
+            except Exception:  # noqa: BLE001 — the cancel row is best-effort
+                logger.warning("realtime spoken-no cancel failed", exc_info=True)
+            await self._browser_send(
+                {"type": "action_result", "status": "cancelled", "label": label}
+            )
+            await self._send_system_item(
+                "He said no — the action is cancelled and nothing will run. "
+                "Acknowledge in one short sentence."
+            )
+            await self._request_nudge()
+            await self._journal(
+                "action_result", heard=transcript, detail={"label": label, "status": "cancelled"}
+            )
+            return
+        try:
+            outcome = await _tracked_thread(
+                lambda: _confirm_execute_sync(pending["action_id"], pending["contract"])
+            )
+        except Exception:  # noqa: BLE001 — an execution crash must be reported, not hidden
+            logger.warning("realtime spoken-yes execution crashed", exc_info=True)
+            outcome = {"status": "failed", "detail": "it hit a problem partway"}
+        status = "executed" if outcome.get("status") == "executed" else "failed"
+        await self._browser_send(
+            {"type": "action_result", "status": status, "label": label}
+        )
+        if status == "executed":
+            await self._send_system_item(
+                "The action executed exactly as read back. Tell him it's done, "
+                "in one short sentence — no extra promises."
+            )
+        else:
+            await self._send_system_item(
+                "The action did NOT run — "
+                + str(outcome.get("detail", ""))[:160]
+                + ". Tell him plainly it didn't go through and that it's on the "
+                "family review page; never claim it worked."
+            )
+        await self._request_nudge()
+        await self._journal(
+            "action_result",
+            heard=transcript,
+            detail={
+                "label": label,
+                "status": status,
+                "note": str(outcome.get("detail", ""))[:200],
+                "decide_ms": int((time.monotonic() - asked) * 1000),
+            },
+        )
+
+    async def _handle_my_day(self, item: dict[str, Any], arguments: dict[str, Any]) -> None:
+        """His day from Parker's own records — local, always available."""
+
+        asked = time.monotonic()
+        about = str(arguments.get("about", "")).strip()[:80]
+        if "my_day:" in self._inflight_lookups:
+            ack = {"status": "already_working", "detail": "Still gathering that — keep chatting."}
+        else:
+            self._inflight_lookups.add("my_day:")  # namespaced: never a search question
+            await self._browser_send({"type": "working", "kind": "my_day", "status": "started"})
+            self._spawn_worker(
+                "my_day",
+                lambda: realtime_workers.run_my_day_worker(_make_db),
+                inflight_key="my_day:",
+                question=about,
+            )
+            ack = {
+                "status": "working",
+                "detail": (
+                    "Started — his day arrives shortly as a background note from "
+                    "Parker's own records. Tell him you're checking his notes, in "
+                    "your own words, and keep talking."
+                ),
+            }
+        await self._upstream.send(
+            json.dumps(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": item.get("call_id", ""),
+                        "output": json.dumps(ack),
+                    },
+                }
+            )
+        )
+        await self._request_nudge()
+        await self._journal(
+            "lookup_ack",
+            detail={"question": about, "worker": "my_day", "status": ack["status"],
+                    "ack_ms": int((time.monotonic() - asked) * 1000)},
         )
 
     async def _handle_look_that_up(

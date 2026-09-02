@@ -509,8 +509,8 @@ def test_http_turn_response_never_leaks_capture_internals(db, http_store):
 # ---------------------------------------------------------------------------
 
 
-def test_converse_page_serves_the_four_controls_without_auth(db):
-    response = client.get("/parker/converse")
+def test_lab_page_serves_the_four_controls_without_auth(db):
+    response = client.get("/parker/converse/lab")
     assert response.status_code == 200
     html = response.text
     for control in ("btn-start", "btn-done", "btn-stop", "btn-again", "btn-yes", "btn-no"):
@@ -520,8 +520,34 @@ def test_converse_page_serves_the_four_controls_without_auth(db):
     assert "Stop Parker" in html
 
 
-def test_converse_page_pins_stop_and_stale_guard_mechanics(db):
-    html = client.get("/parker/converse").text
+def test_companion_page_is_the_person_facing_surface(db):
+    """Chairman direction 2026-09-01: /parker/converse is the virtual
+    Reachy embodiment — power switch + CC only. No typing, no per-turn
+    buttons, no transcript panel, and nothing ever asks him to tap."""
+
+    response = client.get("/parker/converse")
+    assert response.status_code == 200
+    html = response.text
+    assert 'id="power"' in html and 'role="switch"' in html
+    assert 'id="cc-toggle"' in html
+    assert 'id="reachy-mount"' in html
+    # The whole button/typing harness is absent from the companion.
+    for absent in ("btn-start", "btn-done", "btn-again", "btn-yes", "btn-no",
+                   "type-input", "Type instead", "Start listening"):
+        assert absent not in html, absent
+    # The live lane belongs to the companion; dormancy runs on the LOCAL
+    # wake lane — no cloud line until "Hey Parker".
+    assert "/parker/converse/realtime" in html
+    assert "/parker/converse/wake" in html
+    assert "startDormant" in html and "wake_detected" in html
+    # Spoken confirmation: the staged card asks for a spoken yes/no.
+    # (companion_page.spec.js pins the RENDERED card text as tap-free.)
+    assert "proposal_staged" in html
+    assert "say \\u201Cyes\\u201D to do it" in html
+
+
+def test_lab_page_pins_stop_and_stale_guard_mechanics(db):
+    html = client.get("/parker/converse/lab").text
     assert "speechSynthesis.cancel()" in html
     assert "clientGen" in html  # stale results are dropped client-side
     assert "abortCtl.abort()" in html
@@ -530,12 +556,79 @@ def test_converse_page_pins_stop_and_stale_guard_mechanics(db):
     assert "getUserMedia" in html
 
 
-def test_converse_page_never_speaks_urls(db):
-    html = client.get("/parker/converse").text
+def test_lab_page_never_speaks_urls(db):
+    html = client.get("/parker/converse/lab").text
     # Sources render as label + freshness; the URL is title-only.
     assert "chip.title = source.url" in html
     # The spoken text is exactly data.speech — no source narration path.
     assert "SpeechSynthesisUtterance(text)" in html
+
+
+def test_companion_settings_persist_and_default_off(db):
+    """Power/CC survive restarts; a fresh install is OFF — Parker never
+    listens until someone deliberately turns it on. Power changes ONLY
+    through the authority route; the settings route refuses it."""
+
+    fresh = client.get("/parker/converse/companion/settings").json()
+    assert fresh["power_on"] is False and fresh["cc_on"] is False
+    assert fresh["live"] == {"wake": 0, "realtime": 0}
+
+    granted = client.post(
+        "/parker/converse/companion/power", json={"on": True, "client_id": "tab-a"}
+    ).json()
+    assert granted["power_on"] is True and granted["owner"] and granted["gen"] >= 1
+
+    saved = client.post(
+        "/parker/converse/companion/settings", json={"cc_on": True}
+    ).json()
+    assert saved["power_on"] is True and saved["cc_on"] is True  # partial update
+
+    again = client.get("/parker/converse/companion/settings").json()
+    assert again["power_on"] is True and again["cc_on"] is True
+    assert again["owner_client"] == "tab-a"
+
+    refused = client.post(
+        "/parker/converse/companion/settings", json={"power_on": False}
+    )
+    assert refused.status_code == 400  # a page cannot write power behind the authority
+
+    off = client.post("/parker/converse/companion/power", json={"on": False}).json()
+    assert off["power_on"] is False and off["saved"] is True  # durable — the restart contract
+    assert client.get("/parker/converse/companion/settings").json()["power_on"] is False
+
+
+def test_receipts_route_carries_expression_transitions(db):
+    """The HTTP receipts lane must LET THE LIST THROUGH: the Pydantic
+    route model silently dropped `expression` while the store already
+    allowlisted it (escape found 2026-09-01)."""
+
+    store = make_store(db)
+    router_module = __import__(
+        "app.parker.converse_router", fromlist=["converse_store"]
+    )
+    original = router_module.converse_store
+    router_module.converse_store = store
+    try:
+        session_id = store.create_session()["session_id"]
+        written = []
+        store._receipt_writer = written.append
+        response = client.post(
+            f"/parker/converse/sessions/{session_id}/receipts",
+            json={
+                "expression": [
+                    {"at_ms": 120, "gen": 1, "from": "listening", "to": "talking",
+                     "reason": "assistant_audio", "junk": {"drop": "me"}},
+                ],
+                "expression_dropped": 0,
+            },
+        )
+        assert response.status_code == 200
+        assert written, "the receipt reached the writer"
+        entry = written[-1]
+        assert entry["expression"][0]["to"] == "talking"
+        assert "junk" not in entry["expression"][0]  # allowlisted fields only
+    finally:
+        router_module.converse_store = original
 
 
 # ---------------------------------------------------------------------------
@@ -823,10 +916,10 @@ def test_http_stream_endpoint_reports_errors_as_events(db, http_store):
     assert events[-1]["status"] == 404
 
 
-def test_converse_page_carries_the_presence_layer(db):
+def test_lab_page_carries_the_presence_layer(db):
     """Thinking/talking presence: orb, earcons, streaming reader, honest cue."""
 
-    html = client.get("/parker/converse").text
+    html = client.get("/parker/converse/lab").text
     assert 'id="orb"' in html
     assert "earcon(" in html            # audible tap confirmation
     assert "turns/stream" in html       # sentence-streaming endpoint
@@ -836,13 +929,15 @@ def test_converse_page_carries_the_presence_layer(db):
     assert "Thinking…" in html and "Parker is talking" in html
 
 
-def test_converse_page_offers_the_live_lane_behind_availability(db):
-    html = client.get("/parker/converse").text
-    assert 'id="btn-live"' in html
-    assert "Live conversation" in html
-    assert "realtime_available" in html   # server decides; the page just shows
-    assert "/parker/converse/realtime" in html
-    assert "talk over Parker any time" in html  # barge-in is part of the promise
+def test_live_lane_lives_only_on_the_companion(db):
+    """The lab is the push-button harness; the companion owns the live
+    full-duplex lane (companion take 2, 2026-09-01)."""
+
+    lab = client.get("/parker/converse/lab").text
+    assert "/parker/converse/realtime" not in lab
+    assert "btn-live" not in lab
+    companion = client.get("/parker/converse").text
+    assert "/parker/converse/realtime" in companion
 
 
 def test_streamed_speech_is_always_a_prefix_of_the_final_speech(db):
@@ -864,74 +959,133 @@ def test_streamed_speech_is_always_a_prefix_of_the_final_speech(db):
     assert len(streamed) <= 360  # the trim cap holds on the streamed path too
 
 
-def test_converse_page_mounts_the_reachy_presence_scene(db):
-    """The 3D Reachy Mini scene (2026-08-31 brief): mounted as enhancement,
-    orb + full text experience kept as the fallback."""
+def test_both_pages_mount_the_reachy_presence_scene(db):
+    """The 3D Reachy Mini scene: mounted as an enhancement on both pages,
+    with a complete non-WebGL fallback."""
 
-    html = client.get("/parker/converse").text
-    assert 'id="reachy-mount"' in html
-    assert "/parker/converse/static/converse/expression.js" in html
-    assert "createReachyScene" in html
-    assert "scene-active" in html
-    assert 'aria-live="polite"' in html
-    # The renderer boots as an independent module — the microphone never
-    # waits for it — and the orb stays in the markup as the fallback.
-    assert 'type="module"' in html
-    assert 'id="orb"' in html
+    lab = client.get("/parker/converse/lab").text
+    assert 'id="reachy-mount"' in lab
+    assert "createReachyScene" in lab and 'type="module"' in lab
+    assert 'id="orb"' in lab  # the lab keeps the orb + text fallback
+
+    companion = client.get("/parker/converse").text
+    assert 'id="reachy-mount"' in companion
+    assert "createReachyScene" in companion and 'type="module"' in companion
+    assert 'id="orb-fallback"' in companion  # presence survives without WebGL
+    assert 'aria-live="polite"' in companion  # nonvisual state announcements
 
 
 def test_converse_page_forwards_real_signals_to_the_expression_state(db):
     """Motion tells the truth: every presence input is a real signal."""
 
-    html = client.get("/parker/converse").text
-    assert "ParkerExpression.createController" in html
-    assert "presence('connect', {mode: 'live'})" in html
-    assert "'work_start'" in html and "'work_failed'" in html
-    assert "assistant_audio_drained" in html
-    assert "micEnergy(" in html  # hearing derives from actual mic level
-    # `clear` yields the scene only on a real flush or a cancelled think.
-    assert "flushLivePlayback();" in html
-    assert "if (flushed || thinkingCancelled) presence('interrupted')" in html
-    # The PAGE owns truth housekeeping: overlay TTLs and the interrupt
-    # dwell keep expiring with no WebGL renderer at all (review find).
-    assert "expr.tick()" in html
+    lab = client.get("/parker/converse/lab").text
+    assert "ParkerExpression.createController" in lab
+    assert "micEnergy(" in lab  # hearing derives from actual mic level
+    assert "expr.tick()" in lab  # the page owns truth housekeeping
     # Waiting posture rides the real awaiting state of a finished turn:
     # choices are the asking/repair posture, yes_no is an authoritative
     # confirmation offer (staged state), neither means resolved.
-    assert "presence('choices_offered')" in html
-    assert "presence('yes_no_offered')" in html
-    assert "presence('attention_resolved')" in html
+    assert "presence('choices_offered')" in lab
+    assert "presence('yes_no_offered')" in lab
+    assert "presence('attention_resolved')" in lab
+
+    companion = client.get("/parker/converse").text
+    assert "ParkerExpression.createController" in companion
+    assert "presence('connect', {mode: 'live'})" in companion
+    assert "'work_start'" in companion and "'work_failed'" in companion
+    assert "assistant_audio_drained" in companion
+    assert "micEnergy(" in companion
+    # `clear` yields the scene only on a real flush or a cancelled think.
+    assert "flushLivePlayback();" in companion
+    assert "if (flushed || thinkingCancelled) presence('interrupted')" in companion
+    assert "expr.tick()" in companion
+    # Execution truth: only the bridge's real outcome frame may claim it.
+    assert "presence('action_executed')" in companion
+    assert "presence('action_failed')" in companion
 
 
-def test_converse_page_separates_stop_from_failure_outcomes(db):
-    """'Stopped' is his; a dropped line is an error he can retry — the
-    page never presents a failure as something he did (review find)."""
+def test_companion_cards_are_accessible_live_regions(db):
+    """Exact staged/result/error text must reach VoiceOver: offers and
+    outcomes are a polite, atomic status region; failures, line errors,
+    and the medical redirect are an assertive alert (independent review,
+    2026-09-01, blocker 6)."""
 
     html = client.get("/parker/converse").text
-    assert "endLive('The live line dropped.', 'error')" in html
-    assert "endLive('The live line closed.', 'error')" in html
-    assert "live.closingSeen" in html  # a post-goodbye close stays a normal end
-    assert "presence('offline')" in html  # unavailable is neither stop nor error
-    # a stale goodbye-drain timer can never end a NEW session
-    assert "live.ws === wsAtClosing" in html
+    assert '<div id="card" role="status" aria-live="polite" aria-atomic="true" hidden></div>' in html
+    assert '<div id="alert" role="alert" aria-atomic="true" hidden></div>' in html
+    assert "const ALERT_KINDS = {failed: true, error: true, guard: true};" in html
+    # CC-on source truth: bounded labels, never URLs; CC-off shows nothing.
+    assert "'Checked the web'" in html
+    assert ".slice(0, 3)" in html and ".slice(0, 40)" in html
+    assert "if (!ccOn || !items || !items.length) return;" in html
 
 
-def test_converse_page_makes_live_primary_when_available(db):
-    """The Live lane is the lane you meet (first tester finding): the page
-    carries the live-primary styling and the live control leads the row."""
+def test_companion_dormant_reads_as_resting_not_on(db):
+    """Powered-on-resting and engaged-listening must never be confusable
+    (Pras, session 3): the switch label names rest and the wake phrase."""
 
     html = client.get("/parker/converse").text
-    assert "live-primary" in html
-    assert html.index('id="btn-live"') < html.index('id="btn-start"')
-    assert "Start listening is the push-button way" in html
+    assert "'Resting — say “Hey Parker”'" in html
+    assert "state === 'on' ? 'Parker is on'" in html
 
 
-def test_converse_page_speaks_the_final_remainder_and_live_redirect(db):
+def test_companion_reports_its_scene_outcome_as_a_receipt(db):
+    """The packaged WKWebView gate is judged from the engine's own
+    receipts: the page reports webgl_ready or webgl_fallback once."""
+
     html = client.get("/parker/converse").text
+    assert "sceneReceipt('webgl_ready')" in html
+    assert "sceneReceipt('webgl_fallback')" in html
+    assert "window.ParkerReceipts = {post: postReceipt};" in html
+
+
+def test_companion_power_is_engine_owned(db):
+    """The page claims power, sockets carry the owner credentials, off is
+    released locally first and persisted with visible retries, a missing
+    local wake model fails closed, and reconnects are bounded."""
+
+    html = client.get("/parker/converse").text
+    assert "/parker/converse/companion/power" in html
+    assert "'/parker/converse/wake' + powerQuery()" in html
+    assert "'/parker/converse/realtime' + powerQuery()" in html
+    assert "{type: 'hello', tail: wake.tail || ''}" in html  # the handoff contract
+    assert "const OFF_SAVE_DELAYS = [1000, 3000, 8000];" in html
+    assert "if (live.retries >= 1) {" in html  # one retry per activation
+    assert "powerOff();\n      showCard('error', 'Wake listening needs the local voice model" in html
+    assert "persistSettings({power_on" not in html  # power never bypasses the authority
+
+
+def test_companion_separates_power_off_from_failure_outcomes(db):
+    """Power off is his; a dropped line is an error that quietly retries —
+    the companion never presents a failure as something he did."""
+
+    html = client.get("/parker/converse").text
+    assert "lineDropped" in html
+    assert "reconnecting" in html  # the honest error card
+    assert "genAtDrop !== powerGen" in html  # the switch outruns a stale retry
+    assert "presence('offline')" in html  # off is neither stop nor error
+
+
+def test_companion_power_is_real_and_persisted(db):
+    """Power is a product state: persisted server-side, restored on boot,
+    and off means nothing listens (companion take 2, 2026-09-01)."""
+
+    html = client.get("/parker/converse").text
+    assert "/parker/converse/companion/settings" in html
+    assert "power_on" in html and "cc_on" in html
+    assert "fromBoot" in html  # a restore without a gesture stays honest
+    assert "getTracks().forEach((track) => track.stop())" in html
+
+
+def test_lab_page_speaks_the_final_remainder(db):
+    html = client.get("/parker/converse/lab").text
     # the confirmation question / 'Want more detail?' remainder is spoken
     assert "finalSpeech.slice(spokenSoFar.length)" in html
     assert "startsWith(spokenSoFar)" in html
-    # the live-lane medical redirect bypasses the turn-generation queue
-    assert "speakNow(" in html
-    # one live line, one opening at a time — and Stop covers a mic mid-open
-    assert "startingLive" in html
+
+
+def test_companion_guard_redirect_is_heard_and_fenced(db):
+    html = client.get("/parker/converse").text
+    assert "speakNow(" in html  # the medical redirect is HEARD
+    assert "guardSpeaking" in html  # and counted by the drain gate
+    assert "startingLive" in html  # one line, one opening at a time

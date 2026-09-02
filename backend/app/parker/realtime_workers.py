@@ -282,6 +282,194 @@ CONTEXT_SOURCES: tuple[tuple[str, Callable[[Any], list[str]]], ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# The "my day" worker: what Parker actually has on record for him, locally.
+# Call 41 (Pras's session-3 test): "what do I have today" went to the web
+# search worker, which honestly said it had no calendar. Parker HAS local
+# reminders, medicine times, and family notes — this worker reads them
+# and names its limit: notes and reminders, never a calendar.
+# ---------------------------------------------------------------------------
+
+MY_DAY_TOOL: dict[str, Any] = {
+    "name": "my_day",
+    "description": (
+        "What Parker has on record for HIM today and tomorrow: his medicine "
+        "times by name, reminders he has set, and notes the family left. Use "
+        "it for any question about his own day, schedule, appointments, "
+        "reminders, or when his medicines are — never look_that_up for those. "
+        "It reads Parker's own local notes only; there is no calendar. It "
+        "works in the background — keep talking, the answer arrives as a note."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "about": {
+                "type": "string",
+                "description": "What he asked, in a few words (today, tomorrow, my pills, my reminders).",
+            }
+        },
+        "required": [],
+    },
+}
+
+MY_DAY_LIMIT_LINE = (
+    "Parker keeps no calendar — only the reminders and notes written down here."
+)
+
+
+def _my_day_medication_lines(db: Any) -> list[str]:
+    """Every active medicine's scheduled times — names and times only, never a dose."""
+
+    from app.meds.tracker import _parse_schedule_times, get_active_medications
+
+    lines: list[str] = []
+    for medication in get_active_medications(db):
+        times = _parse_schedule_times(medication.schedule_times)
+        if not times:
+            continue
+        spoken = [_speakable_time(t) for t in times]
+        joined = ", ".join(spoken[:-1]) + f" and {spoken[-1]}" if len(spoken) > 1 else spoken[0]
+        lines.append(f"His {medication.name} is scheduled at {joined}.")
+    return lines
+
+
+def _speakable_time(hhmm: str) -> str:
+    try:
+        hour, minute = (int(part) for part in str(hhmm).split(":")[:2])
+    except ValueError:
+        return str(hhmm)
+    suffix = "AM" if hour < 12 else "PM"
+    hour12 = hour % 12 or 12
+    return f"{hour12}:{minute:02d} {suffix}" if minute else f"{hour12} {suffix}"
+
+
+def _my_day_reminder_lines(db: Any) -> list[str]:
+    """Reminders he set through Parker: waiting or already set, newest first."""
+
+    import json as _json
+    from datetime import datetime, timedelta
+
+    from app.db.models import StagedAction
+
+    since = datetime.utcnow() - timedelta(days=2)
+    rows = (
+        db.query(StagedAction)
+        .filter(StagedAction.action_type == "reminder")
+        .filter(StagedAction.status.in_(("staged", "confirmed", "executed")))
+        .filter(StagedAction.created_at >= since)
+        .order_by(StagedAction.created_at.desc())
+        .limit(6)
+        .all()
+    )
+    lines: list[str] = []
+    for action in rows:
+        try:
+            payload = _json.loads(action.action_payload or "{}")
+        except ValueError:
+            payload = {}
+        subject = str(payload.get("subject") or payload.get("intent_text") or "").strip()
+        if not subject:
+            continue
+        state = "waiting for his yes" if action.status == "staged" else "set"
+        lines.append(f"A reminder ({state}): {subject}.")
+    return lines
+
+
+def _my_day_note_lines(db: Any) -> list[str]:
+    """Family/context notes that read like plans — appointments, events."""
+
+    import re as _re
+
+    keywords = ("appointment", "visit", "tomorrow", "today", "tonight", "friday",
+                "monday", "tuesday", "wednesday", "thursday", "saturday", "sunday",
+                "o'clock", " at ", "coming", "bring")
+    lines = []
+    section = ""
+    for line in _memory_lines(db):
+        if not line.startswith("- "):
+            section = line.strip().lower()  # a header: "Recent memories:", "Ongoing concerns:"
+            continue
+        if "concern" in section:
+            continue  # worries are not plans
+        text = _re.sub(r"^- (\[[^\]]+\] )?", "", line).strip()
+        lowered = text.lower()
+        if any(key in lowered for key in keywords):
+            lines.append(f"A note the family left: {text}")
+    return lines[:4]
+
+
+def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
+    """His day from Parker's own records. Never raises; never a dose."""
+
+    started = time.time()
+    lines: list[str] = [f"Right now it is {local_date_line()}."]
+    db = None
+    failed_sources: list[str] = []
+    try:
+        db = make_db()
+        for name, source in (
+            ("medications", _my_day_medication_lines),
+            ("reminders", _my_day_reminder_lines),
+            ("notes", _my_day_note_lines),
+        ):
+            try:
+                lines.extend(source(db))
+            except Exception:  # noqa: BLE001 — one failing source never kills the answer
+                logger.debug("my_day source %s failed", name, exc_info=True)
+                failed_sources.append(name)
+    except Exception:  # noqa: BLE001 — the store itself: an honest error, never "nothing on record"
+        logger.warning("my_day worker could not open the store", exc_info=True)
+        return WorkerResult(
+            kind="my_day",
+            error="could not read his notes",
+            started_at=started,
+            finished_at=time.time(),
+        )
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:  # noqa: BLE001
+                pass
+    safe = [line for line in lines if not speech_violates_medical_boundary(line)]
+    if failed_sources:
+        safe.append(
+            "Parker could not read his " + " and ".join(failed_sources)
+            + " just now — never say he has none; say you couldn't check those."
+        )
+    elif len(safe) == 1:
+        safe.append("Nothing is on record for him today — no reminders and no notes.")
+    # The limit line is unconditional: cap BEFORE appending it, and never
+    # cut silently — a cut item must not read as "nothing written down".
+    if len(safe) > 11:
+        dropped = len(safe) - 10
+        safe = safe[:10] + [f"…and {dropped} more Parker did not list here — never say he has none."]
+    safe.append(MY_DAY_LIMIT_LINE)
+    speech = "\n".join(safe)
+    if speech_violates_medical_boundary(speech):
+        speech = f"Right now it is {local_date_line()}.\n{MY_DAY_LIMIT_LINE}"
+    return WorkerResult(kind="my_day", speech=speech, started_at=started, finished_at=time.time())
+
+
+def render_my_day_item(result: WorkerResult) -> str:
+    """The system item narrating his day back to the front model."""
+
+    if result.error:
+        return (
+            "Parker could not read his notes just now.\n"
+            f"Internal reason, never to be said aloud: {result.error}.\n"
+            "Tell him honestly that you couldn't check his notes and offer to "
+            "try again in a moment. Never say nothing is on record."
+        )
+    return (
+        "Here is what Parker has on record for him — from Parker's own local "
+        "notes, never a calendar. Tell him plainly in one or two short "
+        "sentences; if something is missing, say Parker has nothing written "
+        "down for it and offer to set a reminder.\n"
+        f"{_RESULT_OPEN}\n{_strip_markers(result.speech)}\n{_RESULT_CLOSE}"
+    )
+
+
 def run_context_worker(
     make_db: Callable[[], Any],
     sources: tuple[tuple[str, Callable[[Any], list[str]]], ...] = CONTEXT_SOURCES,
@@ -400,9 +588,10 @@ def render_search_item(result: WorkerResult, *, age_seconds: float) -> str:
         "If the conversation has clearly moved past it, mention it only "
         "briefly or let it go — never force it in.\n"
         f"{_RESULT_OPEN}\n{_strip_markers(result.speech)}\n{_RESULT_CLOSE}\n"
-        "Where this came from is shown on his screen — if he asks, say the "
-        "sources are on the screen; never invent a source name and never "
-        "read web addresses aloud."
+        "If he asks where this came from, name the source in plain words "
+        "(the tournament site, the news) — sources appear on his screen only "
+        "when captions are on; never invent a source name and never read web "
+        "addresses aloud."
     )
 
 

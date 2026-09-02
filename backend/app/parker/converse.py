@@ -235,6 +235,16 @@ class ConverseStore:
         create_tables()
         return SessionLocal()
 
+    def transcriber(self):
+        """The warmed shared local transcriber, or None when unavailable.
+
+        The wake lane (app/parker/wake.py) runs on the SAME model the
+        push-button lane transcribes with — one load, one cache.
+        """
+
+        self._warm_transcriber()
+        return self._transcriber
+
     def _warm_transcriber(self) -> bool:
         """Load the shared local model exactly once; remember an unavailable state."""
 
@@ -243,9 +253,11 @@ class ConverseStore:
                 return True
             loader = self._transcriber_loader
             if loader is None:
+                from app.config import settings
                 from app.voice.transcribe import load_local_transcriber
 
-                loader = load_local_transcriber
+                def loader():  # the family's thread cap applies to the shared model
+                    return load_local_transcriber(cpu_threads=settings.parker_asr_cpu_threads)
             try:
                 self._transcriber = loader()
                 self._transcriber_error = None

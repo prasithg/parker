@@ -212,6 +212,10 @@ test('stop is terminal for the ENTIRE event vocabulary', () => {
   // readiness, a typed turn, or a real error/offline report.
   const allowedFromStopped = new Set([
     'connect', 'ready', 'user_transcript', 'error', 'offline', 'stopped',
+    // The powered-on companion re-arms wake listening after a session
+    // ends — dormancy is a deliberate page-asserted state, not a stale
+    // session event. (wake_detected itself stays fenced to dormant.)
+    'dormant',
   ]);
   const c = makeController();
   assert.ok(c.events.length >= 20, 'vocabulary introspection lost events');
@@ -438,17 +442,18 @@ test('proposal_staged sets the waiting-on-screen overlay', () => {
   assert.strictEqual(c.getState().action, 'staged');
 });
 
-test('no event path can ever claim an executed action', () => {
-  // Proven over the machine's ACTUAL vocabulary, not a guess list: fire
-  // every registered handler inside an active session and assert `action`
-  // never reads executed — and that no execution-shaped event exists at
-  // all (no browser signal proves execution; see the brief).
+test('executed is reachable ONLY through the real outcome frame', () => {
+  // The 2026-08-31 brief forbade any executed claim until a real
+  // pipeline signal existed; companion take 2 (2026-09-01) added exactly
+  // one: the bridge's action_result frame, mapped to action_executed /
+  // action_failed. Proven over the machine's ACTUAL vocabulary: no OTHER
+  // event — and no amount of ticking — may ever claim execution.
   const c = makeController();
   assert.ok(Array.isArray(c.events) && c.events.length >= 15);
+  const executionEvents = c.events.filter((n) => /exec/.test(n));
+  assert.deepStrictEqual(executionEvents, ['action_executed']);
   for (const name of c.events) {
-    assert.ok(!/exec|confirm|complete/.test(name), name);
-  }
-  for (const name of c.events) {
+    if (name === 'action_executed') continue;
     const fresh = makeController();
     fresh.handleEvent('connect', { mode: 'live' });
     fresh.handleEvent('connected');
@@ -458,6 +463,45 @@ test('no event path can ever claim an executed action', () => {
     fresh.tick();
     assert.notStrictEqual(fresh.getState().action, 'executed', name);
   }
+});
+
+test('a real outcome frame lands and then relaxes; the record is durable elsewhere', () => {
+  const c = makeController({ resultTtlMs: 12000 });
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('proposal_staged');
+  assert.ok(c.handleEvent('action_executed'));
+  assert.strictEqual(c.getState().action, 'executed');
+  assert.strictEqual(c.getState().attention, 'none'); // the wait is over
+  clock = 13000;
+  c.tick();
+  assert.strictEqual(c.getState().action, 'none'); // a brief acknowledgment only
+
+  const f = makeController({ resultTtlMs: 12000 });
+  f.handleEvent('connect', { mode: 'live' });
+  f.handleEvent('connected');
+  f.handleEvent('proposal_staged');
+  assert.ok(f.handleEvent('action_failed'));
+  assert.strictEqual(f.getState().action, 'failed');
+});
+
+test('outcome frames are rejected outside an active session', () => {
+  const c = makeController();
+  assert.strictEqual(c.handleEvent('action_executed'), false);
+  assert.strictEqual(c.getState().action, 'none');
+});
+
+test('the spoken-confirmation labels never overclaim', () => {
+  const staged = ParkerExpression.describe({
+    phase: 'listening', work: [], action: 'staged', guard: 'none', attention: 'confirmation',
+  });
+  assert.ok(/say yes/i.test(staged), staged);
+  assert.ok(/nothing has happened/i.test(staged), staged);
+  assert.ok(!/tap|button|press|touch/i.test(staged), staged); // voice is the interface
+  const failed = ParkerExpression.describe({
+    phase: 'listening', work: [], action: 'failed', guard: 'none', attention: 'none',
+  });
+  assert.ok(!/done|worked/i.test(failed), failed);
 });
 
 test('the staged pose relaxes after its TTL; the card is the durable truth', () => {
@@ -502,6 +546,58 @@ test('repair posture sets and resolves', () => {
   assert.strictEqual(c.getState().guard, 'repair');
   c.handleEvent('repair_resolved');
   assert.strictEqual(c.getState().guard, 'none');
+});
+
+// ---------------------------------------------------------------------------
+// Dormancy and wake (docs/plans/2026-09-01-wake-word.md)
+// ---------------------------------------------------------------------------
+
+test('dormant is a cleared rest state; only wake_detected pops it', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('work_start', { kind: 'search' });
+  c.handleEvent('proposal_staged');
+  assert.ok(c.handleEvent('dormant'));
+  const s = c.getState();
+  assert.strictEqual(s.phase, 'dormant');
+  assert.deepStrictEqual(s.work, []);
+  assert.strictEqual(s.action, 'none');
+  assert.strictEqual(s.attention, 'none');
+  // Ambient events cannot animate a dormant scene…
+  for (const name of ['assistant_audio', 'work_start', 'proposal_staged',
+                      'choices_offered', 'interrupted', 'connected']) {
+    assert.strictEqual(c.handleEvent(name, { kind: 'search' }), false, name);
+  }
+  // …and energy is ignored (someone talking near the mic is not a wake).
+  clock = 5000;
+  c.setEnergy({ user: 1.0 });
+  clock = 6000;
+  c.setEnergy({ user: 1.0 });
+  assert.strictEqual(c.getState().phase, 'dormant');
+  // The real local detection is the ONE way out — into a live session.
+  assert.ok(c.handleEvent('wake_detected'));
+  assert.strictEqual(c.getState().phase, 'connecting');
+  assert.strictEqual(c.getState().mode, 'live');
+  assert.ok(c.handleEvent('connected'));
+  assert.strictEqual(c.getState().phase, 'listening');
+});
+
+test('wake_detected is rejected outside dormancy', () => {
+  for (const setup of [['ready'], ['stopped'], ['offline'],
+                       ['connect', 'connected']]) {
+    const c = makeController();
+    for (const step of setup) c.handleEvent(step, { mode: 'live' });
+    assert.strictEqual(c.handleEvent('wake_detected'), false, setup.join(','));
+  }
+});
+
+test('the dormant label invites the wake phrase without overclaiming', () => {
+  const text = ParkerExpression.describe({
+    phase: 'dormant', work: [], action: 'none', guard: 'none', attention: 'none',
+  });
+  assert.ok(/hey parker/i.test(text), text);
+  assert.ok(!/listening intently|talking/i.test(text), text);
 });
 
 // ---------------------------------------------------------------------------
@@ -563,6 +659,22 @@ test('search overlay reads as checking, not as an answer', () => {
 // ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
+
+test('a phrase boundary is a beat only while talking, never a phase change', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  assert.strictEqual(c.getState().beats, 0);
+  assert.strictEqual(c.handleEvent('phrase_boundary'), false); // listening: nothing
+  assert.strictEqual(c.getState().beats, 0);
+  c.handleEvent('user_transcript');
+  c.handleEvent('assistant_audio');
+  assert.strictEqual(c.getState().phase, 'talking');
+  assert.strictEqual(c.handleEvent('phrase_boundary'), true);
+  assert.strictEqual(c.handleEvent('phrase_boundary'), true);
+  assert.strictEqual(c.getState().beats, 2);
+  assert.strictEqual(c.getState().phase, 'talking', 'a beat never changes the phase');
+});
 
 const failed = results.filter((r) => !r.ok);
 for (const r of results) {

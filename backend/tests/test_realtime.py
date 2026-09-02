@@ -188,17 +188,40 @@ def upstream(monkeypatch):
     return holder
 
 
+_power: dict = {}
+
+
+@pytest.fixture(autouse=True)
+def owned_power():
+    """Power is server-authoritative: the lane refuses a socket that does
+    not present the owner credentials a power claim issued. Every test
+    here is the page that turned Parker on."""
+
+    from app.parker.companion_power import authority
+
+    granted = authority.claim(lambda on: None, client_id="test-page")
+    _power["query"] = f"?owner={granted['owner']}&gen={granted['gen']}"
+    yield granted
+    authority.release(lambda on: None)
+    _power.clear()
+
+
+def live_url() -> str:
+    return "/parker/converse/realtime" + _power.get("query", "")
+
+
 @pytest.fixture(autouse=True)
 def realtime_db(db, monkeypatch):
     """Bridge side effects land in the test engine, never the real DB.
 
     Teardown waits for the bridge (and its worker threads) to finish so
-    the fixture's drop_all never races a thread still holding the shared
-    in-memory connection.
+    the next test never inherits a thread still writing to this one's
+    database file.
     """
 
     factory = sessionmaker(bind=db.get_bind())
     monkeypatch.setattr(realtime, "_db_session_factory", factory)
+    monkeypatch.setattr(realtime, "HELLO_WAIT_SECONDS", 0.05)  # tests send hello at open or not at all
     yield db
     # Quiescence, not just the slot: threadpool DB threads can outlive a
     # cancelled worker task, and drop_all must never race one.
@@ -225,7 +248,7 @@ def _look_done_event(question, call_id="look-1"):
 
 
 def test_without_a_key_the_lane_is_honestly_unavailable(db):
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         message = ws.receive_json()
     assert message["type"] == "unavailable"
     assert "OpenAI key" in message["text"]
@@ -235,9 +258,14 @@ def test_session_config_carries_persona_vad_transcription_and_tools(
     db, realtime_enabled, brainless, upstream
 ):
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "audio", "data": "QUJD"})  # valid base64
         ws.send_json({"type": "end"})
+        # The test client cancels the handler the moment this block exits;
+        # wait for the bridge to have consumed the frames it is judged on.
+        assert _wait_until(
+            lambda: any(e["type"] == "input_audio_buffer.append" for e in fake.sent)
+        )
 
     update = fake.sent[0]
     assert update["type"] == "session.update"
@@ -253,10 +281,13 @@ def test_session_config_carries_persona_vad_transcription_and_tools(
     # output rate is required by the live API — its absence voided the whole
     # session.update (tools included) on the first real probe
     assert session["audio"]["output"]["format"] == {"type": "audio/pcm", "rate": 24000}
-    # brainless -> propose_action stays the only tool
-    assert [tool["name"] for tool in session["tools"]] == ["propose_action"]
+    # brainless -> no web lookup; my_day is local and always offered
+    assert [tool["name"] for tool in session["tools"]] == ["propose_action", "my_day"]
     assert "Parkinson" in session["instructions"]
-    assert "waiting for him to confirm" in session["instructions"]  # he taps, nobody else
+    # Spoken confirmation (companion take 2, 2026-09-01): the model reads
+    # the action back and asks for his yes/no — it never tells him to tap.
+    assert "yes to do it or no to cancel" in session["instructions"]
+    assert "Never tell him to tap" in session["instructions"]
     assert "Right now it is" in session["instructions"]  # local clock grounding
     # the browser's audio chunk was forwarded verbatim
     appended = [e for e in fake.sent if e["type"] == "input_audio_buffer.append"]
@@ -267,10 +298,7 @@ def test_brained_session_offers_look_that_up_and_says_so(
     db, realtime_enabled, brained
 ):
     session = realtime.build_session_update()["session"]
-    assert [tool["name"] for tool in session["tools"]] == [
-        "propose_action",
-        "look_that_up",
-    ]
+    assert [tool["name"] for tool in session["tools"]] == ["propose_action", "my_day", "look_that_up"]
     # only stageable types are advertised — never a promise that dies at the gate
     enum = session["tools"][0]["parameters"]["properties"]["action_type"]["enum"]
     assert "reminder" in enum and "appointment_note" not in enum
@@ -283,11 +311,61 @@ def test_greeting_is_requested_before_any_audio_arrives(
     db, realtime_enabled, brainless, upstream
 ):
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "end"})
+        assert _wait_until(lambda: _response_creates(fake) >= 1)  # see above
     items = _system_items(fake)
     assert items and "line just opened" in items[0]
     assert _response_creates(fake) >= 1  # the greeting nudge
+
+
+def test_a_wake_tail_hello_shapes_the_first_reply(db, realtime_enabled, brainless, upstream):
+    """"Hey Parker, can you help me": the page's FIRST frame is a hello
+    carrying the words after the wake phrase; the greeting instruction
+    answers that instead of greeting him and losing it. Journaled."""
+
+    from app.parker.session_review import RealtimeSessionEvent
+
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        ws.send_json({"type": "hello", "tail": "  can you   help me with the tv  "})
+        ws.send_json({"type": "end"})
+        assert _wait_until(lambda: _response_creates(fake) >= 1)
+    items = _system_items(fake)
+    assert items and "can you help me with the tv" in items[0]
+    assert "Skip the standalone greeting" in items[0]
+    assert "line just opened" not in items[0]
+    assert _wait_until(
+        lambda: db.query(RealtimeSessionEvent).filter(RealtimeSessionEvent.kind == "wake_tail").count() == 1
+    )
+    event = db.query(RealtimeSessionEvent).filter(RealtimeSessionEvent.kind == "wake_tail").one()
+    assert event.heard == "can you help me with the tv"
+
+
+def test_an_empty_hello_keeps_the_plain_greeting(db, realtime_enabled, brainless, upstream):
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        ws.send_json({"type": "hello", "tail": ""})
+        ws.send_json({"type": "end"})
+        assert _wait_until(lambda: _response_creates(fake) >= 1)
+    items = _system_items(fake)
+    assert items and "line just opened" in items[0]
+
+
+def test_an_oversized_tail_is_bounded_and_a_late_hello_is_ignored(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    monkeypatch.setattr(realtime, "HELLO_WAIT_SECONDS", 0.05)
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        ws.send_json({"type": "hello", "tail": "word " * 200})
+        ws.send_json({"type": "hello", "tail": "a second hello must not re-shape anything"})
+        assert _wait_until(lambda: _system_items(fake))  # the client cancels the handler on exit
+        ws.send_json({"type": "end"})
+        assert _wait_until(lambda: _response_creates(fake) >= 1)
+    items = _system_items(fake)
+    assert len(items[0]) < 700  # 200-char tail cap inside the instruction
+    assert "second hello" not in items[0]
 
 
 def test_audio_and_transcripts_flow_to_the_browser(
@@ -303,7 +381,7 @@ def test_audio_and_transcripts_flow_to_the_browser(
             },
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert ws.receive_json() == {"type": "audio", "data": "UENN"}
         assert ws.receive_json() == {
             "type": "assistant_transcript_delta",
@@ -324,7 +402,7 @@ def test_posthoc_guard_cancels_flushes_and_redirects(
             {"type": "response.output_audio.delta", "delta": "UENN"},
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert ws.receive_json()["type"] == "assistant_transcript_delta"  # clean prefix
         # "Maybe try " + "taking…50 mg" assembles the violation across deltas
         assert ws.receive_json() == {"type": "clear"}
@@ -363,10 +441,11 @@ def test_propose_action_stages_through_the_pipeline_and_reports_back(
             }
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         staged_note = ws.receive_json()
         assert staged_note["type"] == "proposal_staged"
         assert "water the plants" in staged_note["label"]
+        assert _wait_until(lambda: _function_outputs(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
 
     action = db.query(StagedAction).one()
@@ -404,9 +483,12 @@ def test_prohibited_action_types_are_rejected_not_staged(
             }
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "stop"})  # provoke traffic so we can end cleanly
         assert ws.receive_json() == {"type": "clear"}
+        # The test client cancels the handler the moment this block exits:
+        # wait for the ack we are about to judge (CI flake on PR #43).
+        assert _wait_until(lambda: _function_outputs(fake))
         ws.send_json({"type": "end"})
 
     assert db.query(StagedAction).count() == 0
@@ -414,11 +496,225 @@ def test_prohibited_action_types_are_rejected_not_staged(
     assert outputs and "not allowed" in outputs[0]["item"]["output"]
 
 
+def _propose_event(call_id="call-1", **overrides):
+    arguments = {
+        "action_type": "reminder",
+        "label": "a reminder to water the plants",
+        "subject": "water the plants",
+        "intent_text": "remind me to water the plants",
+    }
+    arguments.update(overrides)
+    return {
+        "type": "response.done",
+        "response": {
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "propose_action",
+                    "call_id": call_id,
+                    "arguments": json.dumps(arguments),
+                }
+            ]
+        },
+    }
+
+
+def _heard(text):
+    return {
+        "type": "conversation.item.input_audio_transcription.completed",
+        "transcript": text,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Spoken confirmation (companion take 2, 2026-09-01): his voice is the whole
+# interface — a staged offer resolves on the SAME deterministic yes/no
+# grammar the turns lane executes on. No taps, no model-decided execution.
+# ---------------------------------------------------------------------------
+
+
+def test_action_readback_says_exactly_what_would_run():
+    """The read-back line is the spoken contract; every shape is pinned
+    (the deck's assert_staged relies on these for readback content)."""
+
+    assert realtime._action_readback(
+        {"action_type": "reminder", "subject": "water the plants",
+         "recipient": "", "intent_text": "remind me"}
+    ) == "a reminder about “water the plants”"
+    assert realtime._action_readback(
+        {"action_type": "family_message", "subject": "Sunday visit",
+         "recipient": "Sarah", "intent_text": "the park sounds lovely"}
+    ) == "a message to Sarah saying “the park sounds lovely”"
+    assert realtime._action_readback(
+        {"action_type": "exercise_start", "subject": "morning stretches",
+         "recipient": "", "intent_text": ""}
+    ) == "starting morning stretches"
+    assert realtime._action_readback(
+        {"action_type": "media_playlist", "subject": "old Hindi songs",
+         "recipient": "", "intent_text": ""}
+    ) == "media_playlist: old Hindi songs"
+
+
+def test_spoken_yes_confirms_and_executes_the_staged_action(
+    db, realtime_enabled, brainless, upstream
+):
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect(live_url()) as ws:
+        staged_note = ws.receive_json()
+        assert staged_note["type"] == "proposal_staged"
+        assert "water the plants" in staged_note["readback"]
+        fake.feed(_heard("yes"))
+        assert ws.receive_json() == {"type": "user_transcript", "text": "yes"}
+        result = ws.receive_json()
+        assert result == {
+            "type": "action_result",
+            "status": "executed",
+            "label": "a reminder to water the plants",
+        }
+        ws.send_json({"type": "end"})
+
+    action = db.query(StagedAction).one()
+    assert action.status == "executed"
+    assert action.confirmed_by == "patient"
+    # The model is told the truth so it can say it aloud.
+    assert any("executed exactly as read back" in text for text in _system_items(fake))
+
+
+def test_spoken_no_cancels_and_never_executes(
+    db, realtime_enabled, brainless, upstream
+):
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        fake.feed(_heard("no, not now"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        result = ws.receive_json()
+        assert result["type"] == "action_result" and result["status"] == "cancelled"
+        ws.send_json({"type": "end"})
+
+    action = db.query(StagedAction).one()
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "patient"
+    assert any("He said no" in text for text in _system_items(fake))
+
+
+def test_ambiguous_speech_defers_and_a_later_yes_still_executes(
+    db, realtime_enabled, brainless, upstream
+):
+    """'yes one', a question, or ordinary talk is NOT an answer: nothing
+    executes, nothing cancels, and the offer stays open for its window."""
+
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        for utterance in ("yes one", "what time is it again", "hmm"):
+            fake.feed(_heard(utterance))
+            assert ws.receive_json()["type"] == "user_transcript"
+        action = db.query(StagedAction).one()
+        db.refresh(action)
+        assert action.status == "staged"  # deferred, untouched
+        fake.feed(_heard("yes please"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        assert ws.receive_json()["status"] == "executed"
+        ws.send_json({"type": "end"})
+
+
+def test_the_offer_expires_and_a_late_yes_executes_nothing(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    monkeypatch.setattr(realtime, "CONFIRM_WINDOW_SECONDS", 0.2)
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        # The watchdog expires the offer; the card clears honestly.
+        expired = ws.receive_json()
+        assert expired == {
+            "type": "action_result",
+            "status": "expired",
+            "label": "a reminder to water the plants",
+        }
+        fake.feed(_heard("yes"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        ws.send_json({"type": "end"})
+
+    action = db.query(StagedAction).one()
+    assert action.status == "staged"  # still waiting on the family surface
+    assert action.confirmed_at is None
+
+
+def test_a_mutated_action_fails_closed_on_spoken_yes(
+    db, realtime_enabled, brainless, upstream
+):
+    """The yes binds to the read-back contract: a row that changed between
+    offer and yes is cancelled and reported failed — never executed."""
+
+    fake = upstream["script"]([_propose_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+
+        def mutate() -> bool:
+            # The bridge's journal threads share the harness connection; a
+            # mid-cursor collision surfaces as OperationalError — retry
+            # until the write lands (shared-connection artifact).
+            try:
+                action = db.query(StagedAction).one()
+                payload = json.loads(action.action_payload)
+                payload["subject"] = "send money somewhere"
+                action.action_payload = json.dumps(payload)
+                db.commit()
+                return True
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                return False
+
+        assert _wait_until(mutate)
+        fake.feed(_heard("yes"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        result = ws.receive_json()
+        assert result["type"] == "action_result" and result["status"] == "failed"
+        ws.send_json({"type": "end"})
+
+    db.expire_all()
+    action = db.query(StagedAction).one()
+    assert action.status == "cancelled"
+    assert action.cancelled_by == "confirmation_contract_mismatch"
+    assert any("did NOT run" in text for text in _system_items(fake))
+
+
+def test_a_newer_offer_replaces_the_old_one_unambiguously(
+    db, realtime_enabled, brainless, upstream
+):
+    fake = upstream["script"](
+        [
+            _propose_event(call_id="call-1"),
+            _propose_event(
+                call_id="call-2",
+                label="a reminder to stretch",
+                subject="stretch",
+                intent_text="remind me to stretch",
+            ),
+        ]
+    )
+    with client.websocket_connect(live_url()) as ws:
+        assert "water the plants" in ws.receive_json()["label"]
+        assert "stretch" in ws.receive_json()["label"]
+        fake.feed(_heard("yes"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        result = ws.receive_json()
+        assert result["status"] == "executed"
+        assert result["label"] == "a reminder to stretch"  # the NEWEST offer
+        ws.send_json({"type": "end"})
+
+    executed = [a for a in db.query(StagedAction).all() if a.status == "executed"]
+    assert len(executed) == 1
+    assert "stretch" in executed[0].action_payload
+
+
 def test_stop_cancels_upstream_and_junk_audio_never_forwards(
     db, realtime_enabled, brainless, upstream
 ):
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "audio", "data": "not-base64!"})
         ws.send_json({"type": "stop"})
         assert ws.receive_json() == {"type": "clear"}
@@ -430,7 +726,7 @@ def test_stop_cancels_upstream_and_junk_audio_never_forwards(
 
 def test_barge_in_flushes_playback(db, realtime_enabled, brainless, upstream):
     upstream["script"]([{"type": "input_audio_buffer.speech_started"}])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert ws.receive_json() == {"type": "clear"}
         ws.send_json({"type": "end"})
 
@@ -453,7 +749,7 @@ def test_exchange_mirrors_to_the_live_screen(db, realtime_enabled, brainless, up
         state = get_screen_state(db)
         return state is not None and state.heard == "what's the weather"
 
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.receive_json()  # user_transcript
         ws.receive_json()  # assistant delta
         # The mirror write rides a threadpool thread that shutdown does not
@@ -491,7 +787,7 @@ def test_look_that_up_acks_instantly_and_injects_only_at_a_safe_point(
 
     monkeypatch.setattr(realtime_workers, "run_search_worker", fake_search)
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         fake.feed(_look_done_event("when does Alcaraz play the US Open?"))
         assert _wait_until(lambda: _function_outputs(fake))
         ack = json.loads(_function_outputs(fake)[0]["item"]["output"])
@@ -546,7 +842,7 @@ def test_duplicate_lookup_never_spawns_a_second_worker(
 
     monkeypatch.setattr(realtime_workers, "run_search_worker", fake_search)
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         fake.feed(_look_done_event("What's the weather?", call_id="look-1"))
         fake.feed(_look_done_event("what's   the weather?", call_id="look-2"))
         assert _wait_until(lambda: len(_function_outputs(fake)) == 2)
@@ -579,7 +875,7 @@ def test_failed_lookup_injects_an_honest_note(
 
     monkeypatch.setattr(realtime_workers, "run_search_worker", exploding_search)
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         fake.feed(_look_done_event("what's on at the cinema?"))
         assert _wait_until(
             lambda: any("could not finish" in text for text in _system_items(fake))
@@ -611,7 +907,7 @@ def test_working_started_commits_before_an_instant_result(
 
     monkeypatch.setattr(realtime_workers, "run_search_worker", instant_search)
     upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "audio", "data": "QUJD"})  # prove the line is up
         fake = upstream["fake"]
         fake.feed(_look_done_event("instant one?"))
@@ -630,7 +926,7 @@ def test_working_started_commits_before_an_instant_failure(
 
     monkeypatch.setattr(realtime_workers, "run_search_worker", exploding_search)
     upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         upstream["fake"].feed(_look_done_event("doomed one?"))
         first = ws.receive_json()
         second = ws.receive_json()
@@ -654,7 +950,7 @@ def test_lookup_cancelled_by_close_never_reports_a_late_result(
 
     monkeypatch.setattr(realtime_workers, "run_search_worker", gated_search)
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         fake.feed(_look_done_event("slow one?"))
         assert ws.receive_json() == {
             "type": "working", "kind": "search", "status": "started"
@@ -679,7 +975,7 @@ def test_audio_bearing_response_gets_an_authoritative_done_frame(
             {"type": "response.done", "response": {"output": []}},
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert ws.receive_json() == {"type": "audio", "data": "UENN"}
         assert ws.receive_json() == {"type": "response_state", "status": "done"}
         ws.send_json({"type": "end"})
@@ -698,7 +994,7 @@ def test_audioless_responses_send_no_response_state_frame(
             {"type": "response.done", "response": {"output": []}},
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         # Nothing for the audioless done — the next frame is the audio.
         assert ws.receive_json() == {"type": "audio", "data": "UENN"}
         assert ws.receive_json() == {"type": "response_state", "status": "done"}
@@ -723,7 +1019,7 @@ def test_guard_tripped_response_still_closes_its_audio_epoch(
             {"type": "response.done", "response": {"output": []}},
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert ws.receive_json() == {"type": "audio", "data": "UENN"}
         assert ws.receive_json()["type"] == "assistant_transcript_delta"
         assert ws.receive_json() == {"type": "clear"}
@@ -758,7 +1054,7 @@ def test_expression_transitions_journal_bounded_and_allowlisted(
             return -1
 
     upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         for i in range(5):
             ws.send_json(
                 {
@@ -807,7 +1103,7 @@ def test_lookup_without_a_brain_is_honestly_unavailable(
     """The tool isn't offered brainless — but a model may still call it."""
 
     fake = upstream["script"]([_look_done_event("anything at all?")])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert _wait_until(lambda: _function_outputs(fake))
         ack = json.loads(_function_outputs(fake)[0]["item"]["output"])
         assert ack["status"] == "unavailable"
@@ -822,7 +1118,7 @@ def test_context_card_injects_without_a_nudge_and_drops_dose_lines(
     save_memory(db, "Loves old Hindi songs in the evening.", "preference")
     save_memory(db, "The pharmacist said his 25-100 mg refill is ready.", "event")
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         # settle the greeting response so a context nudge WOULD be legal
         fake.feed({"type": "response.done", "response": {"output": []}})
         assert _wait_until(
@@ -852,7 +1148,7 @@ def test_benign_protocol_collisions_never_reach_dad(
             {"type": "response.output_audio_transcript.delta", "delta": "Still smooth."},
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         first = ws.receive_json()
         assert first == {"type": "assistant_transcript_delta", "text": "Still smooth."}
         ws.send_json({"type": "end"})
@@ -866,7 +1162,7 @@ def test_idle_wrapup_then_goodbye_then_closing_handshake(
     monkeypatch.setattr(realtime, "CLOSING_DRAIN_SECONDS", 0.3)
     monkeypatch.setattr(realtime, "_WATCHDOG_TICK_SECONDS", 0.05)
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert _wait_until(
             lambda: any("anything else" in text for text in _system_items(fake))
         )
@@ -893,7 +1189,7 @@ def test_barge_in_during_the_goodbye_aborts_the_close(
     monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 30.0)
     monkeypatch.setattr(realtime, "_WATCHDOG_TICK_SECONDS", 0.05)
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert _wait_until(
             lambda: any("anything else" in text for text in _system_items(fake))
         )
@@ -920,7 +1216,7 @@ def test_a_mute_model_cannot_hold_the_line_open_after_the_goodbye(
     monkeypatch.setattr(realtime, "CLOSING_DRAIN_SECONDS", 0.2)
     monkeypatch.setattr(realtime, "_WATCHDOG_TICK_SECONDS", 0.05)
     upstream["script"]([])  # the model never answers anything
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         closing = ws.receive_json()  # forced by the watchdog floor
         assert closing == {"type": "closing"}
 
@@ -932,7 +1228,7 @@ def test_a_word_from_him_stands_the_wrapup_down(
     monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 30.0)  # never in this test
     monkeypatch.setattr(realtime, "_WATCHDOG_TICK_SECONDS", 0.05)
     fake = upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         assert _wait_until(
             lambda: any("anything else" in text for text in _system_items(fake))
         )
@@ -959,7 +1255,7 @@ def test_finished_session_persists_call_log_and_one_topic_memory(
             {"type": "response.output_audio_transcript.delta", "delta": "There."},
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.receive_json()  # user_transcript
         ws.receive_json()  # assistant delta
         ws.receive_json()  # post-done delta — the exchange is in
@@ -983,7 +1279,7 @@ def test_accidental_tap_leaves_no_memory_behind(
     db, realtime_enabled, brainless, upstream
 ):
     upstream["script"]([])
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "end"})
 
     time.sleep(0.2)  # let the finalize threadpool settle
@@ -1257,9 +1553,10 @@ def test_message_to_unknown_recipient_is_rejected_like_the_text_lane(
             )
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "stop"})
         assert ws.receive_json() == {"type": "clear"}
+        assert _wait_until(lambda: _function_outputs(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
 
     assert db.query(StagedAction).count() == 0
@@ -1285,9 +1582,10 @@ def test_gateway_backed_types_without_a_gateway_are_rejected_not_claimed_staged(
             )
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "stop"})
         assert ws.receive_json() == {"type": "clear"}
+        assert _wait_until(lambda: _function_outputs(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
 
     assert db.query(StagedAction).count() == 0
@@ -1306,11 +1604,12 @@ def test_malformed_function_arguments_never_kill_the_call(
             {"type": "response.output_audio_transcript.delta", "delta": "Still alive."},
         ]
     )
-    with client.websocket_connect("/parker/converse/realtime") as ws:
+    with client.websocket_connect(live_url()) as ws:
         notice = ws.receive_json()
         assert notice["type"] == "notice"  # the string error became a friendly notice
         follow = ws.receive_json()
         assert follow == {"type": "assistant_transcript_delta", "text": "Still alive."}
+        assert _wait_until(lambda: _function_outputs(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
 
     assert db.query(StagedAction).count() == 0
@@ -1378,7 +1677,7 @@ def test_live_line_cap_refuses_a_third_concurrent_call(
     assert rt.try_acquire_bridge_slot()
     assert rt.try_acquire_bridge_slot()
     try:
-        with client.websocket_connect("/parker/converse/realtime") as ws:
+        with client.websocket_connect(live_url()) as ws:
             message = ws.receive_json()
         assert message["type"] == "unavailable"
         assert "already running" in message["text"]
@@ -1391,3 +1690,142 @@ def test_brainless_instructions_never_claim_web_search(db, realtime_enabled, bra
     instructions = realtime.build_session_update()["session"]["instructions"]
     assert "do NOT have web search" in instructions
     assert "never claim to have looked something up" in instructions
+
+
+# ---------------------------------------------------------------------------
+# my_day: his own day from Parker's records, never the web (session 3,
+# call 41: "what do I have today" went to search, which had no calendar).
+# ---------------------------------------------------------------------------
+
+
+def _my_day_event(call_id="day-1", about="today"):
+    return {
+        "type": "response.done",
+        "response": {
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "my_day",
+                    "call_id": call_id,
+                    "arguments": json.dumps({"about": about}),
+                }
+            ]
+        },
+    }
+
+
+def test_my_day_is_offered_without_a_brain_and_the_prompt_steers_to_it(
+    db, realtime_enabled, brainless
+):
+    update = realtime.build_session_update()["session"]
+    names = [tool["name"] for tool in update["tools"]]
+    assert "my_day" in names and "look_that_up" not in names
+    assert "call my_day" in update["instructions"]
+    assert "there is no calendar" in update["instructions"]
+
+
+def test_my_day_answers_from_local_records_never_a_dose(
+    db, realtime_enabled, brainless, upstream
+):
+    from app.db.models import Medication
+    from app.memory.store import save_memory
+
+    db.add(Medication(name="Sinemet", dosage="25-100 mg", schedule_times='["08:00", "14:00", "20:00"]', active=True))
+    db.commit()
+    save_memory(db, "Sarah moved the neurologist appointment to Friday at two.", "event")
+    fake = upstream["script"]([_my_day_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "started"}
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
+        assert _wait_until(lambda: any("Sinemet" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+    outputs = _function_outputs(fake)
+    assert outputs and json.loads(outputs[0]["item"]["output"])["status"] == "working"
+    note = next(i for i in _system_items(fake) if "Sinemet" in i)
+    assert "8 AM, 2 PM and 8 PM" in note
+    assert "25-100" not in note and "mg" not in note  # names and times only
+    assert "neurologist appointment" in note
+    assert "no calendar" in note
+    assert "Right now it is" in note
+
+
+def test_my_day_with_nothing_on_record_says_so(db, realtime_enabled, brainless, upstream):
+    fake = upstream["script"]([_my_day_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "working"
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
+        assert _wait_until(lambda: any("Nothing is on record" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+
+
+def test_my_day_lists_the_reminder_he_set(db, realtime_enabled, brainless, upstream):
+    fake = upstream["script"]([_propose_event(call_id="p1")])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "proposal_staged"
+        fake.feed(_heard("yes"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        assert ws.receive_json()["status"] == "executed"
+        fake.feed(_my_day_event())
+        assert ws.receive_json()["type"] == "working"
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
+        assert _wait_until(lambda: any("water the plants" in i and "(set)" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+
+
+def test_my_day_always_ends_with_the_limit_line_even_on_a_busy_day(db, realtime_enabled, brainless, upstream):
+    """Fresh review of PR #45: with a full day the twelve-line cap dropped
+    the unconditional \"no calendar\" line. Six reminders, four notes, a
+    medicine — the limit line is still last."""
+
+    import json as _json
+
+    from app.db.models import CallLog, CapturedIntent, Medication, ResolutionResult, StagedAction
+    from app.memory.store import save_memory
+
+    db.add(Medication(name="Sinemet", dosage="25-100 mg", schedule_times='["08:00"]', active=True))
+    call = CallLog(call_sid="BUSY", call_type="converse")
+    db.add(call)
+    db.commit()
+    for i in range(6):
+        intent = CapturedIntent(call_log_id=call.id, intent_text=f"remind me about thing {i}", requested_action="remind", subject=f"thing {i}", status="resolved")
+        db.add(intent)
+        db.flush()
+        rr = ResolutionResult(captured_intent_id=intent.id, status="staged", action_type="reminder", reversible=True, summary="x")
+        db.add(rr)
+        db.flush()
+        db.add(StagedAction(resolution_result_id=rr.id, status="executed", action_type="reminder", action_payload=_json.dumps({"subject": f"thing {i}"}), reversible=True))
+    db.commit()
+    for i in range(4):
+        save_memory(db, f"Sarah moved the appointment {i} to Friday at two.", "event")
+    fake = upstream["script"]([_my_day_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "working"
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "done"}
+        assert _wait_until(lambda: any("Sinemet" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+    note = next(i for i in _system_items(fake) if "Sinemet" in i)
+    assert "Parker keeps no calendar" in note
+    after = note.split("Parker keeps no calendar", 1)[1]
+    assert "thing" not in after and "appointment" not in after  # the limit line is the last content
+    content = [l for l in note.splitlines() if l.startswith(("His ", "A reminder", "A note", "Right now", "Parker keeps", "…and"))]
+    assert len(content) <= 12 and content[-1].startswith("Parker keeps no calendar")
+    assert any(l.startswith("…and") and "more Parker did not list" in l for l in content), "a cut is never silent"
+
+
+def test_my_day_store_failure_is_honest_never_nothing_on_record(db, realtime_enabled, brainless, upstream, monkeypatch):
+    """Fresh review of PR #45: a locked/unavailable store must not make
+    Parker deny reminders he holds."""
+
+    def broken():
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(realtime, "_make_db", broken)
+    fake = upstream["script"]([_my_day_event()])
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json()["type"] == "working"
+        assert ws.receive_json() == {"type": "working", "kind": "my_day", "status": "failed"}
+        assert _wait_until(lambda: any("could not read his notes" in i for i in _system_items(fake)))
+        ws.send_json({"type": "end"})
+    item = next(i for i in _system_items(fake) if "could not read his notes" in i)
+    assert "Never say nothing is on record" in item
+    assert "nothing written down" not in item

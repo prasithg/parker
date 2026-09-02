@@ -1,56 +1,73 @@
-"""Scenario gauntlet — two lines at once: the tablet and the phone, live together.
+"""Scenario gauntlet — one owner, one line: handover, refusal, and per-line
+isolation across sequential lines.
 
-Dimension: the household's second live line. Ravi is in the recliner with
-the tablet; Sarah, in the kitchen or on the drive home, opens Live on her
-phone. ``MAX_LIVE_BRIDGES`` is 2, so both are legal and a third tap is not.
-Everything the bridge keeps per conversation — exchanges, the finalize
-record, in-flight lookups, nudge accounting, the post-hoc guard, the
-upstream socket itself — must stay on its own line, and everything the
-household genuinely shares (one screen row, one store, one slot budget)
-must behave predictably when two lines touch it at once.
+Dimension: the seams of a single-owner household. Since 2026-09-01
+companion power is server-authoritative and SINGLE-OWNER
+(app/parker/companion_power.py, docs/personas/ravi-scenarios.md): the page
+that claimed power presents an owner token + generation on every audio
+socket; a second screen's claim is answered 409 ``elsewhere`` while the
+owner is actually listening; a second realtime socket from the SAME owner
+(the page's own reconnect) supersedes the first, which hears
+``revoked``/``superseded`` and is hung up on; and power off from any
+screen kills every line with ``revoked``/``power_off``.
+``MAX_LIVE_BRIDGES`` is 2 only so the superseded bridge and its
+replacement may overlap for the length of a handover.
 
-Each test asserts the BRIDGE CONTRACT only: what is injected upstream on
-*which* socket, which acks and nudges fire where, what reaches which
-browser, and what lands in the DB.
+So there are never two conversations at once — but there are two BRIDGES
+alive for a moment, and everything a bridge keeps per conversation
+(exchanges, the finalize record, in-flight lookups, the context worker,
+the post-hoc guard, the upstream socket itself) must stay on its own line
+across that handover: nothing the old line started may land on the new
+one, and the old line's record must close with only its own words.
 
-Round-1 file (test_scenarios_degraded.py, D12) pinned that two rooms stay
-isolated and the third tap is refused. This file is the dimension proper:
-concurrent *work* (lookups in flight on both at once, context workers
-racing), the slot budget's full cycle (refused, freed, admitted), the
-shared screen row's last-writer-wins, and per-line failure isolation.
+Each test asserts the BRIDGE CONTRACT only: the exact ``revoked`` frame
+and reason a page hears, the 409 a second screen gets, what is injected
+upstream on *which* socket, and what lands in the DB.
+
+Round-1 file (test_scenarios_degraded.py, D12) pins the refusal alone —
+a second room's switch answered 409 while his line is live, on one
+upstream. This file is the dimension proper: what happens ACROSS the
+handover and the power-off, with a fake per bridge so routing bites.
 """
 
 from __future__ import annotations
 
 import json
 import threading
-import time
+from urllib.parse import parse_qs
 
-from app.brain.adapter import Source
-from app.parker import realtime
+import pytest
+from starlette.websockets import WebSocketDisconnect
+
+from app.parker import converse_router, realtime
 from scenario_harness import *  # noqa: F401,F403
+
+POWER = "/parker/converse/companion/power"
+LINE = "/parker/converse/realtime"
 
 
 # ---------------------------------------------------------------------------
-# The two-fake connector — read this before adding a concurrency scenario
+# The two-fake connector — read this before adding a handover scenario
 # ---------------------------------------------------------------------------
 
 
 def two_upstreams(world, count: int = 2) -> list:
-    """Hand a DIFFERENT FakeUpstream to each concurrent bridge.
+    """Hand a DIFFERENT FakeUpstream to each bridge, in connect order.
 
     The harness's ``world.script()`` monkeypatches ``connect_openai`` to
     return ONE fake forever. That is right for a single line and wrong
-    here: two bridges would share a socket, so every routing assertion
-    ("this ack went to *her* upstream, that note to *his*") would pass
-    vacuously — both lines' traffic would sit in one ``fake.sent`` list.
+    here: the superseded bridge and its replacement are both alive during
+    a handover, and with one shared fake every routing assertion ("that
+    note went to the OLD line's upstream, never the new one") would pass
+    vacuously — both bridges' traffic would sit in one ``fake.sent``.
 
     So: a closure over a list, popped in connect order. ``fakes[0]`` is
-    the first bridge to open, ``fakes[1]`` the second. A refused third tap
-    consumes nothing — the router checks the slot budget *before* building
-    a bridge, so ``connect()`` is never called for it. Open the lines one
-    at a time (wait for each bridge's session.update to land) so the index
-    ordering is deterministic rather than a thread race.
+    the first bridge to open, ``fakes[1]`` the one that supersedes it (or
+    the next screen's line). A refused socket (``revoked``) and a refused
+    claim (409) consume nothing — the router checks authority BEFORE
+    building a bridge, so ``connect()`` is never called for them. Open
+    lines one at a time (wait for each bridge's session.update) so the
+    index ordering is deterministic rather than a thread race.
     """
 
     fakes = [FakeUpstream([]) for _ in range(count)]
@@ -67,6 +84,54 @@ def _opened(fake) -> bool:
     """A bridge has finished opening this socket: config, greeting, nudge."""
 
     return len(fake.sent) >= 3
+
+
+def _claim(client_id: str):
+    """A screen flips its switch on — through the route, so the router's
+    ``authority`` is the one exercised (the fixture only seeds the owner)."""
+
+    return client.post(POWER, json={"on": True, "client_id": client_id})
+
+
+def _power_off(client_id: str):
+    return client.post(POWER, json={"on": False, "client_id": client_id})
+
+
+def _line_url(granted: dict) -> str:
+    return f"{LINE}?owner={granted['owner']}&gen={granted['gen']}"
+
+
+def _gen_of(power_query: str) -> int:
+    return int(parse_qs(power_query.lstrip("?"))["gen"][0])
+
+
+def _revoked(ws, reason: str) -> None:
+    """The page hears exactly one ``revoked`` frame naming *reason*, then
+    the server hangs up on it — no silent stall, no extra frame first."""
+
+    assert ws.receive_json() == {"type": "revoked", "reason": reason}
+    with pytest.raises(WebSocketDisconnect):
+        ws.receive_json()
+
+
+def _page_hangs_up(ws, fake) -> None:
+    """What the fenced page does on ``revoked``: close its socket.
+
+    The old bridge then finalizes on its own; its upstream closing is the
+    per-line observable that its shutdown ran to the end (the upstream is
+    closed last, after the finalize write).
+    """
+
+    ws.close()
+    assert _wait_until(lambda: fake.closed), "the superseded bridge never shut down"
+
+
+def _audio_appends(fake) -> list[str]:
+    return [e["audio"] for e in fake.sent if e["type"] == "input_audio_buffer.append"]
+
+
+def _cancels(fake) -> list[dict]:
+    return [e for e in fake.sent if e["type"] == "response.cancel"]
 
 
 def _mirrored(world, text: str):
@@ -103,20 +168,20 @@ def _realtime_calls(world) -> list:
 
 
 # ---------------------------------------------------------------------------
-# C01 — his tennis, her groceries: two conversations, two records
+# C01 — the tablet reconnects mid-conversation: handover, two records
 # ---------------------------------------------------------------------------
 
 
-def test_interleaved_lines_keep_their_own_exchanges_and_their_own_record(
+def test_the_owners_reconnect_supersedes_the_old_line_and_each_line_keeps_its_own_record(
     voice_world,
 ):
-    """Saturday: Ravi asks about the cricket while Sarah checks the plumber.
-
-    Their turns interleave — his, hers, his again — on two live lines at
-    once. When both hang up, the house has two separate records: two call
-    logs whose summaries carry only their own speaker's words, with his
-    two exchanges counted on his log and her one on hers, and one topic
-    memory each pointing at its own call.
+    """Saturday: Ravi is two exchanges into the cricket when his tablet
+    reconnects (a Wi-Fi blip, a reload). The reconnect is the same owner's
+    second line: the old line hears ``revoked``/``superseded`` and is hung
+    up on; the page closes it, and it finalizes with ONLY the cricket —
+    two exchanges — on its own call log and topic memory. The new line
+    carries on about the plumber on its own upstream socket, its own call
+    log, its own memory. The new upstream never hears his mic or his words.
     """
 
     world = voice_world
@@ -126,27 +191,41 @@ def test_interleaved_lines_keep_their_own_exchanges_and_their_own_record(
 
     with world.connect() as ws_a:
         assert _wait_until(lambda: _opened(fakes[0]))
-        world.settle_open(fakes[0])  # his card lands before she opens hers
+        world.settle_open(fakes[0])
+
+        # -- his conversation on the first line --------------------------
+        fakes[0].feed(user_said("is the cricket on channel four tonight?"))
+        assert ws_a.receive_json() == {
+            "type": "user_transcript",
+            "text": "is the cricket on channel four tonight?",
+        }
+        fakes[0].feed(model_said("Let me think about that."))
+        assert ws_a.receive_json() == {
+            "type": "assistant_transcript_delta",
+            "text": "Let me think about that.",
+        }
+        fakes[0].feed(done())
+        assert _wait_until(_mirrored(world, "is the cricket on channel four tonight?"))
+        ws_a.send_json({"type": "audio", "data": "QUJD"})  # his mic, on his line
+        assert _wait_until(lambda: _audio_appends(fakes[0]) == ["QUJD"])
+        fakes[0].feed(user_said("and what time does it start?"))
+        assert ws_a.receive_json() == {
+            "type": "user_transcript",
+            "text": "and what time does it start?",
+        }
+        fakes[0].feed(done())
+        assert _wait_until(_mirrored(world, "and what time does it start?"))
+
+        # -- the same owner opens a second line: handover -----------------
         with world.connect() as ws_b:
             assert _wait_until(lambda: _opened(fakes[1]))
-            world.settle_open(fakes[1])
+            assert realtime._active_bridges == 2  # the overlap the cap exists for
+            world.settle_open(fakes[1])  # her card is built before his line closes
+            _revoked(ws_a, "superseded")
+            _page_hangs_up(ws_a, fakes[0])
+            assert _wait_until(_finalized(world, 1))
+            assert _wait_until(lambda: realtime._active_bridges == 1)
 
-            # -- his turn ------------------------------------------------
-            fakes[0].feed(user_said("is the cricket on channel four tonight?"))
-            assert ws_a.receive_json() == {
-                "type": "user_transcript",
-                "text": "is the cricket on channel four tonight?",
-            }
-            fakes[0].feed(model_said("Let me think about that."))
-            assert ws_a.receive_json() == {
-                "type": "assistant_transcript_delta",
-                "text": "Let me think about that.",
-            }
-            fakes[0].feed(done())
-            # one shared in-memory store: serialize the two lines' writes
-            assert _wait_until(_mirrored(world, "is the cricket on channel four tonight?"))
-
-            # -- her turn, on the other line -----------------------------
             fakes[1].feed(user_said("did the plumber confirm Thursday morning?"))
             assert ws_b.receive_json() == {
                 "type": "user_transcript",
@@ -159,39 +238,33 @@ def test_interleaved_lines_keep_their_own_exchanges_and_their_own_record(
             }
             fakes[1].feed(done())
             assert _wait_until(_mirrored(world, "did the plumber confirm Thursday morning?"))
+            ws_b.send_json({"type": "audio", "data": "WFla"})
+            assert _wait_until(lambda: _audio_appends(fakes[1]) == ["WFla"])
 
-            # -- back to him ---------------------------------------------
-            fakes[0].feed(user_said("and what time does it start?"))
-            assert ws_a.receive_json() == {
-                "type": "user_transcript",
-                "text": "and what time does it start?",
-            }
-            fakes[0].feed(done())
-            assert _wait_until(_mirrored(world, "and what time does it start?"))
-
-            ws_a.send_json({"type": "end"})
-            assert _wait_until(_finalized(world, 1))
             ws_b.send_json({"type": "end"})
             assert _wait_until(_finalized(world, 2))
 
     assert _wait_until(lambda: realtime._active_bridges == 0)
     assert fakes[0].closed is True and fakes[1].closed is True
 
-    # neither socket ever carried the other line's words
-    assert "plumber" not in json.dumps(fakes[0].sent)
+    # per-socket routing: the new upstream never carried the old line
+    assert _audio_appends(fakes[0]) == ["QUJD"]
+    assert _audio_appends(fakes[1]) == ["WFla"]
     assert "cricket" not in json.dumps(fakes[1].sent)
+    assert "plumber" not in json.dumps(fakes[0].sent)
 
     calls = _realtime_calls(world)
     assert len(calls) == 2
     assert len({call.call_sid for call in calls}) == 2
-    his = next(c for c in calls if "cricket" in (c.summary or ""))
-    hers = next(c for c in calls if "plumber" in (c.summary or ""))
-    assert his.id != hers.id
-    assert "2 exchange(s)" in his.summary  # his two turns, and only his
-    assert "and what time does it start?" in his.summary
-    assert "plumber" not in his.summary
-    assert "1 exchange(s)" in hers.summary
-    assert "cricket" not in hers.summary
+    old = next(c for c in calls if "cricket" in (c.summary or ""))
+    new = next(c for c in calls if "plumber" in (c.summary or ""))
+    assert old.id != new.id
+    assert old.ended_at is not None and new.ended_at is not None
+    assert "2 exchange(s)" in old.summary  # his two turns, and only his
+    assert "and what time does it start?" in old.summary
+    assert "plumber" not in old.summary
+    assert "1 exchange(s)" in new.summary
+    assert "cricket" not in new.summary
 
     from app.memory.models import ConversationMemory
 
@@ -204,169 +277,273 @@ def test_interleaved_lines_keep_their_own_exchanges_and_their_own_record(
         .all()
     )
     assert len(memories) == 2
-    assert {memory.call_log_id for memory in memories} == {his.id, hers.id}
+    assert {memory.call_log_id for memory in memories} == {old.id, new.id}
     by_call = {memory.call_log_id: memory.content for memory in memories}
-    assert "cricket" in by_call[his.id] and "plumber" not in by_call[his.id]
-    assert "plumber" in by_call[hers.id] and "cricket" not in by_call[hers.id]
+    assert "cricket" in by_call[old.id] and "plumber" not in by_call[old.id]
+    assert "plumber" in by_call[new.id] and "cricket" not in by_call[new.id]
 
 
 # ---------------------------------------------------------------------------
-# C02 — two lookups in the air at the same moment
+# C02 — a second screen while he is talking: refused, then admitted
 # ---------------------------------------------------------------------------
 
 
-def test_two_lookups_in_flight_land_on_the_right_line(voice_world):
-    """He asks about Alcaraz; she asks about the pharmacy's opening hours.
+def test_a_second_screen_is_refused_while_he_is_talking_then_admitted_once_he_hangs_up(
+    voice_world,
+):
+    """Sarah opens the companion on her phone while Ravi's tablet is live.
 
-    Both questions are with the research assistant at the same instant.
-    Each ack goes back down its own socket, each finished note is injected
-    into its own conversation, the sources chip appears only on the screen
-    that asked for it, and one line's deferred nudge does not fire on the
-    other line's response.done.
+    Her switch is answered 409 ``elsewhere`` — a screen that is actually
+    listening cannot be silently displaced — and his line does not so
+    much as hiccup: his next exchange flows as before. When he hangs up
+    and the bridge slot is back to zero, her claim succeeds with a new
+    generation, his old credentials are dead (``not_owner``), and her
+    line opens on its own upstream socket with its own call log.
+    """
+
+    world = voice_world
+    world.seed_ravi()
+    world.disable_brain()
+    fakes = two_upstreams(world)
+
+    with world.connect() as ws_a:
+        assert _wait_until(lambda: _opened(fakes[0]))
+        world.settle_open(fakes[0])
+
+        refused = _claim("sarah-phone")
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == {
+            "reason": "elsewhere",
+            "text": "Parker is already on and listening on another screen.",
+        }
+        assert converse_router.authority.snapshot()["owner_client"] == "scenario-page"
+
+        # his line is untouched by the refusal
+        fakes[0].feed(user_said("is the cricket on channel four tonight?"))
+        assert ws_a.receive_json() == {
+            "type": "user_transcript",
+            "text": "is the cricket on channel four tonight?",
+        }
+        fakes[0].feed(model_said("Channel four, from seven."))
+        assert ws_a.receive_json() == {
+            "type": "assistant_transcript_delta",
+            "text": "Channel four, from seven.",
+        }
+        fakes[0].feed(done())
+        assert _wait_until(_mirrored(world, "is the cricket on channel four tonight?"))
+        assert fakes[1].sent == []  # the refusal opened nothing upstream
+
+        # he hangs up; the slot frees when the handler returns
+        ws_a.send_json({"type": "end"})
+        assert _wait_until(lambda: realtime._active_bridges == 0)
+        assert fakes[0].closed is True
+
+        granted = _claim("sarah-phone")
+        assert granted.status_code == 200
+        hers = granted.json()
+        assert hers["power_on"] is True and hers["owner"]
+        assert hers["gen"] == _gen_of(world.power_query) + 1
+        assert converse_router.authority.snapshot()["owner_client"] == "sarah-phone"
+
+        # his tablet's old credentials are dead from this instant
+        with client.websocket_connect(LINE + world.power_query) as stale:
+            assert stale.receive_json() == {
+                "type": "revoked",
+                "reason": "not_owner",
+                "text": "Parker is on another screen now.",
+            }
+        assert fakes[1].sent == []  # a refused socket opens nothing upstream
+
+        with client.websocket_connect(_line_url(hers)) as ws_b:
+            assert _wait_until(lambda: _opened(fakes[1]))
+            assert fakes[1].sent[0]["type"] == "session.update"
+            assert realtime._active_bridges == 1
+            world.settle_open(fakes[1])
+            fakes[1].feed(user_said("did the plumber confirm Thursday morning?"))
+            assert ws_b.receive_json() == {
+                "type": "user_transcript",
+                "text": "did the plumber confirm Thursday morning?",
+            }
+            fakes[1].feed(done())
+            assert _wait_until(_mirrored(world, "did the plumber confirm Thursday morning?"))
+            ws_b.send_json({"type": "end"})
+            assert _wait_until(lambda: realtime._active_bridges == 0)
+
+    assert fakes[1].closed is True
+    calls = _realtime_calls(world)
+    assert len(calls) == 2  # two admitted lines, two logs; the refusals left none
+    assert len({call.call_sid for call in calls}) == 2
+
+
+# ---------------------------------------------------------------------------
+# C03 — power off from another screen, mid-conversation
+# ---------------------------------------------------------------------------
+
+
+def test_power_off_from_another_screen_kills_his_line_and_his_credentials(voice_world):
+    """Sarah flips Parker off from the kitchen while Ravi's line is up.
+
+    Off means off for everyone: his tablet hears ``revoked``/``power_off``
+    and is hung up on; his record still finalizes honestly (ended_at set,
+    his exchange counted); and his tablet's credentials cannot reopen the
+    line — answered ``power_off`` before a single audio frame, with
+    nothing opened upstream.
+    """
+
+    world = voice_world
+    world.seed_ravi()
+    world.disable_brain()
+    fakes = two_upstreams(world)
+
+    with world.connect() as ws_a:
+        assert _wait_until(lambda: _opened(fakes[0]))
+        world.settle_open(fakes[0])
+
+        fakes[0].feed(user_said("put the tennis on"))
+        assert ws_a.receive_json() == {"type": "user_transcript", "text": "put the tennis on"}
+        fakes[0].feed(model_said("I'll see what I can do."))
+        assert ws_a.receive_json() == {
+            "type": "assistant_transcript_delta",
+            "text": "I'll see what I can do.",
+        }
+        fakes[0].feed(done())
+        assert _wait_until(_mirrored(world, "put the tennis on"))
+
+        off = _power_off("sarah-phone")
+        assert off.status_code == 200
+        assert off.json() == {"power_on": False, "saved": True}
+        _revoked(ws_a, "power_off")
+        _page_hangs_up(ws_a, fakes[0])
+        assert _wait_until(_finalized(world, 1))
+        assert _wait_until(lambda: realtime._active_bridges == 0)
+
+    calls = _realtime_calls(world)
+    assert len(calls) == 1
+    assert calls[0].ended_at is not None
+    assert "1 exchange(s)" in calls[0].summary
+    assert "put the tennis on" in calls[0].summary
+
+    with client.websocket_connect(LINE + world.power_query) as stale:
+        assert stale.receive_json() == {
+            "type": "revoked",
+            "reason": "power_off",
+            "text": "Parker is off. Nothing is listening.",
+        }
+    assert fakes[1].sent == []  # the refusal never reached OpenAI
+    settings = client.get("/parker/converse/companion/settings").json()
+    assert settings["power_on"] is False
+    assert settings["live"] == {"wake": 0, "realtime": 0}
+
+
+# ---------------------------------------------------------------------------
+# C04 — a lookup in flight on the old line, across the handover
+# ---------------------------------------------------------------------------
+
+
+def test_a_lookup_in_flight_on_the_old_line_never_lands_on_the_new_one(voice_world):
+    """He asks whether it will rain; his tablet reconnects before the answer.
+
+    The old line's lookup is still with the research assistant when the
+    new line supersedes it. That answer is dropped by policy: it never
+    reaches the new upstream, and the old one closed without it. The new
+    line does not inherit "already_working" for the same question either
+    — asking again spawns a fresh worker, and exactly one note (its own)
+    lands on its socket, with exactly one presence pair on its screen.
+    The house pays twice, on purpose, across a handover.
     """
 
     world = voice_world
     world.seed_ravi()
     gate = threading.Event()
-    world.enable_search(
-        {
-            "Alcaraz": WorkerResult(
-                kind="search",
-                question="when does Alcaraz play next?",
-                speech="Alcaraz plays the semifinal on Friday night.",
-                sources=(Source(label="US Open schedule", url="https://example.org/uso"),),
-            ),
-            "pharmacy": WorkerResult(
-                kind="search",
-                question="what time does the pharmacy shut on Saturday?",
-                speech="That pharmacy shuts at five on Saturdays.",
-            ),
-        },
-        gate=gate,
-    )
+    finished: list[str] = []
+
+    def answer(question: str) -> WorkerResult:
+        finished.append(question)
+        return WorkerResult(
+            kind="search", question=question, speech="Rain is forecast after six this evening."
+        )
+
+    world.enable_search(answer, gate=gate)
+    question = "is it going to rain this evening?"
     fakes = two_upstreams(world)
     try:
         with world.connect() as ws_a:
             assert _wait_until(lambda: _opened(fakes[0]))
             world.settle_open(fakes[0])
+
+            fakes[0].feed(done(look_call(question, call_id="his-1")))
+            assert _wait_until(lambda: len(world.search_calls) == 1)
+            assert _wait_until(lambda: _function_outputs(fakes[0]))
+            his_ack = _function_outputs(fakes[0])[0]
+            assert his_ack["item"]["call_id"] == "his-1"
+            assert json.loads(his_ack["item"]["output"])["status"] == "working"
+            assert ws_a.receive_json() == {
+                "type": "working",
+                "kind": "search",
+                "status": "started",
+            }
+
             with world.connect() as ws_b:
                 assert _wait_until(lambda: _opened(fakes[1]))
                 world.settle_open(fakes[1])
-                assert _response_creates(fakes[0]) == 1  # greetings only
-                assert _response_creates(fakes[1]) == 1
+                _revoked(ws_a, "superseded")
+                _page_hangs_up(ws_a, fakes[0])
+                assert _wait_until(lambda: realtime._active_bridges == 1)
+                assert finished == []  # his answer is still being worked on
 
-                fakes[0].feed(
-                    done(look_call("when does Alcaraz play next?", call_id="his-look"))
-                )
-                fakes[1].feed(
-                    done(
-                        look_call(
-                            "what time does the pharmacy shut on Saturday?",
-                            call_id="her-look",
-                        )
-                    )
-                )
+                # the same question on the new line: a fresh worker, never
+                # "still checking" about work this line did not start
+                fakes[1].feed(done(look_call(question, call_id="her-1")))
                 assert _wait_until(lambda: len(world.search_calls) == 2)
-                assert _wait_until(lambda: _function_outputs(fakes[0]))
                 assert _wait_until(lambda: _function_outputs(fakes[1]))
-
-                # each ack answered its own call_id on its own socket
-                his_ack = _function_outputs(fakes[0])[0]
                 her_ack = _function_outputs(fakes[1])[0]
-                assert his_ack["item"]["call_id"] == "his-look"
-                assert her_ack["item"]["call_id"] == "her-look"
-                assert json.loads(his_ack["item"]["output"])["status"] == "working"
+                assert her_ack["item"]["call_id"] == "her-1"
                 assert json.loads(her_ack["item"]["output"])["status"] == "working"
-                assert len(_function_outputs(fakes[0])) == 1
-                assert len(_function_outputs(fakes[1])) == 1
-                assert _response_creates(fakes[0]) == 2  # one ack nudge each
-                assert _response_creates(fakes[1]) == 2
 
                 gate.set()  # both answers come back together
-                assert _wait_until(lambda: lookup_notes(fakes[0]))
+                assert _wait_until(lambda: len(finished) == 2)
                 assert _wait_until(lambda: lookup_notes(fakes[1]))
+                # the stale worker has fully unwound (its thread is done)
+                # — so "no note anywhere else" is a settled fact, not a gap
+                assert _wait_until(lambda: realtime._inflight_db_threads == 0)
+                assert len(lookup_notes(fakes[1])) == 1
+                assert f'"{question}"' in lookup_notes(fakes[1])[0]
+                assert "Rain is forecast after six this evening." in lookup_notes(fakes[1])[0]
+                assert lookup_notes(fakes[0]) == []  # closed without its answer
+                assert len(_function_outputs(fakes[0])) == 1
+                assert len(_function_outputs(fakes[1])) == 1
 
-                his_note = lookup_notes(fakes[0])[0]
-                her_note = lookup_notes(fakes[1])[0]
-                assert '"when does Alcaraz play next?"' in his_note
-                assert "Alcaraz plays the semifinal on Friday night." in his_note
-                assert "pharmacy" not in his_note
-                assert '"what time does the pharmacy shut on Saturday?"' in her_note
-                assert "That pharmacy shuts at five on Saturdays." in her_note
-                assert "Alcaraz" not in her_note
-
-                # only the line that asked gets the sources chip (each line
-                # sees exactly its own lookup's presence pair)
-                chips = browser_frame(
-                    ws_a,
-                    "sources",
-                    working=[("search", "started"), ("search", "done")],
-                )
-                assert chips["items"] == [
-                    {
-                        "label": "US Open schedule",
-                        "url": "https://example.org/uso",
-                        "fresh_as_of": "",
-                    }
-                ]
-
-                # nudge accounting is per line: both notes are deferred
-                # behind their own ack response, and only the line whose
-                # response.done arrives releases its own.
-                assert _response_creates(fakes[0]) == 2
-                assert _response_creates(fakes[1]) == 2
-                fakes[0].feed(done())
-                assert _wait_until(lambda: _response_creates(fakes[0]) == 3)
-                time.sleep(0.3)  # assert her line did NOT nudge
-                assert _response_creates(fakes[1]) == 2
-                fakes[1].feed(done())
-                assert _wait_until(lambda: _response_creates(fakes[1]) == 3)
-
-                # her browser never saw his chips: past her own lookup's
-                # presence pair, the next frame is speech
-                fakes[1].feed(model_said("Five o'clock, then."))
+                # her screen saw exactly one lookup's presence pair, then speech
+                fakes[1].feed(model_said("After six, they say."))
                 delta = browser_frame(
                     ws_b,
                     "assistant_transcript_delta",
                     working=[("search", "started"), ("search", "done")],
                 )
-                assert delta["text"] == "Five o'clock, then."
+                assert delta["text"] == "After six, they say."
 
                 ws_b.send_json({"type": "end"})
-            ws_a.send_json({"type": "end"})
     finally:
         gate.set()
 
     assert _wait_until(lambda: realtime._active_bridges == 0)
-    assert sorted(world.search_calls) == [
-        "what time does the pharmacy shut on Saturday?",
-        "when does Alcaraz play next?",
-    ]
-    # sources are browser-only on both lines
-    assert not any("https://example.org/uso" in text for text in _system_items(fakes[0]))
-    assert not any("https://example.org/uso" in text for text in _system_items(fakes[1]))
+    assert world.search_calls == [question, question]
 
 
 # ---------------------------------------------------------------------------
-# C03 — one screen, two conversations
+# C05 — one screen row, one line at a time
 # ---------------------------------------------------------------------------
 
 
-def test_the_dad_screen_is_one_row_and_the_last_line_to_speak_owns_it(voice_world):
-    """His tablet shows the room's screen. Her phone talks into the same row.
+def test_the_dad_screen_is_one_row_and_the_line_that_spoke_last_owns_it(voice_world):
+    """The room's screen across a handover.
 
-    The live Dad screen is a single row (``SCREEN_STATE_ROW_ID``), so two
-    live lines are two writers to one surface: the last exchange to finish
-    wins, whoever spoke it.
-
-    DESIGN GAP: the screen mirror carries no line identity. While Sarah's
-    phone conversation is live, the words on Ravi's tablet are hers — he
-    can watch "did the plumber confirm Thursday morning?" appear as if he
-    had said it, and his own last exchange is gone from the screen until
-    he speaks again. Nothing here is wrong per row; the open question is
-    whether the household screen should belong to the patient's line only
-    (or name its speaker) once a second line is a normal thing. Pinned as
-    the current behaviour, not filed as a bug.
+    The live Dad screen is a single row (``SCREEN_STATE_ROW_ID``). Under
+    one owner, one line, its writers are sequential: his exchange on the
+    old line is the row; after the reconnect, the new line's exchange is
+    the row — never a second row, never an interleaved claim. (Round 2's
+    "Sarah's phone overwrites Ravi's tablet row" design question is
+    closed by the contract: there is no second live line to write it.)
     """
 
     world = voice_world
@@ -379,40 +556,36 @@ def test_the_dad_screen_is_one_row_and_the_last_line_to_speak_owns_it(voice_worl
     with world.connect() as ws_a:
         assert _wait_until(lambda: _opened(fakes[0]))
         world.settle_open(fakes[0])
+
+        fakes[0].feed(user_said("put the tennis on"))
+        assert ws_a.receive_json()["type"] == "user_transcript"
+        fakes[0].feed(model_said("I'll see what I can do."))
+        assert ws_a.receive_json()["type"] == "assistant_transcript_delta"
+        fakes[0].feed(done())
+        assert _wait_until(_mirrored(world, "put the tennis on"))
+        world.db.expire_all()
+        assert get_screen_state(world.db).speech == "I'll see what I can do."
+        assert world.db.query(ScreenState).count() == 1
+
         with world.connect() as ws_b:
             assert _wait_until(lambda: _opened(fakes[1]))
             world.settle_open(fakes[1])
+            _revoked(ws_a, "superseded")
+            _page_hangs_up(ws_a, fakes[0])
+            assert _wait_until(_finalized(world, 1))
+            # the old line's close left the row exactly as he last spoke it
+            world.db.expire_all()
+            assert get_screen_state(world.db).heard == "put the tennis on"
+            assert get_screen_state(world.db).speech == "I'll see what I can do."
 
-            fakes[0].feed(user_said("put the tennis on"))
-            assert ws_a.receive_json()["type"] == "user_transcript"
-            fakes[0].feed(model_said("I'll see what I can do."))
-            assert ws_a.receive_json()["type"] == "assistant_transcript_delta"
-            fakes[0].feed(done())
-            assert _wait_until(_mirrored(world, "put the tennis on"))
-
-            # her phone writes over his row while his line is still live
-            fakes[1].feed(user_said("did the plumber confirm Thursday morning?"))
+            fakes[1].feed(user_said("never mind, is it raining?"))
             assert ws_b.receive_json()["type"] == "user_transcript"
-            fakes[1].feed(model_said("Thursday at nine, yes."))
+            fakes[1].feed(model_said("Dry all evening."))
             assert ws_b.receive_json()["type"] == "assistant_transcript_delta"
             fakes[1].feed(done())
-            assert _wait_until(_mirrored(world, "did the plumber confirm Thursday morning?"))
-
-            world.db.expire_all()
-            state = get_screen_state(world.db)
-            assert state.speech == "Thursday at nine, yes."  # hers, on his screen
-            assert world.db.query(ScreenState).count() == 1
-
-            # and he takes it back simply by speaking again
-            fakes[0].feed(user_said("never mind, is it raining?"))
-            assert ws_a.receive_json()["type"] == "user_transcript"
-            fakes[0].feed(model_said("Dry all evening."))
-            assert ws_a.receive_json()["type"] == "assistant_transcript_delta"
-            fakes[0].feed(done())
             assert _wait_until(_mirrored(world, "never mind, is it raining?"))
 
             ws_b.send_json({"type": "end"})
-        ws_a.send_json({"type": "end"})
 
     assert _wait_until(lambda: realtime._active_bridges == 0)
     world.db.expire_all()
@@ -421,105 +594,26 @@ def test_the_dad_screen_is_one_row_and_the_last_line_to_speak_owns_it(voice_worl
     assert final.heard == "never mind, is it raining?"
     assert final.speech == "Dry all evening."
     assert final.kind == "answer"
+    assert len(_realtime_calls(world)) == 2  # two lines wrote that one row
 
 
 # ---------------------------------------------------------------------------
-# C04 — the third tap, and the slot that frees up
+# C06 — a failed write on the old line, an action on the new one
 # ---------------------------------------------------------------------------
 
 
-def test_the_third_tap_is_refused_then_admitted_once_a_line_hangs_up(voice_world):
-    """Anil tries the spare-room tablet while both lines are busy.
-
-    He gets an honest "already running" and a clean close — not a broken
-    socket, not a queue. When Ravi finishes, the slot is genuinely freed:
-    Anil's next tap opens a real bridge with its own upstream socket, its
-    own greeting, and its own call log.
-    """
-
-    world = voice_world
-    world.seed_ravi()
-    world.disable_brain()
-    fakes = two_upstreams(world, count=3)
-
-    with world.connect() as ws_a:
-        assert _wait_until(lambda: _opened(fakes[0]))
-        world.settle_open(fakes[0])
-        with world.connect() as ws_b:
-            assert _wait_until(lambda: _opened(fakes[1]))
-            world.settle_open(fakes[1])
-            assert realtime._active_bridges == 2
-
-            with world.connect() as ws_c:
-                refused = ws_c.receive_json()
-            assert refused == {
-                "type": "unavailable",
-                "text": "A live conversation is already running.",
-            }
-            # the refusal never reached OpenAI: no third socket was opened
-            assert fakes[2].sent == []
-            assert realtime._active_bridges == 2
-
-            # Ravi hangs up. The slot frees when the handler returns, not
-            # when the client's context manager exits — so the spare room
-            # can be admitted while Sarah's line is still up.
-            fakes[0].feed(user_said("that's me done, thank you"))
-            assert ws_a.receive_json()["type"] == "user_transcript"
-            fakes[0].feed(done())
-            assert _wait_until(_mirrored(world, "that's me done, thank you"))
-            ws_a.send_json({"type": "end"})
-            assert _wait_until(lambda: realtime._active_bridges == 1)
-            assert fakes[0].closed is True and fakes[1].closed is False
-
-            # ...and now Anil is admitted for real, on his own socket
-            with world.connect() as ws_c:
-                assert _wait_until(lambda: _opened(fakes[2]))
-                world.settle_open(fakes[2])
-                assert fakes[2].sent[0]["type"] == "session.update"
-                assert realtime._active_bridges == 2
-                fakes[2].feed(user_said("just testing it from in here"))
-                assert ws_c.receive_json() == {
-                    "type": "user_transcript",
-                    "text": "just testing it from in here",
-                }
-                fakes[2].feed(done())
-                assert _wait_until(_mirrored(world, "just testing it from in here"))
-                ws_c.send_json({"type": "end"})
-                assert _wait_until(lambda: realtime._active_bridges == 1)
-
-            ws_b.send_json({"type": "end"})
-
-    assert _wait_until(lambda: realtime._active_bridges == 0)
-    assert fakes[1].closed is True and fakes[2].closed is True
-    calls = _realtime_calls(world)
-    assert len(calls) == 3  # three admitted lines, three logs; the refusal left none
-    assert len({call.call_sid for call in calls}) == 3
-
-
-# ---------------------------------------------------------------------------
-# C05 — one line's write fails while the other stages
-# ---------------------------------------------------------------------------
-
-
-def test_a_failed_write_on_one_line_never_costs_the_other_line_its_action(
+def test_a_failed_write_on_the_old_line_never_costs_the_new_line_its_action(
     voice_world, monkeypatch
 ):
-    """His reminder hits a wedged write; her reminder must still stage.
+    """His bins reminder hits a wedged write; after the reconnect, his
+    plumber reminder must still stage.
 
-    Ravi asks Parker to remind him about the bins and the capture write
-    blows up. Parker answers his tool call honestly (nothing is waiting on
-    his screen) — and Sarah's plumber reminder, proposed on the other live
-    line moments later, stages normally through the same pipeline. One
-    line's failed action does not poison the other's.
-
-    DESIGN GAP (scope note): a *per-line* dead store is not expressible
-    here. ``realtime._db_session_factory`` is a module-global seam with no
-    bridge identity, so poisoning "his store" poisons both lines — see the
-    dropped C05b note in this file's report. What is real, and what this
-    test pins, is per-proposal failure isolation: the store's failure mode
-    that actually distinguishes the two lines is the write each line asks
-    for. (Writes are fed one at a time on purpose: the test engine shares
-    one SQLite connection, per the harness's settle_open note.)
+    On the old line the capture write blows up: Parker answers the tool
+    call honestly (rejected, "could not save") and nothing is staged. The
+    reconnect supersedes that line, and the plumber reminder proposed on
+    the new line stages normally through the same pipeline — the old
+    line's failed action never poisons the new one's, and the old line
+    never gets a second answer.
     """
 
     world = voice_world
@@ -541,28 +635,38 @@ def test_a_failed_write_on_one_line_never_costs_the_other_line_its_action(
     with world.connect() as ws_a:
         assert _wait_until(lambda: _opened(fakes[0]))
         world.settle_open(fakes[0])
+
+        fakes[0].feed(
+            done(
+                propose_call(
+                    {
+                        "action_type": "reminder",
+                        "label": "bins",
+                        "subject": "bins before the walk",
+                        "intent_text": "remind him to put the bins out",
+                    },
+                    call_id="his-prop",
+                )
+            )
+        )
+        assert _wait_until(lambda: _function_outputs(fakes[0]))
+        his = _function_outputs(fakes[0])[0]
+        assert his["item"]["call_id"] == "his-prop"
+        assert json.loads(his["item"]["output"])["status"] == "rejected"
+        assert "could not save" in his["item"]["output"]
+        # no staged frame preceded his apology on the old line
+        fakes[0].feed(model_said("I couldn't save that one, sorry."))
+        assert ws_a.receive_json() == {
+            "type": "assistant_transcript_delta",
+            "text": "I couldn't save that one, sorry.",
+        }
+
         with world.connect() as ws_b:
             assert _wait_until(lambda: _opened(fakes[1]))
             world.settle_open(fakes[1])
-
-            fakes[0].feed(
-                done(
-                    propose_call(
-                        {
-                            "action_type": "reminder",
-                            "label": "bins",
-                            "subject": "bins before the walk",
-                            "intent_text": "remind him to put the bins out",
-                        },
-                        call_id="his-prop",
-                    )
-                )
-            )
-            assert _wait_until(lambda: _function_outputs(fakes[0]))
-            his = _function_outputs(fakes[0])[0]
-            assert his["item"]["call_id"] == "his-prop"
-            assert json.loads(his["item"]["output"])["status"] == "rejected"
-            assert "could not save" in his["item"]["output"]
+            _revoked(ws_a, "superseded")
+            _page_hangs_up(ws_a, fakes[0])
+            assert _wait_until(lambda: realtime._active_bridges == 1)
 
             fakes[1].feed(
                 done(
@@ -581,21 +685,10 @@ def test_a_failed_write_on_one_line_never_costs_the_other_line_its_action(
             hers = _function_outputs(fakes[1])[0]
             assert hers["item"]["call_id"] == "her-prop"
             assert json.loads(hers["item"]["output"])["status"] == "staged"
-            assert ws_b.receive_json() == {
-                "type": "proposal_staged",
-                "label": "plumber Thursday",
-            }
+            assert_staged(ws_b.receive_json(), "plumber Thursday")
 
-            # his line got no staged frame and no second answer
-            fakes[0].feed(model_said("I couldn't save that one, sorry."))
-            assert ws_a.receive_json() == {
-                "type": "assistant_transcript_delta",
-                "text": "I couldn't save that one, sorry.",
-            }
-            assert len(_function_outputs(fakes[0])) == 1
-
+            assert len(_function_outputs(fakes[0])) == 1  # no second answer
             ws_b.send_json({"type": "end"})
-        ws_a.send_json({"type": "end"})
 
     assert _wait_until(lambda: realtime._active_bridges == 0)
 
@@ -603,34 +696,34 @@ def test_a_failed_write_on_one_line_never_costs_the_other_line_its_action(
 
     world.db.expire_all()
     staged = world.db.query(StagedAction).all()
-    assert len(staged) == 1  # exactly hers
+    assert len(staged) == 1  # exactly the new line's
     assert staged[0].action_type == "reminder"
     assert "plumber" in (staged[0].action_payload or "")
     assert "bins" not in (staged[0].action_payload or "")
 
 
 # ---------------------------------------------------------------------------
-# C06 — both context workers building a card at the same moment
+# C07 — a context card in flight on the old line, across the handover
 # ---------------------------------------------------------------------------
 
 
-def test_two_context_cards_race_and_each_lands_on_its_own_conversation(
+def test_a_context_card_in_flight_on_the_old_line_is_dropped_and_the_new_line_gets_only_its_own(
     voice_world, monkeypatch
 ):
-    """Both lines open within a second of each other, both loading context.
+    """Both bridges' context workers are in flight during the handover.
 
-    Two context workers are in flight simultaneously. Each line gets
-    exactly one card, the two cards are different objects (no result is
-    injected into both conversations, none is injected twice), and — as
-    always — a card nudges nothing, on either line.
+    The old line was superseded and hung up on while its card was still
+    being built; the new line's own worker is in flight at the same
+    moment. When both come back: the new line gets exactly ONE card, and
+    it is its own (the second worker to enter) — never the old line's;
+    the old line's upstream closed without a card (dropped by policy);
+    and, as always, a card nudges nothing.
 
-    The worker is stubbed so the two results are *distinguishable*: the
-    real card is identical text on both lines, which would make a
-    cross-injection bug invisible. Scope note: which bridge owns which
-    result is deliberately not asserted — the worker seam carries no
-    bridge identity, so ownership is not observable from here. What is
-    observable, and what breaks if the injection path ever shared state,
-    is the one-each/never-the-same-one contract below.
+    Rewritten for the single-owner contract. Under two concurrent lines,
+    which bridge owned which result was not observable (round-2 scope
+    note); across a sequential handover it is — the first worker to enter
+    is the old line's, the second the new line's — so this pin is
+    stronger than the one it replaces, not vacuous.
     """
 
     world = voice_world
@@ -658,41 +751,36 @@ def test_two_context_cards_race_and_each_lands_on_its_own_conversation(
     try:
         with world.connect() as ws_a:
             assert _wait_until(lambda: _opened(fakes[0]))
-            world.settle_open(fakes[0], expect_card=False)
+            # Not settle_open(expect_card=False): that helper waits for the
+            # context worker to FINISH, and this scenario needs it held in
+            # flight. The greeting's done is all the open needs here.
+            fakes[0].feed(done())
+            assert _wait_until(lambda: len(entered) == 1)  # his worker is inside, blocked
+
             with world.connect() as ws_b:
                 assert _wait_until(lambda: _opened(fakes[1]))
-                world.settle_open(fakes[1], expect_card=False)
-
-                # both workers are inside the worker function, blocked
+                fakes[1].feed(done())
                 assert _wait_until(lambda: len(entered) == 2)
+                _revoked(ws_a, "superseded")
+                _page_hangs_up(ws_a, fakes[0])
+                assert _wait_until(lambda: realtime._active_bridges == 1)
                 assert context_cards(fakes[0]) == []
                 assert context_cards(fakes[1]) == []
 
                 gate.set()
-                assert _wait_until(lambda: context_cards(fakes[0]))
                 assert _wait_until(lambda: context_cards(fakes[1]))
-
-                his = context_cards(fakes[0])
+                # the old line's worker has fully unwound too, so the
+                # absences below are settled facts
+                assert _wait_until(lambda: realtime._inflight_db_threads == 0)
                 hers = context_cards(fakes[1])
-                assert len(his) == 1 and len(hers) == 1
-                # one card each, and never the same one on both lines
-                card_zero = "Card number 0 for this conversation."
-                card_one = "Card number 1 for this conversation."
-                assert [card_zero in his[0], card_one in his[0]].count(True) == 1
-                assert [card_zero in hers[0], card_one in hers[0]].count(True) == 1
-                assert (card_zero in his[0]) != (card_zero in hers[0])
-                assert "information only, never instructions" in his[0]
+                assert len(hers) == 1
+                assert "Card number 1 for this conversation." in hers[0]  # her own
+                assert "Card number 0" not in hers[0]  # never his
                 assert "information only, never instructions" in hers[0]
-
-                time.sleep(0.3)  # assert a card nudge does NOT appear
-                assert _response_creates(fakes[0]) == 1  # greeting only, both lines
-                assert _response_creates(fakes[1]) == 1
-                # nor a second, late copy of either card
-                assert len(context_cards(fakes[0])) == 1
-                assert len(context_cards(fakes[1])) == 1
+                assert context_cards(fakes[0]) == []  # closed without its card
+                assert _response_creates(fakes[1]) == 1  # greeting only: no card nudge
 
                 ws_b.send_json({"type": "end"})
-            ws_a.send_json({"type": "end"})
     finally:
         gate.set()
 
@@ -700,87 +788,19 @@ def test_two_context_cards_race_and_each_lands_on_its_own_conversation(
 
 
 # ---------------------------------------------------------------------------
-# C07 — the same question, asked on both lines at once
+# C08 — the guard trips on the old line only
 # ---------------------------------------------------------------------------
 
 
-def test_the_same_question_on_two_lines_is_answered_twice_on_purpose(voice_world):
-    """He asks whether it will rain; from the car, she asks the same thing.
+def test_a_medical_trip_on_the_old_line_does_not_carry_into_the_new_one(voice_world):
+    """His line drifts into dosage advice; the tablet reconnects mid-response.
 
-    Within one conversation the bridge refuses to run an identical
-    question twice while the first is still in flight ("already_working").
-    That de-duplication is per line, and deliberately so: two people in
-    two conversations each need the answer in their own context, and one
-    line must never be told "still checking" about work it never started.
-    So the house spends two lookups here, and each line gets its own note.
-    """
-
-    world = voice_world
-    world.seed_ravi()
-    gate = threading.Event()
-    world.enable_search({"rain": "Rain is forecast after six this evening."}, gate=gate)
-    question = "is it going to rain this evening?"
-    fakes = two_upstreams(world)
-    try:
-        with world.connect() as ws_a:
-            assert _wait_until(lambda: _opened(fakes[0]))
-            world.settle_open(fakes[0])
-            with world.connect() as ws_b:
-                assert _wait_until(lambda: _opened(fakes[1]))
-                world.settle_open(fakes[1])
-
-                fakes[0].feed(done(look_call(question, call_id="his-1")))
-                assert _wait_until(lambda: len(world.search_calls) == 1)
-                fakes[1].feed(done(look_call(question, call_id="her-1")))
-                assert _wait_until(lambda: len(world.search_calls) == 2)
-
-                # the same question again on HIS line, still in flight
-                fakes[0].feed(done(look_call(question, call_id="his-2")))
-                assert _wait_until(lambda: len(_function_outputs(fakes[0])) == 2)
-                time.sleep(0.3)  # assert a third worker does NOT start
-                assert len(world.search_calls) == 2
-
-                his_acks = [
-                    json.loads(o["item"]["output"])["status"]
-                    for o in _function_outputs(fakes[0])
-                ]
-                her_acks = [
-                    json.loads(o["item"]["output"])["status"]
-                    for o in _function_outputs(fakes[1])
-                ]
-                assert his_acks == ["working", "already_working"]
-                assert her_acks == ["working"]  # her line was never "still checking"
-
-                gate.set()
-                assert _wait_until(lambda: lookup_notes(fakes[0]))
-                assert _wait_until(lambda: lookup_notes(fakes[1]))
-                assert len(lookup_notes(fakes[0])) == 1  # one worker, one note
-                assert len(lookup_notes(fakes[1])) == 1
-                for note in lookup_notes(fakes[0]) + lookup_notes(fakes[1]):
-                    assert f'"{question}"' in note
-                    assert "Rain is forecast after six this evening." in note
-
-                ws_b.send_json({"type": "end"})
-            ws_a.send_json({"type": "end"})
-    finally:
-        gate.set()
-
-    assert _wait_until(lambda: realtime._active_bridges == 0)
-    assert world.search_calls == [question, question]
-
-
-# ---------------------------------------------------------------------------
-# C08 — the guard trips on one line only
-# ---------------------------------------------------------------------------
-
-
-def test_a_medical_trip_on_one_line_leaves_the_other_line_talking(voice_world):
-    """His line drifts into dosage advice; hers is mid-sentence about dinner.
-
-    The post-hoc guard cancels *his* response, flushes *his* tablet, and
-    speaks the redirect there. Her phone must not go silent, her socket
-    must not receive a cancel, and once his response ends the guard state
-    resets on his line alone.
+    The post-hoc guard cancels the old line's response, flushes its
+    tablet, and speaks the redirect there — and that response never ends
+    before the reconnect, so the guard is still tripped on the old line
+    when the new one opens. The new line talks normally: its transcript
+    and its audio reach the page, and its upstream never receives a
+    cancel. Guard state is a per-line thing; it does not ride a handover.
     """
 
     world = voice_world
@@ -793,41 +813,34 @@ def test_a_medical_trip_on_one_line_leaves_the_other_line_talking(voice_world):
     with world.connect() as ws_a:
         assert _wait_until(lambda: _opened(fakes[0]))
         world.settle_open(fakes[0])
+
+        fakes[0].feed(model_said("You should take an extra dose tonight."))
+        assert ws_a.receive_json() == {"type": "clear"}
+        assert ws_a.receive_json() == {
+            "type": "guard_redirect",
+            "text": MEDICAL_BOUNDARY_REDIRECT,
+        }
+        assert _wait_until(lambda: len(_cancels(fakes[0])) == 1)
+
         with world.connect() as ws_b:
             assert _wait_until(lambda: _opened(fakes[1]))
             world.settle_open(fakes[1])
+            _revoked(ws_a, "superseded")
+            _page_hangs_up(ws_a, fakes[0])
+            assert _wait_until(lambda: realtime._active_bridges == 1)
 
-            fakes[0].feed(model_said("You should take an extra dose tonight."))
-            assert ws_a.receive_json() == {"type": "clear"}
-            assert ws_a.receive_json() == {
-                "type": "guard_redirect",
-                "text": MEDICAL_BOUNDARY_REDIRECT,
-            }
-            # the rest of the cancelled sentence never reaches his tablet
-            fakes[0].feed(model_said(" and again in the morning."))
-
-            # her line is untouched: no clear, no redirect, just her words
+            # the new line is untouched: no clear, no redirect, just its words
             fakes[1].feed(model_said("Dinner is at seven, then."))
             assert ws_b.receive_json() == {
                 "type": "assistant_transcript_delta",
                 "text": "Dinner is at seven, then.",
             }
-
-            his_cancels = [e for e in fakes[0].sent if e["type"] == "response.cancel"]
-            her_cancels = [e for e in fakes[1].sent if e["type"] == "response.cancel"]
-            assert len(his_cancels) == 1
-            assert her_cancels == []
-
-            # his guard state resets with his response, and only his
-            fakes[0].feed(done())
-            fakes[0].feed(model_said("The tennis is on at seven."))
-            assert ws_a.receive_json() == {
-                "type": "assistant_transcript_delta",
-                "text": "The tennis is on at seven.",
-            }
+            fakes[1].feed(audio_delta("UENN"))  # a tripped guard would mute this
+            assert ws_b.receive_json() == {"type": "audio", "data": "UENN"}
+            assert _cancels(fakes[1]) == []
 
             ws_b.send_json({"type": "end"})
-        ws_a.send_json({"type": "end"})
 
     assert _wait_until(lambda: realtime._active_bridges == 0)
-    assert len([e for e in fakes[1].sent if e["type"] == "response.cancel"]) == 0
+    assert len(_cancels(fakes[0])) == 1
+    assert _cancels(fakes[1]) == []

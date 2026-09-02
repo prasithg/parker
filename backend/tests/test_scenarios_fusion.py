@@ -186,11 +186,7 @@ def test_alcaraz_then_the_channel_then_remind_me(voice_world):
         assert chips_one["items"][0]["label"] == "US Open schedule"
         assert chips_two["items"][0]["label"] == "TV listings"
 
-        staged_note = ws.receive_json()
-        assert staged_note == {
-            "type": "proposal_staged",
-            "label": "tell me when Alcaraz starts",
-        }
+        assert_staged(ws.receive_json(), "tell me when Alcaraz starts")
         ws.send_json({"type": "end"})
 
     assert _wait_until(lambda: realtime._active_bridges == 0)  # finalize landed
@@ -381,10 +377,7 @@ def test_sarah_is_coming_sunday_and_he_wants_to_say_yes(voice_world, monkeypatch
         )
         assert _wait_until(lambda: _function_outputs(fake))
         assert json.loads(_function_outputs(fake)[0]["item"]["output"])["status"] == "staged"
-        assert ws.receive_json() == {
-            "type": "proposal_staged",
-            "label": "tell Sarah about Sunday",
-        }
+        assert_staged(ws.receive_json(), "tell Sarah about Sunday")
         ws.send_json({"type": "end"})
 
     from app.db.models import CallLog, OutboxMessage, StagedAction
@@ -557,11 +550,7 @@ def test_writing_down_a_question_for_thursdays_neurologist(voice_world):
         assert "not allowed" in outputs["prop-appt"]["detail"]
         assert outputs["prop-rem"]["status"] == "staged"
 
-        staged_note = ws.receive_json()
-        assert staged_note == {
-            "type": "proposal_staged",
-            "label": "write my questions Wednesday night",
-        }
+        assert_staged(ws.receive_json(), "write my questions Wednesday night")
 
         # The two acks share the nudge budget: one fired, one deferred.
         assert _wait_until(lambda: _response_creates(fake) == 2)
