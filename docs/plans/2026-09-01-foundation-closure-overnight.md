@@ -271,9 +271,14 @@ Findings so far:
   phrase micro-nods from real transcript punctuation, restrained outcome
   beats, idle weight shift, `advance()` for numeric verification
   ([plan](2026-09-02-reachy-motion-vocabulary.md)).
-- `fable/wake-burst-window` (on PR #40, experiment): a second look at just
-  the loud burst when a hop rises above the room, aimed at the measured
-  over-TV miss; judged by the soak's over-TV rows and a TV false-wake soak.
+- `fable/wake-burst-window` (on PR #40, experiment, opt-in
+  `parker_wake_burst_window`): a second look at just the loud burst when
+  the last 1.3 s of the window is ≥1.25× louder than what came before.
+  Measured (base model): bare "hey parker" over TV at +6/+12 dB 0/4 → 2/4
+  (one synthesized voice still reads as TV even in the burst clip); the
+  full sentence 4/4 either way; equal loudness and below still 0/8; no
+  extra false wakes in 4 min of TV; about +20% CPU during TV. A partial,
+  honest gain — the answer over TV speech remains a dedicated wake model.
 
 Each stacked PR had a fresh-context review and a fix round where it
 returned NEEDS_FIX; every fix round added the pin that would have caught
