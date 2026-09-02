@@ -180,7 +180,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "due_at": {
                         "type": "string",
-                        "description": "Optional ISO-8601 timestamp for when the intent should resurface.",
+                        "description": (
+                            "Optional ISO-8601 timestamp with UTC offset, in his local time, for "
+                            "when the intent should resurface (e.g. 2026-09-02T16:00:00-04:00); "
+                            "a timestamp without an offset is read as his local wall time."
+                        ),
                     },
                     "subject": {
                         "type": "string",

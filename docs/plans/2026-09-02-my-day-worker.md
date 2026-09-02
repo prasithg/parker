@@ -153,3 +153,66 @@ Adjacent defects reported, NOT fixed here (outside this slice's files):
    (`pipeline.py:87`): a future due_at never stages and the session would
    report "nothing waiting". Needs a product decision (`due_at` as
    resurface-at vs due-at) in its own slice.
+
+## Fix round 2 (2026-09-02, review of `1038242` — P03-1, P03-2, P03-3)
+
+The fresh review ran the P0.3 acceptance through the REAL
+capture → resolve → stage pipeline and the text-lane capture tool, and
+three majors survived the unit pins:
+
+- **P03-1** — a dated reminder lives on `CapturedIntent` (status
+  `pending`) until the resolve gate (`pipeline.resolve_captured_intents`:
+  `due_at <= now`) lets it stage, so `StagedAction.execute_after` is
+  always in the past when the row is born. The worker read `StagedAction`
+  only: "what do I have today" at 3 PM with a dentist reminder captured
+  ten days ago for 4 PM said "Nothing is on record", and at 4:30 PM it
+  became "still open". The P0.3 pin built a future `execute_after`
+  directly — a shape the pipeline cannot produce.
+- **P03-2** — `pipeline._coerce_datetime` was bare `fromisoformat`: an
+  offset-bearing due time (`2026-09-02T16:00:00-04:00`) was stored as
+  naive 16:00, which the naive-UTC decode spoke as "still open, was due
+  earlier today at 12 PM" at 12:30 PM — hours early and called overdue.
+- **P03-3** — the six-line reminder cap cut silently while
+  `render_my_day_item` told the model "if something is missing, say Parker
+  has nothing written down for it": a seventh reminder was denied.
+
+What changed:
+
+- `_my_day_reminder_lines` (`app/parker/realtime_workers.py`) reads a
+  second source: pending `remind`/`reminder` intents with `due_at` before
+  the day-after boundary, skipping any that already have a staged action
+  (`~CapturedIntent.resolutions.any(ResolutionResult.staged_actions.any())`).
+  They get the same head as a staged row, state "waiting for his yes", and
+  the identical today / tomorrow / still-open phrasing by due time; dated
+  entries from both sources are merged by due time, undated ones keep
+  most-recently-set-first. Before its time a dated reminder comes from the
+  captured intent; once it resolves and stages it comes from the staged
+  action — one line either way. Over six lines, the first six are followed
+  by "…and N more reminders Parker did not list here — never say he has
+  none."; the outer 11-line cap still applies afterwards.
+- `pipeline._coerce_datetime` (`app/parker/pipeline.py`) normalises to the
+  naive-UTC storage convention: aware → UTC; naive → home wall time
+  (`rollup.home_timezone()`, imported function-locally so tests can patch
+  it) → UTC; `datetime` objects pass through (the seed passes UTC-naive
+  datetimes). The `capture_intent` tool's `due_at` description
+  (`app/conversation/tools.py`) now says: ISO-8601 with UTC offset, in his
+  local time; without an offset it is read as his local wall time.
+
+Pins (`tests/test_my_day_worker.py`, five added): through
+`execute_tool("capture_intent")` with a future due and NO staged action,
+"— today at 4 PM." at 3 PM, then after resolve/stage at 4:30 PM exactly one
+"still open, was due earlier today at 4 PM." line; `-04:00` and naive
+`16:00` both store `2026-09-02 20:00` and speak "today at 4 PM"; a `Z`
+string and a datetime object are unchanged; seven undated rows → six
+reminder lines + the more-line, limit line last; five rows → no more-line.
+`tests/test_realtime.py -k my_day` (6) unchanged and green.
+
+Known collateral: `tests/test_parker.py::test_capture_intent_tool_persists_pending_intent`
+pins a naive due string (`2026-06-03T09:00:00`) stored verbatim. Under the
+home-local reading it passes only where the machine zone is UTC (CI) and
+fails on the EDT Mac (stores 13:00). Outside this round's file set; the
+minimal fix is a `Z` suffix on the input or a UTC `home_timezone` patch.
+
+Caveats carried: the fixed-offset `home_timezone()` (DST edge, P03-4) and
+the "no time on record" suffix on realtime-lane reminders whose subject
+carries a time (P03-5) are unchanged.

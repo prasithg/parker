@@ -16,9 +16,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.conversation.tools import execute_tool
 from app.db.models import CallLog, CapturedIntent, Medication, ResolutionResult, StagedAction
 from app.memory.store import save_memory
 from app.parker import realtime_workers
+from app.parker.pipeline import capture_intent, resolve_captured_intents, stage_resolved_actions
 from app.parker.realtime_workers import MY_DAY_LIMIT_LINE, run_my_day_worker
 
 TZ = timezone(timedelta(hours=-4), "EDT")
@@ -238,3 +240,124 @@ def test_one_failing_source_is_named_never_nothing_on_record(db, monkeypatch):
     failed = run_my_day_worker(no_store, now=NOW)
     assert failed.error == "could not read his notes"
     assert failed.speech == ""
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2 (review of 1038242): P03-1 pending intents, P03-2 due-time
+# zone, P03-3 the reminder cap is never silent.
+# ---------------------------------------------------------------------------
+
+
+def _call(db) -> CallLog:
+    call = CallLog(call_sid="P03-fix2", call_type="converse")
+    db.add(call)
+    db.commit()
+    return call
+
+
+def test_dated_reminder_pending_in_the_pipeline_is_his_day_before_it_stages(db):
+    """P03-1: through the real pipeline a dated reminder is a pending
+    CapturedIntent until the resolve gate (due_at <= now) lets it stage —
+    so before its time there is NO StagedAction. Captured ten days ago by
+    the text-lane tool, due 4 PM today: at 3 PM it is his day; at 4:30 PM,
+    once resolved and staged, it is still open — one line, never two."""
+
+    call = _call(db)
+    result = execute_tool(
+        db,
+        call.id,
+        "capture_intent",
+        {
+            "intent_text": "remind me about the dentist",
+            "requested_action": "remind",
+            "due_at": "2026-09-02T20:00:00Z",
+            "subject": "the dentist",
+        },
+    )
+    assert result["status"] == "captured"
+    intent = db.get(CapturedIntent, result["captured_intent_id"])
+    intent.created_at = _stored(NOW - timedelta(days=10))
+    db.commit()
+    assert intent.status == "pending"
+    assert db.query(StagedAction).count() == 0
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert _line_with(lines, "the dentist") == "A reminder (waiting for his yes): the dentist — today at 4 PM."
+    assert not any(line.startswith("Nothing is on record") for line in lines)
+
+    later = _local(2026, 9, 2, 16, 30)
+    resolve_captured_intents(db, now=_stored(later))
+    stage_resolved_actions(db, now=_stored(later))
+    assert db.query(StagedAction).count() == 1
+
+    lines = _lines(run_my_day_worker(lambda: db, now=later).speech)
+
+    assert _line_with(lines, "the dentist") == (
+        "A reminder (waiting for his yes): the dentist — still open, was due earlier today at 4 PM."
+    )
+
+
+@pytest.mark.parametrize("raw", ["2026-09-02T16:00:00-04:00", "2026-09-02T16:00:00"])
+def test_captured_due_time_with_offset_or_as_home_wall_time_is_stored_as_utc(db, raw):
+    """P03-2: the only due-time writer (`pipeline._coerce_datetime`) kept the
+    wall-clock digits of an offset-bearing string and dropped the offset,
+    while every reader decodes storage as naive UTC. An aware string
+    converts to UTC; a naive one is his home wall time (the brain talks to
+    a local user), then the same conversion. 4 PM EDT → 20:00 stored, and
+    My Day at 3 PM says today at 4 PM — not "still open" at noon."""
+
+    captured = capture_intent(
+        db,
+        call_log_id=_call(db).id,
+        intent_text="remind me about the dentist",
+        subject="the dentist",
+        due_at=raw,
+    )
+    assert captured.due_at == datetime(2026, 9, 2, 20, 0)
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert _line_with(lines, "the dentist").endswith("— today at 4 PM.")
+
+
+def test_captured_due_time_in_utc_still_round_trips_and_datetimes_pass_through(db):
+    """P03-2 guard: a 'Z' string is unchanged by the fix, and a datetime
+    object (the seed's UTC-naive convention) is stored as given."""
+
+    call = _call(db)
+    zulu = capture_intent(db, call_log_id=call.id, intent_text="z", subject="z", due_at="2026-09-02T20:00:00Z")
+    assert zulu.due_at == datetime(2026, 9, 2, 20, 0)
+    given = datetime(2026, 9, 2, 20, 0)
+    naive = capture_intent(db, call_log_id=call.id, intent_text="n", subject="n", due_at=given)
+    assert naive.due_at == given
+    assert capture_intent(db, call_log_id=call.id, intent_text="u", subject="u", due_at=None).due_at is None
+
+
+def test_seven_reminders_are_cut_at_six_with_a_more_line_never_silently(db):
+    """P03-3: the six-line reminder cap cut silently and the render item
+    then told the model to deny anything missing. Seven undated reminders:
+    exactly six lines plus one honest "…and 1 more" line, limit line last."""
+
+    for i in range(7):
+        _reminder(db, f"thing {i}", status="executed", created=NOW - timedelta(hours=i + 1))
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    reminders = [line for line in lines if line.startswith("A reminder")]
+    assert len(reminders) == 6
+    more = _line_with(lines, "more reminders", "never say he has none")
+    assert more == "…and 1 more reminders Parker did not list here — never say he has none."
+    assert lines.index(more) == lines.index(reminders[-1]) + 1
+    assert lines[-1] == MY_DAY_LIMIT_LINE
+
+
+def test_five_reminders_have_no_more_line(db):
+    for i in range(5):
+        _reminder(db, f"thing {i}", status="executed", created=NOW - timedelta(hours=i + 1))
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert len([line for line in lines if line.startswith("A reminder")]) == 5
+    assert not any("more reminders" in line for line in lines)
+    assert lines[-1] == MY_DAY_LIMIT_LINE
