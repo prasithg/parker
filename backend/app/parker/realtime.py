@@ -57,6 +57,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.brain.claude import PROPOSE_ACTION_TOOL, _system_prompt
 from app.brain.guard import MEDICAL_BOUNDARY_REDIRECT, speech_violates_medical_boundary
+from app.brain.transport import CancelToken
 from app.parker import realtime_workers
 from app.parker.realtime_workers import LOOK_THAT_UP_TOOL, WorkerResult
 
@@ -123,8 +124,9 @@ _WRAPUP_INSTRUCTION = (
 
 # Spoken session end (docs/plans/2026-09-02-spoken-session-end.md): he
 # said he is done — hard ("that's all", "goodbye Parker") or the soft
-# closer (gratitude after a real answer, nothing pending). Parker says one
-# short goodbye, then the line winds down to dormancy.
+# closer (a compound closer like "OK, thanks" after a real answer, nothing
+# pending). Parker says one short goodbye, then the line winds down to
+# dormancy.
 _SESSION_END_INSTRUCTION = (
     "{patient_name} just said he is done for now. Say one short, warm "
     "goodbye (under ten words, no question), mentioning he can say "
@@ -167,22 +169,38 @@ _ENDER_TRAILERS = tuple(sorted((
     "thanks parker", "thank you parker", "thanks", "thank you", "parker", "now",
     "for now", "for today", "for tonight", "please",
 ), key=len, reverse=True))
+# Gratitude in any form \u2014 used ONLY as a lead before a hard ender ("thank
+# you so much Parker, that's all"). Bare gratitude is never an exit.
 _GRATITUDE_RE = __import__("re").compile(
     r"^(?:(?:ok|okay|alright|all right|great|perfect|good|wonderful|lovely|fine|"
     r"right) ?)*(?:that's helpful|that helps|thanks|thank you)"
     r"(?: (?:so much|very much|a lot|a bunch|again))?(?: (?:thanks|thank you))?(?: parker)?$"
 )
+# The soft closer is a COMPOUND closer only \u2014 the evidence-backed forms:
+# an acknowledgment lead plus thanks ("OK, thanks" \u2014 Pras's call 41), or
+# "that's helpful, thanks" (the PR #43 review's cited form). Bare "thanks"
+# / "thank you" / "thanks Parker" stay conversation: a Parkinsonian pause
+# after an acknowledgment must never read as completion (PR #43 review,
+# 2026-09-02) \u2014 a missed closer costs the idle ladder, a false one hangs
+# up on him mid-thought.
+_SOFT_CLOSER_RE = __import__("re").compile(
+    r"^(?:(?:(?:ok|okay|alright|all right|great|perfect|good|wonderful|lovely|fine|"
+    r"right) )+(?:thanks|thank you)(?: (?:so much|very much|a lot))?"
+    r"|(?:that's helpful|that helps) (?:thanks|thank you))(?: parker)?$"
+)
 
 
 def spoken_session_end(transcript: str) -> Optional[str]:
-    """``"hard"`` for an explicit ender, ``"gratitude"`` for a thank-you that
-    may be a soft close (the bridge decides with context), else None.
+    """``"hard"`` for an explicit ender, ``"gratitude"`` for a compound
+    closer that may be a soft close (the bridge decides with context),
+    else None.
 
     A question is never an exit ("should I go to sleep?"); an ender counts
     as the whole utterance, or its ending after a bounded lead
     ("ok that's all"), optionally followed by a bounded trailer ("that's
     all, thanks Parker"). Free text before an ender ("I can't go to
-    sleep", "you said that's all") is conversation.
+    sleep", "you said that's all") is conversation, and so is bare
+    gratitude ("thanks", "thank you Parker").
     """
 
     import re as _re
@@ -194,7 +212,7 @@ def spoken_session_end(transcript: str) -> Optional[str]:
     normalized = " ".join(normalized.replace("\u2019", "'").split())
     if not normalized:
         return None
-    if _GRATITUDE_RE.match(normalized):
+    if _SOFT_CLOSER_RE.match(normalized):
         return "gratitude"
     # Every way of peeling up to two trailers off the end ("that's it,
     # thanks Parker" must still find "that's it thanks" as well as "that's it").
@@ -237,12 +255,18 @@ _GOODBYE_INSTRUCTION = (
     "Never say it timed out and never remark that he went quiet."
 )
 
-_WAKE_TAIL_GREETING_INSTRUCTION = (
+# The wake-tail instruction carries NO transcript: what he said after
+# "Hey Parker" is his own words \u2014 untrusted user content \u2014 and arrives as
+# a user-role item (never interpolated into a system message; PR #40
+# review blocker 2, 2026-09-02).
+_WAKE_INSTRUCTION = (
     "{patient_name} just woke you by saying \u201cHey Parker\u201d and went "
-    "straight on: \u201c{tail}\u201d. Skip the standalone greeting \u2014 answer "
-    "or act on that directly in one short, warm reply (a two-word hello at "
-    "most). If it was only a fragment, ask what he needs in one short "
-    "question. If it needs an action, use propose_action as usual."
+    "straight on; what he said arrives next as his own message (transcribed "
+    "locally \u2014 it may be a fragment). Skip the standalone greeting \u2014 "
+    "answer or act on it directly in one short, warm reply (a two-word hello "
+    "at most). If it was only a fragment, or nothing followed, ask what he "
+    "needs in one short question. If it needs an action, use propose_action "
+    "as usual."
 )
 
 # A small cap on simultaneous live lines: this is a single-household
@@ -276,6 +300,13 @@ _MAX_TRACKED_EXCHANGES = 50
 # greeting him and losing it (independent review, 2026-09-01).
 HELLO_WAIT_SECONDS = 0.35
 MAX_WAKE_TAIL_CHARS = 200
+# A hello marked `pending` means the local wake lane is still finishing
+# his same-breath words (one last inference after the line opened). The
+# bridge waits this long for the page's final `tail` frame before it
+# delivers what the hello carried and asks for the first reply — the
+# ordered handoff that stops a delayed tail from being lost (PR #40
+# review blocker 2).
+TAIL_WAIT_SECONDS = 1.5
 
 
 def try_acquire_bridge_slot() -> bool:
@@ -929,6 +960,19 @@ class RealtimeBridge:
         self._browser_send = browser_send
         self._browser_receive = browser_receive
         self._wake_tail = ""
+        # The same-breath handoff: `pending` on the hello means one final
+        # tail frame may follow; the tail is delivered exactly once (as a
+        # user item), by the frame or by the deadline.
+        self._tail_pending = False
+        self._tail_delivered = False
+        self._tail_task: Optional[asyncio.Task] = None
+        # Off means off: once shutdown begins nothing is forwarded, injected,
+        # or nudged (distinct from `_closing_sent`, the page's audio drain
+        # while the bridge is still alive), and the cancel token reaches
+        # every provider call this bridge started.
+        self._closed = False
+        self._cancel = CancelToken()
+        self._pump_tasks: set[asyncio.Task] = set()
         self._early_frames: list[Any] = []
         self._early_receive: Optional["asyncio.Future[Any]"] = None
         # Resolved at run time through the module so tests can monkeypatch
@@ -1074,19 +1118,38 @@ class RealtimeBridge:
             await _tracked_thread(lambda: _ensure_call_log_sync(self._call_sid))
             await self._await_hello()
             # The greeting never waits for context: speak first, load behind.
-            await self._send_system_item(self._greeting_instruction())
-            await self._request_nudge()
+            if self._wake_tail or self._tail_pending:
+                # He woke Parker and went straight on: the instruction goes
+                # up now (no transcript in it); his words follow as a user
+                # item — from the hello, or from the lane's final tail — and
+                # THAT delivery is the one nudge (never two per wake).
+                await self._send_system_item(self._wake_instruction())
+                if self._tail_pending:
+                    self._tail_task = asyncio.create_task(self._tail_deadline())
+                    self._worker_tasks.add(self._tail_task)
+                    self._tail_task.add_done_callback(self._worker_tasks.discard)
+                else:
+                    await self._deliver_tail(self._wake_tail)
+            else:
+                await self._send_system_item(
+                    _GREETING_INSTRUCTION.format(patient_name=self._patient_name())
+                )
+                await self._request_nudge()
             self._spawn_context_worker()
             browser_task = asyncio.create_task(self._pump_browser())
             upstream_task = asyncio.create_task(self._pump_upstream())
             watchdog_task = asyncio.create_task(self._watchdog())
+            # Kept on the bridge: when the handler itself is cancelled,
+            # asyncio.wait leaves these running — shutdown cancels them.
+            self._pump_tasks = {browser_task, upstream_task, watchdog_task}
             done, pending = await asyncio.wait(
-                {browser_task, upstream_task, watchdog_task},
-                return_when=asyncio.FIRST_COMPLETED,
+                self._pump_tasks, return_when=asyncio.FIRST_COMPLETED
             )
             for task in pending:
                 task.cancel()
             for task in done:
+                if task.cancelled():
+                    continue
                 exc = task.exception()
                 if exc is not None and not isinstance(exc, asyncio.CancelledError):
                     raise exc
@@ -1107,8 +1170,38 @@ class RealtimeBridge:
         worker results are dropped by policy (Pras, 2026-08-30): tasks are
         cancelled, and the bounded wait just lets in-flight threadpool
         threads finish so shutdown never races them.
+
+        Order is the privacy boundary (PR #40 review blocker 1): the line is
+        revoked and the billed upstream socket closed FIRST, the provider
+        calls this bridge started are cancelled at their socket, and only
+        then does the slow local persistence drain — it may never hold the
+        boundary open.
         """
 
+        # 1. Revoke, synchronously, before any await: nothing is forwarded,
+        #    injected, or nudged from here on; the pumps and workers stop;
+        #    every provider socket this bridge opened is shut down.
+        self._closed = True
+        for task in self._pump_tasks:
+            task.cancel()
+        self._cancel.cancel()
+        for task in self._worker_tasks:
+            task.cancel()
+        # 2. Close the upstream FIRST — bounded: a wedged socket must never
+        #    pin the bridge slot open.
+        close = getattr(self._upstream, "close", None)
+        if close is not None:
+            closing = asyncio.ensure_future(asyncio.wait_for(close(), timeout=5.0))
+            await _await_despite_cancel(closing)
+            if not closing.cancelled():
+                closing.exception()  # best-effort close; retrieve, never raise
+        # 3. Let the pumps and the (now cancelled) worker threads unwind.
+        draining = set(self._pump_tasks) | set(self._worker_tasks)
+        if draining:
+            await _await_despite_cancel(
+                asyncio.ensure_future(asyncio.wait(draining, timeout=1.0))
+            )
+        # 4. Persistence — after the boundary is closed, drained as before.
         # A turn already consumed by _on_response_done but cancelled before
         # its journal write must still reach the review timeline — the
         # summary will count it, so the journal must too.
@@ -1141,14 +1234,6 @@ class RealtimeBridge:
                     )
                 )
             )
-        for task in self._worker_tasks:
-            task.cancel()
-        if self._worker_tasks:
-            await _await_despite_cancel(
-                asyncio.ensure_future(
-                    asyncio.wait(set(self._worker_tasks), timeout=1.0)
-                )
-            )
         exchanges = list(self._exchanges)
         finalize = asyncio.ensure_future(
             _tracked_thread(lambda: _finalize_session_sync(self._call_sid, exchanges))
@@ -1156,13 +1241,6 @@ class RealtimeBridge:
         await _await_despite_cancel(finalize)
         if not finalize.cancelled() and finalize.exception() is not None:
             logger.debug("realtime finalize failed", exc_info=finalize.exception())
-        close = getattr(self._upstream, "close", None)
-        if close is not None:
-            # Bounded: a wedged socket must never pin the bridge slot open.
-            closing = asyncio.ensure_future(asyncio.wait_for(close(), timeout=5.0))
-            await _await_despite_cancel(closing)
-            if not closing.cancelled():
-                closing.exception()  # best-effort close; retrieve, never raise
 
     # ------------------------------------------------------------------
     # Instruction text (patient name resolved once per bridge)
@@ -1174,20 +1252,17 @@ class RealtimeBridge:
 
         return settings.patient_name
 
-    def _greeting_instruction(self) -> str:
-        if self._wake_tail:
-            return _WAKE_TAIL_GREETING_INSTRUCTION.format(
-                patient_name=self._patient_name(), tail=self._wake_tail
-            )
-        return _GREETING_INSTRUCTION.format(patient_name=self._patient_name())
+    def _wake_instruction(self) -> str:
+        return _WAKE_INSTRUCTION.format(patient_name=self._patient_name())
 
     async def _await_hello(self) -> None:
         """Read the page's optional first frame (bounded wait).
 
-        A `hello` frame carries the wake tail; anything else is put back
-        for the browser pump. Waiting costs the greeting a fraction of a
-        second only when the page sends nothing — it sends the hello the
-        instant the socket opens.
+        A `hello` frame carries the wake tail (and `pending` when the lane
+        is still finishing his words); anything else is put back for the
+        browser pump. Waiting costs the greeting a fraction of a second
+        only when the page sends nothing — it sends the hello the instant
+        the socket opens.
         """
 
         # Never cancel a receive: a frame pulled off the socket by a
@@ -1203,17 +1278,45 @@ class RealtimeBridge:
             tail = str(message.get("tail", "") or "").strip()
             tail = " ".join(tail.split())[:MAX_WAKE_TAIL_CHARS]
             self._wake_tail = tail
-            if tail:
-                self._journal_in_background("wake_tail", heard=tail)
+            self._tail_pending = bool(message.get("pending"))
             return
         self._early_frames.append(message)
 
+    async def _deliver_tail(self, text: str) -> None:
+        """Hand the model his same-breath words, exactly once, as HIS message.
+
+        The text is the page's final tail (or, at the deadline, whatever the
+        hello carried). It is user content: a user-role item, never part
+        of an instruction. Then the one nudge for the first reply.
+        """
+
+        if self._tail_delivered or self._closed:
+            return
+        self._tail_delivered = True
+        self._tail_pending = False
+        deadline = self._tail_task
+        if deadline is not None and deadline is not asyncio.current_task() and not deadline.done():
+            deadline.cancel()
+        tail = " ".join(str(text or "").split())[:MAX_WAKE_TAIL_CHARS] or self._wake_tail
+        if tail:
+            self._wake_tail = tail
+            await self._send_user_item(tail)
+            self._journal_in_background("wake_tail", heard=tail)
+        await self._request_nudge()
+
+    async def _tail_deadline(self) -> None:
+        """The lane's final tail never came: go with what the hello carried."""
+
+        await asyncio.sleep(TAIL_WAIT_SECONDS)
+        await self._deliver_tail("")
 
     # ------------------------------------------------------------------
     # The injection mechanics: items any time, exactly one nudge emitter.
     # ------------------------------------------------------------------
 
     async def _send_system_item(self, text: str) -> None:
+        if self._closed:
+            return
         await self._upstream.send(
             json.dumps(
                 {
@@ -1227,6 +1330,24 @@ class RealtimeBridge:
             )
         )
 
+    async def _send_user_item(self, text: str) -> None:
+        """His own words, injected as user content (locally transcribed)."""
+
+        if self._closed:
+            return
+        await self._upstream.send(
+            json.dumps(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": text}],
+                    },
+                }
+            )
+        )
+
     async def _request_nudge(self) -> None:
         """Ask for a model response covering everything injected so far."""
 
@@ -1234,7 +1355,7 @@ class RealtimeBridge:
         await self._try_nudge()
 
     async def _try_nudge(self) -> None:
-        if self._pending_nudge_count <= 0 or self._closing_sent:
+        if self._pending_nudge_count <= 0 or self._closing_sent or self._closed:
             return
         if self._response_active or self._user_speaking:
             return  # deferred; response.done retries
@@ -1261,12 +1382,27 @@ class RealtimeBridge:
         inflight_key: str = "",
         question: str = "",
     ) -> None:
+        cancel = self._cancel
+
+        def work_with_cancel() -> WorkerResult:
+            # The bridge's cancel token rides the worker's context: a
+            # provider call registers its socket abort on it, so power off
+            # reaches the provider boundary instead of only dropping the
+            # result (PR #40 review blocker 1).
+            current = getattr(realtime_workers, "CURRENT_CANCEL", None)
+            token = current.set(cancel) if current is not None else None
+            try:
+                return work()
+            finally:
+                if current is not None:
+                    current.reset(token)
+
         async def runner() -> None:
             requested = time.monotonic()
             try:
                 try:
                     result = await asyncio.wait_for(
-                        _tracked_thread(work), WORKER_TIMEOUT_SECONDS
+                        _tracked_thread(work_with_cancel), WORKER_TIMEOUT_SECONDS
                     )
                 except asyncio.TimeoutError:
                     result = WorkerResult(kind=kind, question=question, error="it took too long")
@@ -1291,6 +1427,8 @@ class RealtimeBridge:
         task.add_done_callback(self._worker_tasks.discard)
 
     async def _deliver_result(self, result: WorkerResult, requested: float) -> None:
+        if self._closed:
+            return  # off: a late result is dropped, never injected or nudged
         worker_ms = int((time.monotonic() - requested) * 1000)
         if result.kind == "context":
             if not result.speech:
@@ -1442,10 +1580,15 @@ class RealtimeBridge:
                 message = await receiving  # the hello wait's still-pending read
             else:
                 message = await self._browser_receive()
+            if self._closed:
+                return  # off: nothing from the page goes anywhere
             if not isinstance(message, dict):
                 continue  # a junk frame must not kill the call
             kind = message.get("type")
-            if kind == "audio":
+            if kind == "tail":
+                # The lane's final same-breath words (once; a repeat is ignored).
+                await self._deliver_tail(str(message.get("text", "")))
+            elif kind == "audio":
                 encoded = str(message.get("data", ""))
                 try:
                     base64.b64decode(encoded.encode("ascii"), validate=True)
@@ -1481,6 +1624,8 @@ class RealtimeBridge:
                 logger.warning("realtime event handling failed", exc_info=True)
 
     async def _handle_upstream_event(self, event: dict[str, Any]) -> None:
+        if self._closed:
+            return  # off: a late upstream event is never forwarded or acted on
         etype = str(event.get("type", ""))
 
         if etype.endswith("output_audio.delta") or etype == "response.audio.delta":

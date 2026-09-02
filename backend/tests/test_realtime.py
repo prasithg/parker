@@ -28,6 +28,7 @@ endpoint — no network, no OpenAI key. Pinned contracts:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import queue
 import threading
@@ -319,10 +320,23 @@ def test_greeting_is_requested_before_any_audio_arrives(
     assert _response_creates(fake) >= 1  # the greeting nudge
 
 
-def test_a_wake_tail_hello_shapes_the_first_reply(db, realtime_enabled, brainless, upstream):
+def _user_items(fake) -> list[str]:
+    return [
+        e["item"]["content"][0]["text"]
+        for e in fake.sent
+        if e["type"] == "conversation.item.create"
+        and e["item"].get("type") == "message"
+        and e["item"].get("role") == "user"
+    ]
+
+
+def test_the_wake_tail_is_a_user_item_never_system_text(db, realtime_enabled, brainless, upstream):
     """"Hey Parker, can you help me": the page's FIRST frame is a hello
-    carrying the words after the wake phrase; the greeting instruction
-    answers that instead of greeting him and losing it. Journaled."""
+    carrying the words after the wake phrase. Those are HIS words —
+    untrusted, locally transcribed — so they reach the model as a user
+    item, never interpolated into a system instruction (PR #40 review
+    blocker 2). The instruction only says his message follows; one nudge
+    asks for the reply; the tail is journaled."""
 
     from app.parker.session_review import RealtimeSessionEvent
 
@@ -332,14 +346,89 @@ def test_a_wake_tail_hello_shapes_the_first_reply(db, realtime_enabled, brainles
         ws.send_json({"type": "end"})
         assert _wait_until(lambda: _response_creates(fake) >= 1)
     items = _system_items(fake)
-    assert items and "can you help me with the tv" in items[0]
-    assert "Skip the standalone greeting" in items[0]
+    assert items and "Skip the standalone greeting" in items[0]
+    assert "arrives next as his own message" in items[0]
     assert "line just opened" not in items[0]
+    assert not any("can you help me with the tv" in text for text in items), items
+    assert _user_items(fake) == ["can you help me with the tv"]
+    assert _response_creates(fake) == 1
+    # Order on the wire: instruction, then his words, then the one nudge.
+    kinds = [
+        (e["type"], e.get("item", {}).get("role"))
+        for e in fake.sent
+        if e["type"] in ("conversation.item.create", "response.create")
+    ][:3]
+    assert kinds == [
+        ("conversation.item.create", "system"),
+        ("conversation.item.create", "user"),
+        ("response.create", None),
+    ], kinds
     assert _wait_until(
         lambda: db.query(RealtimeSessionEvent).filter(RealtimeSessionEvent.kind == "wake_tail").count() == 1
     )
     event = db.query(RealtimeSessionEvent).filter(RealtimeSessionEvent.kind == "wake_tail").one()
     assert event.heard == "can you help me with the tv"
+
+
+def test_a_pending_hello_waits_for_the_final_tail_before_the_first_reply(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    """The line opened before the local wake lane finished his sentence:
+    the hello says `pending`, and the bridge asks for NO reply until the
+    page forwards the lane's final tail — then ONE user item carrying the
+    full words, ONE nudge, the full text journaled. A second tail frame is
+    ignored (PR #40 review blocker 2: the delayed tail was lost)."""
+
+    from app.parker.session_review import RealtimeSessionEvent
+
+    monkeypatch.setattr(realtime, "TAIL_WAIT_SECONDS", 30.0)  # the frame, not the deadline
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        ws.send_json({"type": "hello", "tail": "can you", "pending": True})
+        assert _wait_until(lambda: any("his own message" in t for t in _system_items(fake)))
+        assert _response_creates(fake) == 0, "no reply may be requested before his words"
+        assert _user_items(fake) == []
+        ws.send_json({"type": "tail", "text": "can you help me with the tv"})
+        assert _wait_until(lambda: _response_creates(fake) >= 1)
+        ws.send_json({"type": "tail", "text": "a second tail must not re-shape anything"})
+        ws.send_json({"type": "audio", "data": base64.b64encode(b"\x00\x00").decode()})
+        assert _wait_until(lambda: any(e["type"] == "input_audio_buffer.append" for e in fake.sent))
+        ws.send_json({"type": "end"})
+    assert _user_items(fake) == ["can you help me with the tv"]
+    assert _response_creates(fake) == 1
+    assert _wait_until(
+        lambda: db.query(RealtimeSessionEvent).filter(RealtimeSessionEvent.kind == "wake_tail").count() == 1
+    )
+    event = db.query(RealtimeSessionEvent).filter(RealtimeSessionEvent.kind == "wake_tail").one()
+    assert event.heard == "can you help me with the tv"
+
+
+def test_a_pending_hello_falls_back_to_the_hello_tail_at_the_deadline(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    """The lane's final tail never arrives (dropped lane): after the
+    bounded wait the bridge goes with what the hello carried — the user
+    item is 'can you', exactly one nudge. With nothing at all, the wake
+    instruction alone is nudged (the model asks what he needs) and no
+    user item is minted."""
+
+    monkeypatch.setattr(realtime, "TAIL_WAIT_SECONDS", 0.05)
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        ws.send_json({"type": "hello", "tail": "can you", "pending": True})
+        assert _wait_until(lambda: _response_creates(fake) >= 1)
+        ws.send_json({"type": "end"})
+    assert _user_items(fake) == ["can you"]
+    assert _response_creates(fake) == 1
+
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        ws.send_json({"type": "hello", "tail": "", "pending": True})
+        assert _wait_until(lambda: _response_creates(fake) >= 1)
+        ws.send_json({"type": "end"})
+    assert _user_items(fake) == []
+    assert any("his own message" in t for t in _system_items(fake))
+    assert _response_creates(fake) == 1
 
 
 def test_an_empty_hello_keeps_the_plain_greeting(db, realtime_enabled, brainless, upstream):
@@ -363,9 +452,10 @@ def test_an_oversized_tail_is_bounded_and_a_late_hello_is_ignored(
         assert _wait_until(lambda: _system_items(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
         assert _wait_until(lambda: _response_creates(fake) >= 1)
-    items = _system_items(fake)
-    assert len(items[0]) < 700  # 200-char tail cap inside the instruction
-    assert "second hello" not in items[0]
+    users = _user_items(fake)
+    assert len(users) == 1 and len(users[0]) <= realtime.MAX_WAKE_TAIL_CHARS  # 200-char tail cap
+    assert "second hello" not in users[0]
+    assert not any("second hello" in text for text in _system_items(fake))
 
 
 def test_audio_and_transcripts_flow_to_the_browser(
@@ -1436,6 +1526,148 @@ def test_finalize_rerun_never_mints_a_second_topic_memory(db):
     realtime._finalize_session_sync("REALTIME-twice", exchanges)
     db.expire_all()
     assert db.query(ConversationMemory).count() == 1
+
+
+def test_upstream_closes_before_any_shutdown_write(
+    db, realtime_enabled, brainless, monkeypatch
+):
+    """Off means off (PR #40 review blocker 1): the billed upstream socket
+    closes BEFORE the dangling-turn journal and the session finalize —
+    persistence may drain afterwards but never holds the boundary open.
+    A deliberately slow finalize used to keep the OpenAI session alive for
+    its whole write window."""
+
+    fake = FakeUpstream(
+        [
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "when does Alcaraz play next",
+            }
+        ]
+    )
+
+    async def connect():
+        return fake
+
+    monkeypatch.setattr(realtime, "connect_openai", connect)
+    monkeypatch.setattr(
+        realtime_workers,
+        "run_context_worker",
+        lambda make_db, **_: WorkerResult(kind="context", question="", speech=""),
+    )
+    seen: list[tuple[str, bool]] = []
+    real_retries = realtime._with_local_write_retries
+
+    def recording_retries(label, write):
+        seen.append((label, fake.closed))  # was the upstream already closed?
+        if label == "session finalize":
+            time.sleep(0.3)  # a slow local write must not delay the hang-up
+        real_retries(label, write)
+
+    monkeypatch.setattr(realtime, "_with_local_write_retries", recording_retries)
+
+    async def scenario():
+        sent: list[dict] = []
+        hung_up = asyncio.Event()
+
+        async def send_json(message):
+            sent.append(message)
+
+        async def receive_json():
+            await hung_up.wait()
+            return {"type": "end"}
+
+        bridge = realtime.RealtimeBridge(send_json, receive_json)
+        task = asyncio.create_task(bridge.run())
+        deadline = time.monotonic() + 3.0
+        while not any(m.get("type") == "user_transcript" for m in sent):
+            assert time.monotonic() < deadline, "transcript never reached the browser"
+            await asyncio.sleep(0.01)
+        hung_up.set()  # the page hangs up with his last words unanswered
+        await task
+        return bridge
+
+    asyncio.run(scenario())
+    shutdown_writes = [(label, closed) for label, closed in seen if label != "eager call log"]
+    labels = [label for label, _ in shutdown_writes]
+    assert "session finalize" in labels and "session event" in labels, seen
+    assert all(closed for _, closed in shutdown_writes), seen  # every shutdown write ran after the close
+    assert fake.closed
+
+
+def test_shutdown_leaves_no_bridge_task_or_frame_behind(
+    db, realtime_enabled, brainless, brained, monkeypatch
+):
+    """Under a cancellation storm asyncio.wait never cancelled the pumps:
+    upstream events kept being forwarded, and a lookup could still be
+    spawned, AFTER run() returned (PR #40 review blocker 1). Now shutdown
+    revokes first: no frame, no injection, no worker after off."""
+
+    fake = FakeUpstream(
+        [
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "when does Alcaraz play next",
+            }
+        ]
+    )
+
+    async def connect():
+        return fake
+
+    monkeypatch.setattr(realtime, "connect_openai", connect)
+    monkeypatch.setattr(
+        realtime_workers,
+        "run_context_worker",
+        lambda make_db, **_: WorkerResult(kind="context", question="", speech=""),
+    )
+    searches: list[str] = []
+
+    def spy_search(question, **_):
+        searches.append(question)
+        return WorkerResult(kind="search", question=question, speech="late")
+
+    monkeypatch.setattr(realtime_workers, "run_search_worker", spy_search)
+
+    async def scenario():
+        sent: list[dict] = []
+        never = asyncio.Event()
+
+        async def send_json(message):
+            sent.append(message)
+
+        async def receive_json():
+            await never.wait()
+            return {"type": "end"}
+
+        bridge = realtime.RealtimeBridge(send_json, receive_json)
+        task = asyncio.create_task(bridge.run())
+        deadline = time.monotonic() + 3.0
+        while not any(m.get("type") == "user_transcript" for m in sent):
+            assert time.monotonic() < deadline, "transcript never reached the browser"
+            await asyncio.sleep(0.01)
+        while not task.done():  # anyio-style: a fresh cancel at every await
+            task.cancel()
+            await asyncio.sleep(0)
+        assert task.cancelled()
+        frames_before = len(sent)
+        # Late upstream traffic after off: speech and a tool call.
+        fake.feed({"type": "response.output_audio_transcript.delta", "delta": "late words"})
+        fake.feed(_look_done_event("slow one?"))
+        await asyncio.sleep(0.3)
+        alive = [
+            t for t in asyncio.all_tasks()
+            if t is not asyncio.current_task() and "RealtimeBridge" in repr(t.get_coro())
+        ]
+        return bridge, sent[frames_before:], alive
+
+    bridge, late_frames, alive = asyncio.run(scenario())
+    assert bridge._closed
+    assert late_frames == [], late_frames
+    assert alive == [], alive
+    assert searches == []
+    assert not any("LOOKUP RESULT" in text for text in _system_items(fake))
+    assert fake.closed
 
 
 def test_cancellation_storm_never_outruns_the_finalize_write(

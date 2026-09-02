@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from app.parker import realtime
 from app.parker.realtime import spoken_session_end
 from app.parker.session_review import RealtimeSessionEvent
@@ -86,10 +88,21 @@ def test_hard_enders_and_gratitude_are_deterministic():
                  "that's all. goodbye.", "that's it for tonight", "see you tomorrow parker",
                  "that's all, thanks", "thank you so much parker, that's all"):
         assert spoken_session_end(text) == "hard", text
-    for text in ("OK, thanks.", "Thanks!", "thank you Parker", "great, thanks",
-                 "thanks so much", "thanks very much", "thank you so much parker",
-                 "great thank you", "okay, thank you, parker", "that's helpful, thanks"):
+    # Compound closers only — the evidence-backed forms (PR #43 review):
+    # an acknowledgment lead + thanks ("OK, thanks" — call 41), or
+    # "that's helpful, thanks". Optionally "Parker" on the end.
+    for text in ("OK, thanks.", "great, thanks", "great thank you", "okay, thank you, parker",
+                 "that's helpful, thanks", "that helps, thank you", "alright thanks parker",
+                 "ok great thanks", "all right, thank you", "Okay thanks Parker",
+                 "ok thanks so much", "okay thank you very much parker"):
         assert spoken_session_end(text) == "gratitude", text
+    # Bare gratitude is conversation: a pause after "thanks" is him
+    # composing, never completion (PR #43 review blocker).
+    for text in ("thanks", "Thanks!", "thank you", "thank you Parker", "thanks parker",
+                 "thanks so much", "thanks very much", "thank you so much parker",
+                 "thanks a lot", "that's helpful", "that helps",
+                 "ok thanks for that one what about golf"):
+        assert spoken_session_end(text) is None, text
     for text in ("stop", "bye", "ok", "thanks for nothing tell me more",
                  "I'm done with the tennis, what about golf?", "that's all I know about him",
                  # questions and reports that merely END with an ender phrase
@@ -153,6 +166,63 @@ def test_thats_all_ends_the_session_even_mid_flow(voice_world):
 
 
 # ---------------------------------------------------------------------------
+# S02b — bare "thanks" after a real answer is conversation; his follow-up
+# after a pause is answered (PR #43 review blocker: a Parkinsonian pause
+# after an acknowledgment must never read as completion)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("gratitude", ["thanks", "thank you"])
+def test_bare_thanks_after_an_answer_stays_conversational_and_a_late_question_is_answered(
+    voice_world, gratitude
+):
+    world = voice_world
+    world.disable_brain()
+    fake = world.script([])
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        _answer(world, ws, fake, "what's the weather like",
+                "It is warm and sunny this afternoon, around twenty-six degrees.")
+        fake.feed(user_said(gratitude))
+        assert ws.receive_json()["type"] == "user_transcript"
+        fake.feed(done())  # the auto-response to his thanks finishes: nothing may ride it
+        assert not _wait_until(lambda: any("sounds finished" in i for i in _system_items(fake)), timeout=0.5)
+        # …then, after his pause, the follow-up flows like any other turn.
+        _answer(world, ws, fake, "and what about tomorrow",
+                "Tomorrow looks cooler, with showers in the afternoon.")
+        _no_closing(ws, fake)
+        assert not any("sounds finished" in i for i in _system_items(fake))
+        ws.send_json({"type": "end"})
+    assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
+    assert _end_events(world) == []
+
+
+# ---------------------------------------------------------------------------
+# S02c — "that's helpful, thanks" (the review's cited form) winds down
+# ---------------------------------------------------------------------------
+
+
+def test_thats_helpful_thanks_after_an_answer_winds_down(voice_world):
+    world = voice_world
+    world.disable_brain()
+    fake = world.script([])
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        _answer(world, ws, fake, "who won the tennis",
+                "Alcaraz won the final in four sets on Sunday afternoon.")
+        fake.feed(user_said("that's helpful, thanks"))
+        assert ws.receive_json()["type"] == "user_transcript"
+        assert _wait_until(lambda: any("sounds finished" in i for i in _system_items(fake)))
+        fake.feed(model_said("Any time. Say Hey Parker whenever you like."))
+        fake.feed(done())
+        assert _drain_until_closing(ws)
+    assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
+    events = _end_events(world)
+    assert len(events) == 1 and '"kind": "soft"' in events[0].detail
+    assert events[0].heard == "that's helpful, thanks"
+
+
+# ---------------------------------------------------------------------------
 # S03 — thanks after a QUESTION is conversation, not an ending
 # ---------------------------------------------------------------------------
 
@@ -165,7 +235,9 @@ def test_thanks_after_parker_asked_a_question_keeps_listening(voice_world):
         world.settle_open(fake, expect_card=False)
         _answer(world, ws, fake, "set a reminder",
                 "Sure. Would you like it for this afternoon or tomorrow morning?")
-        fake.feed(user_said("thanks"))
+        # The compound closer itself, so the QUESTION gate is what holds
+        # (bare "thanks" never reaches the gates any more).
+        fake.feed(user_said("OK, thanks."))
         assert ws.receive_json()["type"] == "user_transcript"
         fake.feed(done())  # the auto-response to "thanks" finishes: no closing may ride it
         _no_closing(ws, fake)
@@ -193,7 +265,7 @@ def test_thanks_while_a_lookup_is_in_flight_does_not_hang_up(voice_world):
         fake.feed(done(look_call("who plays at the US Open tonight")))
         assert _wait_until(lambda: calls)
         assert ws.receive_json() == {"type": "working", "kind": "search", "status": "started"}
-        fake.feed(user_said("thanks"))
+        fake.feed(user_said("OK, thanks."))  # the closer itself: the LOOKUP gate holds
         # No goodbye while the worker is out.
         assert not _wait_until(lambda: any("sounds finished" in i for i in _system_items(fake)), timeout=0.5)
         release.set()
@@ -218,7 +290,7 @@ def test_thanks_with_an_offer_pending_keeps_the_offer_open(voice_world):
                 "I can set a reminder for the pills at three this afternoon if you like.")
         fake.feed(done(propose_call(_REMINDER)))
         assert_staged(ws.receive_json(), "a 3 PM pill reminder")
-        fake.feed(user_said("thanks"))
+        fake.feed(user_said("OK, thanks."))  # the closer itself: the OFFER gate holds
         assert ws.receive_json()["type"] == "user_transcript"
         assert not _wait_until(lambda: any("sounds finished" in i for i in _system_items(fake)), timeout=0.5)
         # …and his yes still executes it.

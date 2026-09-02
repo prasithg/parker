@@ -126,3 +126,38 @@ watchdog's stand-down clears the end kind; S03/S08 feed `done()` so their
 "no closing" proof is real; S09 pins barge-in during the soft goodbye; S10
 pins "Should I go to sleep?". Five realtime tests that raced the test
 client's cancel-on-exit now wait for the ack they judge (the CI flake).
+
+## Fix round 2 (2026-09-02, PR #43 independent review → Phase 0 integration)
+
+The review's blocker: bare `thanks` / `thank you` classified as gratitude
+and, after any six-word non-question answer with nothing pending, began a
+goodbye — a common mid-conversation acknowledgment, and a Parkinsonian
+pause after it must never read as completion. Reproduced on the
+integration tree (bare "thanks" → `sounds finished` injected → `closing`;
+a follow-up that landed after the pause was lost because the page had
+returned to dormancy).
+
+Change (`realtime.py`): contract rule 2 is narrowed to **compound closers
+only**. A new `_SOFT_CLOSER_RE` is the sole top-level classifier: an
+acknowledgment lead (`ok`/`okay`/`alright`/`all right`/`great`/`perfect`/
+`good`/`wonderful`/`lovely`/`fine`/`right`) plus `thanks`/`thank you`
+(optionally `so much`/`very much`/`a lot`), or `that's helpful, thanks` /
+`that helps, thank you`, optionally followed by `Parker`. Bare `thanks`,
+`thank you`, `thanks Parker`, `thanks so much`, and `that's helpful` alone
+are conversation. The broad `_GRATITUDE_RE` stays as the LEAD matcher for
+hard enders (`thank you so much Parker, that's all` still exits); the
+context gates in `_maybe_end_session` are unchanged and never see bare
+gratitude.
+
+Deck: grammar rows updated (compound closers vs bare gratitude); S03/S04/
+S05 now speak `OK, thanks.` so the question, lookup, and offer gates are
+what hold (bare "thanks" would pass them vacuously); new S02b pins bare
+`thanks`/`thank you` after a substantive answer → no goodbye, and a later
+question is answered normally with no `session_end` event; new S02c pins
+`that's helpful, thanks` → soft goodbye → `closing`.
+
+Untested here: a real Parkinson-length pause (the deck represents it as a
+bounded negative wait; the 90 s + 30 s idle ladder is the only real-time
+hazard and is unchanged). Human gate unchanged: a real-mic evening where
+"OK, thanks" ends the session and a mid-conversation "thanks" followed by
+a long pause and a follow-up does not.
