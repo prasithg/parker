@@ -20,8 +20,8 @@ fixes land from main as their own PRs.
 | 3 | Bounded live reconnect | implemented | one retry per activation, then rest + honest note |
 | 4 | Missing local wake ASR fails closed | implemented | `unavailable` → power OFF + alert card; never cloud audio |
 | 5 | Wake: drop bare `a`, split-syllable recall, same-breath tail handoff | implemented | grammar tests; wake→tail→hello→greeting pinned end to end |
-| 6 | Ambient-TV CPU/false-wake soak evidence | evidence produced + adaptive gate shipped as default (see "Wake soak"); over-TV limit measured and named | `scripts/wake_soak.py` → `benchmark/reports/wake_soak_2026-09-01*.md` |
-| 7 | Packaged Tauri opens the companion; WKWebView lifecycle | implemented + **packaged headless probe PASS** (`scripts/packaged_companion_probe.sh`: real Parker.app, scratch home, companion window opened on boot, page/Three.js fetched, `webgl_ready` receipt from the WKWebView, no mic/power touched, clean teardown; 16/16 Rust tests) | power/wake click in the packaged window = human gate |
+| 6 | Ambient-TV CPU/false-wake soak evidence | evidence produced; adaptive gate shipped **opt-in (off)** (see "Wake soak"); over-TV limit measured and named | `scripts/wake_soak.py` → `benchmark/reports/wake_soak_2026-09-01*.md` |
+| 7 | Packaged Tauri opens the companion; WKWebView lifecycle | implemented + **packaged headless probe PASS** (`scripts/packaged_companion_probe.sh`: real Parker.app, scratch home, companion window opened on boot, page/Three.js fetched, `webgl_ready` receipt from the WKWebView, no power claim / wake socket (mic not observed), clean teardown; 16/16 Rust tests) | power/wake click in the packaged window = human gate |
 | 8 | Accessible live cards; search/source truth CC-off/CC-on | implemented | two live regions; CC-on "Checked the web · labels"; prompt aligned |
 
 ## Gate status for the foundation commit (`e83fe2c`)
@@ -203,8 +203,9 @@ Findings so far:
   continuously: ~2.6 cores on the previous defaults, ~1.5 with a 2-thread
   cap, and a smaller model barely helps (tiny.en 2.2 — per-window decode
   overhead, not model size, is the cost). **The lever is inference count:**
-  the adaptive relative-energy gate (`WakeDetector(relative_gate=1.3)`, now
-  the production default via `parker_wake_relative_gate`) runs the model
+  the adaptive relative-energy gate (`WakeDetector(relative_gate=1.3)`,
+  available opt-in via `parker_wake_relative_gate`; production default 0)
+  runs the model
   only when a hop is 1.3× louder than the room's trailing median — a voice
   near the mic rises above steady TV, the TV never rises above itself:
   312 → 54 inferences, 2.65 → 0.46 cores, 0 false wakes. **Shipped
@@ -225,25 +226,37 @@ Findings so far:
   audio ended with 0.5 s of silence, less than one 0.7 s hop, so the
   detector's final inference ran mid-word and no later hop ever came. A
   live microphone keeps streaming silence, so the lane always gets a hop
-  with the whole phrase. The soak now pads 1.6 s: re-run on `base` with the
-  production gate (`wake_soak_2026-09-01_recall-padded.md`): **48/48, 0
-  false wakes**. The slow/effortful rate (120 wpm) woke every time regardless.
+  with the whole phrase. The soak now pads 1.6 s: re-run on `base`
+  (`wake_soak_2026-09-01_recall-padded.md` — its config is
+  `relative_gate=1.3`, `threads=0`, not the production default 0; the gate
+  only engages after ~20 s of steadily loud room, which an isolated
+  positive never provides, so the recall rows are unaffected by it, but
+  the report also ran no soak, so its "0 false wakes" is not evidence):
+  **48/48**. The slow/effortful rate (120 wpm) woke every time regardless.
+  A re-run at the production gate is queued with the achieved-SNR
+  regeneration below.
 - **Over the TV — the real-room problem.** Positives mixed INTO continuous
   TV speech (`wake_soak_2026-09-01_overtv-sweep.md`, base model):
 
-  | voice / TV | "hey parker" | "hey parker, can you help me" |
+  | voice / TV (REQUESTED, see caveat) | "hey parker" | "hey parker, can you help me" |
   |---|---|---|
-  | +12 dB (he is much louder) | 1/2 | 2/2 |
-  | +6 dB | 1/2 | 2/2 |
+  | +12 dB (he is much louder) | 0/2 | 2/2 |
+  | +6 dB | 0/2 | 2/2 |
   | 0 dB (equal) | 0/2 | 0/2 |
   | −6 dB | 0/2 | 0/2 |
 
-  (Corrected 2026-09-02 morning: the first table said 0/2 for the bare
-  phrase at +6/+12 dB; that run cut the audio one hop early — the same
-  trailing-silence artifact fixed for the recall matrix — and used a
-  different thread count. Re-run same-harness, `wake_soak_2026-09-02_
-  baseline-overtv.md`: one of the two synthesized voices wakes on the bare
-  phrase; the other reads as TV.) Whisper keeps transcribing the TV through
+  (Caveat, 2026-09-02 F8: the dB column is what that harness *requested*,
+  not what the mix achieved — it capped the voice gain at 3× and mixed
+  with a saturating add, so +12 landed at roughly +4 to +8 dB depending
+  on the voice, and for one voice the +6 and +12 rows are the same audio
+  counted twice. A morning correction claimed 1/2 on the bare phrase at
+  +6/+12 from a same-harness re-run, `wake_soak_2026-09-02_baseline-overtv.md`,
+  but that report was never committed and is not on this tree, so the
+  rows above are the checked-in `overtv-sweep` numbers. `wake_soak.py`
+  now attenuates the TV bed instead of over-driving the voice, labels
+  every row with the achieved SNR, excludes duplicate mixes, and reports
+  INCOMPLETE rather than PASS when a section did not run; the regenerated
+  `wake_soak_v1` report supersedes this table.) Whisper keeps transcribing the TV through
   a short overlapping phrase; a longer same-breath utterance gives it
   enough voice to switch. Honest product statement until a wake path
   robust to overlapping speech exists (a dedicated small wake model on
