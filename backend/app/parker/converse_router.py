@@ -140,12 +140,18 @@ async def companion_power(
     false when that write failed, so the page can say so and retry.
     """
 
+    from starlette.concurrency import run_in_threadpool
+
     def persist(on: bool) -> None:
         set_companion_settings(db, power_on=on)
 
     if payload.on:
         try:
-            granted = authority.claim(persist, client_id=payload.client_id)
+            # The durable write runs under the authority lock; keep both off
+            # the event loop so a SQLite busy wait never stalls a pump.
+            granted = await run_in_threadpool(
+                authority.claim, persist, client_id=payload.client_id
+            )
         except PowerRefused as refused:
             raise HTTPException(
                 status_code=refused.status_code,
@@ -154,7 +160,7 @@ async def companion_power(
         for close in granted.pop("displaced"):
             await _revoke(close, "superseded")
         return granted
-    released = authority.release(persist)
+    released = await run_in_threadpool(authority.release, persist)
     for close in released.pop("revoked"):
         await _revoke(close, "power_off")
     return released
@@ -275,7 +281,8 @@ async def converse_wake(websocket: WebSocket) -> None:
     woke_at: float | None = None
     sid, _superseded = authority.register(token=owner, kind="wake", close=_closer(websocket))
     if sid is None:
-        await _refuse(websocket, "power_off")  # power moved while the model warmed
+        # Power moved while the model warmed: off, or a new owner.
+        await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
         return
     try:
         while True:
@@ -296,9 +303,12 @@ async def converse_wake(websocket: WebSocket) -> None:
                         continue
                     heard = await run_in_threadpool(detector.hear, pcm)
                     if heard and heard["heard"]:
-                        await websocket.send_json(
-                            {"type": "tail", "text": heard["heard"][:200]}
-                        )
+                        try:
+                            await websocket.send_json(
+                                {"type": "tail", "text": heard["heard"][:200]}
+                            )
+                        except RuntimeError:
+                            return  # revoked mid-tail
                     continue
                 hit = await run_in_threadpool(detector.feed, pcm)
                 if hit:
@@ -322,7 +332,10 @@ async def converse_wake(websocket: WebSocket) -> None:
                         )
                     except Exception:  # noqa: BLE001 — receipts never break waking
                         pass
-                    await websocket.send_json({"type": "wake", **hit})
+                    try:
+                        await websocket.send_json({"type": "wake", **hit})
+                    except RuntimeError:
+                        return  # revoked mid-inference: the socket is already closed
             elif kind == "end":
                 return
     except WebSocketDisconnect:
@@ -380,7 +393,7 @@ async def converse_realtime(websocket: WebSocket) -> None:
     )
     if sid is None:
         realtime_lane.release_bridge_slot()
-        await _refuse(websocket, "power_off")  # power moved between authorize and here
+        await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
         return
     bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
     try:

@@ -51,9 +51,14 @@ _PARKER_EXACT = {"parker", "parka", "barker", "packer", "parcker", "parkers"}
 # ("parkuh", "parkah", a trailing syllable that slurred).
 _PARK_WORDS = {"park", "parks", "parked", "parking", "parkway", "parkland", "parkin"}
 MAX_TAIL_WORDS = 20
-# The adaptive gate's memory: ~10 s of hops is "the room right now".
-_BACKGROUND_HOPS = 14
-_BACKGROUND_MIN_HOPS = 4
+# The adaptive gate's memory: ~60 s of hops. The "room" is a LOW
+# percentile of that memory, and the gate only engages once the room has
+# been continuously energetic for ~20 s (a TV), so his own seven seconds
+# of talking to someone can never become the background his wake must
+# rise above (fresh review of PR #40, 2026-09-02).
+_BACKGROUND_HOPS = 86
+_BACKGROUND_PERCENTILE = 0.25
+_BACKGROUND_STEADY_HOPS = 28
 
 
 def _levenshtein_leq1(a: str, b: str) -> bool:
@@ -168,11 +173,13 @@ class WakeDetector:
         self._samples_since_run = 0
         self._window_samples = int(WINDOW_SECONDS * WAKE_SAMPLE_RATE)
         self._hop_samples = int(hop_seconds * WAKE_SAMPLE_RATE)
-        # Adaptive gate: with a TV on, every hop is "energetic" and the
-        # model runs continuously. When > 0, a hop also has to be this
-        # many times louder than the trailing median hop (the room's
-        # steady background) — a voice near the mic rises above the TV;
-        # the TV's own steady level does not rise above itself.
+        # Adaptive gate (opt-in, ``parker_wake_relative_gate``): with a TV
+        # on, every hop is "energetic" and the model runs continuously.
+        # When > 0, once the room has been steadily loud for ~20 s, a hop
+        # also has to be this many times louder than the room's low
+        # percentile — a voice near the mic rises above the TV; the TV's
+        # own steady level does not rise above itself. Off by default:
+        # a missed wake costs Dad more than CPU costs the machine.
         self._relative_gate = float(relative_gate)
         self._recent_rms: list[int] = []
         self.inferences = 0  # observable: the energy gate must hold in tests
@@ -202,8 +209,9 @@ class WakeDetector:
         if rms < ENERGY_GATE_RMS:
             self._remember_rms(rms)
             return None  # a quiet room never spins the model
-        if self._relative_gate > 0 and len(self._recent_rms) >= _BACKGROUND_MIN_HOPS:
-            background = sorted(self._recent_rms)[len(self._recent_rms) // 2]
+        if self._relative_gate > 0 and self._room_is_steadily_loud():
+            ordered = sorted(self._recent_rms)
+            background = ordered[int(len(ordered) * _BACKGROUND_PERCENTILE)]
             if rms < self._relative_gate * background:
                 self._remember_rms(rms)
                 self.gated_by_background += 1
@@ -230,6 +238,15 @@ class WakeDetector:
         self._recent_rms.append(rms)
         if len(self._recent_rms) > _BACKGROUND_HOPS:
             del self._recent_rms[0]
+
+    def _room_is_steadily_loud(self) -> bool:
+        """True only after ~20 s of continuously energetic hops — a TV,
+        not a person who just spoke for a few seconds."""
+
+        recent = self._recent_rms[-_BACKGROUND_STEADY_HOPS:]
+        return len(recent) >= _BACKGROUND_STEADY_HOPS and all(
+            value >= ENERGY_GATE_RMS for value in recent
+        )
 
     def feed(self, pcm16: bytes) -> Optional[dict[str, Any]]:
         result = self.hear(pcm16)

@@ -312,7 +312,7 @@ const audio = {stream: null, micCtx: null, playCtx: null, proc: null,
 // Wake lane state: `tail` is what he said right after "Hey Parker" (the
 // wake frame's tail plus any post-wake transcript the lane sends while
 // the line connects); it rides the live socket's first frame.
-const wake = {ws: null, retried: false, tail: '', tailTimer: null};
+const wake = {ws: null, retried: false, head: '', tail: '', tailTimer: null};
 
 const live = {ws: null, playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
               energyTimer: null, wasPlaying: false, closingSeen: false,
@@ -619,8 +619,8 @@ function handleLiveEvent(event) {
 function setPowerVisual(state) {
   document.body.dataset.power = state;
   const label = $('power-label');
-  const on = state === 'on' || state === 'starting' || state === 'dormant' || state === 'elsewhere';
-  $('power').setAttribute('aria-checked', on ? 'true' : 'false');
+  const on = state === 'on' || state === 'dormant' || state === 'elsewhere';
+  $('power').setAttribute('aria-checked', on ? 'true' : 'false'); // 'starting' is not yet on
   // Dormant must read as ASLEEP at a glance, never as "engaged"
   // (Pras, session 3: powered-on-resting vs listening were confusable).
   label.textContent = state === 'on' ? 'Parker is on'
@@ -693,9 +693,28 @@ function releasePower(attempt) {
   }).catch(failed);
 }
 
-function onRevoked(event) {
+let reclaimedGen = -1;
+async function onRevoked(event) {
   const reason = event && event.reason;
   if (!powered() && document.body.dataset.power !== 'elsewhere') return;
+  if (reason === 'power_off' && reclaimedGen !== powerGen && audio.stream && !live.ws) {
+    // The engine may simply have restarted (nobody owns power after a
+    // restart, but the durable switch still says ON): if so, re-claim once
+    // and carry on resting — instead of telling him he was turned off.
+    reclaimedGen = powerGen;
+    const genAtCheck = powerGen;
+    let settings = null;
+    try {
+      const res = await fetch('/parker/converse/companion/settings');
+      if (res.ok) settings = await res.json();
+    } catch (err) { /* engine still down: fall through to honest off */ }
+    if (genAtCheck !== powerGen) return;
+    if (settings && settings.power_on && !settings.owner_client) {
+      const claim = await claimPower();
+      if (genAtCheck !== powerGen) return;
+      if (claim.ok) { stopWakeLane(); wake.retried = false; startDormant(); return; }
+    }
+  }
   powerOff({silent: true}); // the engine already turned us off; do not turn off the new owner
   showCard('notice', reason === 'power_off'
     ? 'Parker was turned off.'
@@ -712,8 +731,16 @@ async function powerOn(options) {
   hideCard();
   setPowerVisual('starting');
   live.retries = 0;
-  const claim = await claimPower();
+  let claim = await claimPower();
   if (myGen !== powerGen) { startingLive = false; return; }
+  if (!claim.ok && claim.reason === 'elsewhere' && fromBoot) {
+    // A reload: the previous page's wake socket can still be registered for
+    // one inference (<1 s). One patient retry before believing "elsewhere".
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    if (myGen !== powerGen) { startingLive = false; return; }
+    claim = await claimPower();
+    if (myGen !== powerGen) { startingLive = false; return; }
+  }
   if (!claim.ok) {
     // Nothing is on. The switch stays off (or shows where Parker IS on).
     startingLive = false;
@@ -783,7 +810,11 @@ function startDormant() {
     if (event.type === 'wake') onWake(event);
     else if (event.type === 'tail') {
       // More of his same-breath request, transcribed while the line connects.
-      if (typeof event.text === 'string' && event.text) wake.tail = event.text.slice(0, 200);
+      // The engine cleared its window at the wake, so these frames hold only
+      // what came AFTER it: keep the wake frame's own words in front.
+      if (typeof event.text === 'string' && event.text) {
+        wake.tail = ((wake.head ? wake.head + ' ' : '') + event.text).trim().slice(0, 200);
+      }
     } else if (event.type === 'revoked') {
       onRevoked(event);
     } else if (event.type === 'unavailable') {
@@ -817,7 +848,8 @@ function startDormant() {
 function onWake(event) {
   wake.retried = false;
   live.retries = 0; // his wake is the interaction that re-arms one retry
-  wake.tail = (event && typeof event.tail === 'string') ? event.tail.slice(0, 200) : '';
+  wake.head = (event && typeof event.tail === 'string') ? event.tail.trim().slice(0, 120) : '';
+  wake.tail = wake.head;
   presence('wake_detected'); // the POP: eyes snap open, antennae perk
   chirp();
   // The wake lane stays open (mic frames keep going to it) so the rest of
@@ -853,7 +885,7 @@ function startActive() {
     // The handoff contract: hello (with the tail) is the FIRST frame, then
     // the wake lane ends and the mic streams to this line.
     try { ws.send(JSON.stringify({type: 'hello', tail: wake.tail || ''})); } catch (err) {}
-    wake.tail = '';
+    wake.tail = ''; wake.head = '';
     clearTimeout(wake.tailTimer);
     stopWakeLane();
     audio.mode = 'live';
@@ -922,7 +954,7 @@ function powerOff(options) {
   endLine();
   releaseAudio();
   wake.retried = false;
-  wake.tail = '';
+  wake.tail = ''; wake.head = '';
   live.retries = 0;
   hideCard();
   presence('stopped');

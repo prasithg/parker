@@ -349,3 +349,29 @@ def test_tail_frames_stop_after_the_window(db, monkeypatch):
         ws.send_json({"type": "audio", "data": base64.b64encode(_tone(0.8)).decode()})
         ws.send_json({"type": "end"})
     assert calls == ["run"]  # the post-window audio never reached the model
+
+
+def test_a_wake_hit_racing_a_revoke_is_swallowed_not_raised(db, monkeypatch):
+    """Power off lands while the model is mid-inference on a frame that
+    turns out to be a wake: the socket is already closed, and the route
+    must simply end (fresh review of PR #40, 2026-09-02)."""
+
+    import threading
+
+    gate = threading.Event()
+
+    def transcriber(path):
+        gate.wait(timeout=5)
+        return ["hey parker"]
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: transcriber)
+    monkeypatch.setattr("app.parker.converse.write_receipt", lambda entry: None)
+    a = _claim("tab-a").json()
+    with client.websocket_connect(_wake_url(a)) as ws:
+        ws.send_json({"type": "audio", "data": base64.b64encode(_tone(0.8)).decode()})
+        off = client.post("/parker/converse/companion/power", json={"on": False}).json()
+        assert off["power_on"] is False
+        assert ws.receive_json()["reason"] == "power_off"
+        gate.set()  # the inference finishes after the revoke
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()

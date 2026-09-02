@@ -212,10 +212,11 @@ def test_sub_hop_frames_accumulate_without_inference():
 
 
 def test_the_adaptive_gate_skips_steady_tv_but_runs_on_a_burst():
-    """With a TV on, every hop is energetic; the relative gate only spends
-    inference when a hop rises above the room's trailing median — a voice
-    near the mic does, the TV's own steady level does not (wake soak
-    2026-09-02: 312 -> 54 inferences per 4 min of TV speech)."""
+    """With a TV on, every hop is energetic; the (opt-in) relative gate
+    only spends inference when a hop rises above the room's low
+    percentile, and only once the room has been steadily loud for ~20 s —
+    a voice near the mic does, the TV's own steady level does not (wake
+    soak 2026-09-02: 312 -> 54 inferences per 4 min of TV speech)."""
 
     calls = []
 
@@ -224,10 +225,9 @@ def test_the_adaptive_gate_skips_steady_tv_but_runs_on_a_burst():
         return ["the parking garage downtown"]
 
     detector = WakeDetector(transcriber, relative_gate=1.3)
-    for _ in range(6):  # steady TV: the first hops establish the background
+    for _ in range(40):  # 32 s of steady TV: the room becomes the background
         detector.feed(_tone(0.8, amplitude=3000))
-    ran_during_tv = detector.inferences
-    assert ran_during_tv < 6 and detector.gated_by_background >= 1
+    assert detector.gated_by_background >= 8 and detector.inferences < 40
     # A louder burst (someone speaking up near the mic) runs the model.
     before = detector.inferences
     detector.feed(_tone(0.8, amplitude=9000))
@@ -252,11 +252,26 @@ def test_the_adaptive_gate_never_blocks_a_quiet_room():
     assert detector.gated_by_background == 0
 
 
-def test_the_gate_is_off_by_default_in_the_detector_and_on_in_the_route(monkeypatch):
+def test_a_wake_after_his_own_speech_is_never_gated():
+    """Fresh review of PR #40 (2026-09-02): the first gate treated seven
+    seconds of him talking to someone as "the room" and swallowed the
+    wake that followed at the same loudness. A person's own speech is
+    never steady enough, long enough, to become the background."""
+
+    detector = WakeDetector(lambda path: ["hey parker"], relative_gate=1.3)
+    for _ in range(10):  # 8 s of him talking at level L
+        detector.feed(_tone(0.8, amplitude=3000))
+    before = detector.inferences
+    hit = detector.feed(_tone(0.8, amplitude=3000))  # "hey parker" at the SAME level
+    assert detector.inferences == before + 1 and hit is not None
+    assert detector.gated_by_background == 0
+
+
+def test_the_gate_is_opt_in_and_off_by_default(monkeypatch):
     from app.config import settings
 
     assert WakeDetector(lambda path: [])._relative_gate == 0.0
-    assert settings.parker_wake_relative_gate == 1.3
+    assert settings.parker_wake_relative_gate == 0.0  # a missed wake costs Dad more than CPU
 
 
 def test_a_crashing_transcriber_never_ends_dormancy():

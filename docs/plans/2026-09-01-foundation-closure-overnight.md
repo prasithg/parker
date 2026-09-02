@@ -24,6 +24,38 @@ fixes land from main as their own PRs.
 | 7 | Packaged Tauri opens the companion; WKWebView lifecycle | implemented + **packaged headless probe PASS** (`scripts/packaged_companion_probe.sh`: real Parker.app, scratch home, companion window opened on boot, page/Three.js fetched, `webgl_ready` receipt from the WKWebView, no mic/power touched, clean teardown; 16/16 Rust tests) | power/wake click in the packaged window = human gate |
 | 8 | Accessible live cards; search/source truth CC-off/CC-on | implemented | two live regions; CC-on "Checked the web · labels"; prompt aligned |
 
+## Gate status for the foundation commit (`e83fe2c`)
+
+1. Full suite with thread exceptions as errors: **1232 passed** on the exact
+   revision; concurrency-sensitive set strict ×5 (5/5); Node companion spec
+   29/29; Rust 16/16.
+2. Real CI on PR #40's head `e83fe2c`: **green** (run 33589169438 — the
+   `pull_request` event did not fire for the merge push, so the run was
+   dispatched manually on the same head; nothing was re-run to obtain green).
+3. Fresh-context review of `e83fe2c`: **NEEDS_FIX** — two real defects the
+   builder introduced tonight, both fixed in the follow-up commit below:
+   - the adaptive gate treated ~7 s of his own speech as "the room" and
+     swallowed a wake at the same loudness (unmeasured by the soak, whose
+     positives were isolated from silence). Fix: the gate is now **opt-in
+     (`parker_wake_relative_gate = 0`)** — a missed wake costs Dad more than
+     CPU costs the machine — and its design engages only after ~20 s of
+     continuously loud room against a 25th-percentile background over
+     60 s, pinned by `test_a_wake_after_his_own_speech_is_never_gated`;
+   - the page replaced the wake frame's words with each post-window tail
+     frame ("can you" was lost). Fix: the wake frame's words stay in front;
+     the Node pin now uses post-window frames the engine can actually
+     produce.
+   Non-blocking items fixed too: a boot claim refused by a reload race
+   retries once; a refused reconnect after an engine restart re-claims
+   (durable ON, unowned) instead of announcing "turned off"; a wake hit
+   racing a revoke no longer raises out of the route; refusal after a
+   failed registration names the real reason; persistence runs off the
+   event loop; `aria-checked` is true only when actually on; expression /
+   wake-tail journaling runs off the browser pump (Hermes blocker 7's
+   "evidence must not block audio forwarding"). Noted, not changed: the
+   owner token rides the websocket query string into the local access log
+   (localhost-only, single household).
+
 ## Slice 1 — the false-green root cause
 
 Root cause: the `db` fixture was `sqlite:///:memory:` on a `StaticPool` —
@@ -158,7 +190,7 @@ Reports: `benchmark/reports/wake_soak_2026-09-01*.{md,json}`.
 | `base`, auto threads (**current production**) | 78 | **2.65** | 464 / 751 | 1 | 46/48 |
 | `base`, `cpu_threads=2` | 78 | 1.56 | 560 / 639 | 1 | 46/48 |
 | `tiny.en`, auto threads | 78 | 2.21 | 390 / 877 | 0 | 48/48 |
-| `base` + adaptive gate 1.3× (**new default**) | **13.5** (54 total) | **0.46** | 511 / 721 | 0 | see report |
+| `base` + adaptive gate 1.3× (**opt-in**, first design) | **13.5** (54 total) | **0.46** | 511 / 721 | 0 | see report |
 | `base` + gate 1.3× + `cpu_threads=2` | 13.5 | 0.31 | 662 / 802 | 0 | see report |
 
 (Variants after the baseline ran with other builds/tests on the machine;
@@ -175,9 +207,13 @@ Findings so far:
   the production default via `parker_wake_relative_gate`) runs the model
   only when a hop is 1.3× louder than the room's trailing median — a voice
   near the mic rises above steady TV, the TV never rises above itself:
-  312 → 54 inferences, 2.65 → 0.46 cores, 0 false wakes, quiet-room recall
-  unchanged (silence has no background to rise above, pinned in
-  `test_wake.py`).
+  312 → 54 inferences, 2.65 → 0.46 cores, 0 false wakes. **Shipped
+  opt-in, off by default** after the fresh review found the first design
+  gated a wake that followed his own speech; the redesigned gate engages
+  only after ~20 s of steadily loud room (a TV) against a low-percentile
+  background, so his own talking never becomes the background — but
+  enabling it is a room-calibration decision for the family, not a
+  default.
 - **False wake.** One in four minutes: the TV said "…an actor named Parker
   something. Hey…" and Whisper heard "Hey, I'm Parker something" — a
   greeting two tokens before a parker-like token is a wake by design
