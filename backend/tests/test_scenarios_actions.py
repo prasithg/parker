@@ -62,9 +62,9 @@ def test_old_hindi_songs_go_to_the_screen_then_to_the_family_skill(voice_world):
         assert _wait_until(lambda: _function_outputs(fake))
         ack = json.loads(_function_outputs(fake)[0]["item"]["output"])
         assert ack["status"] == "staged"
-        assert "Nothing runs until it is confirmed" in ack["detail"]
+        assert "Nothing runs until he says yes" in ack["detail"]  # spoken confirmation
 
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "old Hindi songs"}
+        assert_staged(ws.receive_json(), "old Hindi songs")
         assert _response_creates(fake) == 2  # greeting + the proposal's one nudge
         ws.send_json({"type": "end"})
 
@@ -136,7 +136,7 @@ def test_the_tv_stays_quiet_until_he_taps_yes(voice_world):
         )
         assert _wait_until(lambda: _function_outputs(fake))
         assert json.loads(_function_outputs(fake)[0]["item"]["output"])["status"] == "staged"
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "old Hindi songs"}
+        assert_staged(ws.receive_json(), "old Hindi songs")
         ws.send_json({"type": "end"})
 
     assert _wait_until(_drained)
@@ -223,8 +223,8 @@ def test_sunday_round_of_messages_sarah_meera_and_ramesh(voice_world, monkeypatc
 
         first = ws.receive_json()
         second = ws.receive_json()
-        assert first == {"type": "proposal_staged", "label": "message for Sarah"}
-        assert second == {"type": "proposal_staged", "label": "thanks for the sabzi"}
+        assert_staged(first, "message for Sarah")
+        assert_staged(second, "thanks for the sabzi")
         # Three proposals inside ONE response.done produce exactly one nudge;
         # the rest defer behind the optimistic active response.
         assert _response_creates(fake) == 2
@@ -297,7 +297,7 @@ def test_two_cards_in_one_sitting_only_one_of_them_confirmed(voice_world):
             )
         )
         assert _wait_until(lambda: len(_function_outputs(fake)) == 1)
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "old Hindi songs"}
+        assert_staged(ws.receive_json(), "old Hindi songs")
 
         fake.feed(
             done(
@@ -313,7 +313,7 @@ def test_two_cards_in_one_sitting_only_one_of_them_confirmed(voice_world):
             )
         )
         assert _wait_until(lambda: len(_function_outputs(fake)) == 2)
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "US Open highlights"}
+        assert_staged(ws.receive_json(), "US Open highlights")
 
         acks = [json.loads(o["item"]["output"]) for o in _function_outputs(fake)]
         assert [a["status"] for a in acks] == ["staged", "staged"]
@@ -377,7 +377,7 @@ def test_never_mind_the_songs_cancels_the_card_for_good(voice_world):
             )
         )
         assert _wait_until(lambda: _function_outputs(fake))
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "old Hindi songs"}
+        assert_staged(ws.receive_json(), "old Hindi songs")
 
         fake.feed(speech_started())
         assert ws.receive_json() == {"type": "clear"}
@@ -450,7 +450,7 @@ def test_the_hermes_box_dies_between_the_card_and_the_tap(voice_world):
         assert _wait_until(lambda: _function_outputs(fake))
         ack = json.loads(_function_outputs(fake)[0]["item"]["output"])
         assert ack["status"] == "staged"  # staging never depends on a live box
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "Rafi evening"}
+        assert_staged(ws.receive_json(), "Rafi evening")
         ws.send_json({"type": "end"})
 
     assert _wait_until(_drained)
@@ -591,7 +591,7 @@ def test_he_speaks_up_just_as_parker_is_writing_it_down(voice_world, monkeypatch
         assert _wait_until(lambda: _function_outputs(fake))
         assert json.loads(_function_outputs(fake)[0]["item"]["output"])["status"] == "staged"
         # the screen card is NOT deferred with the speech
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "call Anil back"}
+        assert_staged(ws.receive_json(), "call Anil back")
         time.sleep(0.15)
         assert _response_creates(fake) == 1  # never a response over his voice
 
@@ -626,7 +626,7 @@ def test_he_speaks_up_just_as_parker_is_writing_it_down(voice_world, monkeypatch
                 )
             )
         )
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "morning walk"}
+        assert_staged(ws.receive_json(), "morning walk")
         assert ws.receive_json() == {"type": "closing"}
         ws.send_json({"type": "end"})
 
@@ -672,7 +672,7 @@ def test_tuesdays_card_is_still_tuesdays_card(voice_world):
         )
         assert _wait_until(lambda: _function_outputs(fake1))
         assert json.loads(_function_outputs(fake1)[0]["item"]["output"])["status"] == "staged"
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "walk"}
+        assert_staged(ws.receive_json(), "walk")
         fake1.feed(user_said("thanks for setting that up"))
         assert ws.receive_json()["type"] == "user_transcript"
         fake1.feed(done())
@@ -702,7 +702,7 @@ def test_tuesdays_card_is_still_tuesdays_card(voice_world):
         )
         assert _wait_until(lambda: _function_outputs(fake2))
         assert json.loads(_function_outputs(fake2)[0]["item"]["output"])["status"] == "staged"
-        assert ws.receive_json() == {"type": "proposal_staged", "label": "tomatoes"}
+        assert_staged(ws.receive_json(), "tomatoes")
         ws.send_json({"type": "end"})
 
     assert _wait_until(_drained)

@@ -18,11 +18,15 @@ import logging
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from app.db.database import get_db
 from app.parker import realtime as realtime_lane
+from app.parker.companion_state import get_companion_settings, set_companion_settings
+from app.parker.companion_ui import COMPANION_PAGE_HTML
 from app.parker.converse import ConverseError, ConverseStore
 from app.parker.converse_ui import CONVERSE_PAGE_HTML
 
@@ -54,13 +58,50 @@ class ClientReceiptRequest(BaseModel):
     stop_to_silence_ms: float | None = Field(default=None, ge=0, le=600_000)
     capture_seconds: float | None = Field(default=None, ge=0, le=600)
     outcome: str | None = Field(default=None, max_length=32)
+    # Bounded semantic presence transitions from the page (what Reachy
+    # showed, when, why). The store allowlists/truncates every entry; this
+    # model only has to let the list through — its absence silently
+    # dropped the whole beacon lane (escape found 2026-09-01).
+    expression: list[dict[str, Any]] | None = Field(default=None, max_length=300)
+    expression_dropped: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
 @router.get("/converse", response_class=HTMLResponse, include_in_schema=False)
 def converse_page() -> str:
-    """The Patient Curiosity Loop page: Start, take your time, Done, Stop."""
+    """The companion: the virtual Reachy embodiment — power, CC, nothing else.
+
+    Chairman direction 2026-09-01 (docs/plans/2026-09-01-companion-take2.md):
+    this is a simulation of the Reachy Mini in the living room. The
+    button/typing harness lives at /parker/converse/lab.
+    """
+
+    return COMPANION_PAGE_HTML
+
+
+@router.get("/converse/lab", response_class=HTMLResponse, include_in_schema=False)
+def converse_lab_page() -> str:
+    """The developer/accessibility harness: Start, Done, Stop, typing."""
 
     return CONVERSE_PAGE_HTML
+
+
+class CompanionSettingsRequest(BaseModel):
+    power_on: bool | None = None
+    cc_on: bool | None = None
+
+
+@router.get("/converse/companion/settings")
+def companion_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Persisted power/CC state — off must survive restarts."""
+
+    return get_companion_settings(db)
+
+
+@router.post("/converse/companion/settings")
+def update_companion_settings(
+    payload: CompanionSettingsRequest, db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    return set_companion_settings(db, power_on=payload.power_on, cc_on=payload.cc_on)
 
 
 # Presence assets for the Converse page: the expression state module, the
@@ -82,6 +123,83 @@ def converse_static(asset_path: str) -> FileResponse:
         media_type=_STATIC_MEDIA_TYPES.get(candidate.suffix, "application/octet-stream"),
         headers={"Cache-Control": "no-cache"},
     )
+
+
+@router.websocket("/converse/wake")
+async def converse_wake(websocket: WebSocket) -> None:
+    """Local dormant wake listening: mic PCM in, one wake frame out.
+
+    Localhost-only audio — the transcriber is the same warmed local model
+    the push-button lane uses; nothing here touches the network. The page
+    streams 16 kHz mono s16le frames while dormant and closes the lane
+    the moment a wake fires (docs/plans/2026-09-01-wake-word.md).
+    """
+
+    import base64
+    import binascii
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.parker import wake as wake_module
+    from app.parker.converse import write_receipt
+
+    await websocket.accept()
+    transcriber = converse_store.transcriber()
+    if transcriber is None:
+        await websocket.send_json(
+            {
+                "type": "unavailable",
+                "text": (
+                    "Wake listening needs the local voice model "
+                    "(make voice-deps)."
+                ),
+            }
+        )
+        await websocket.close()
+        return
+    detector = wake_module.WakeDetector(transcriber)
+    opened = __import__("time").monotonic()
+    try:
+        while True:
+            message = await websocket.receive_json()
+            if not isinstance(message, dict):
+                continue
+            kind = message.get("type")
+            if kind == "audio":
+                try:
+                    pcm = base64.b64decode(
+                        str(message.get("data", "")).encode("ascii"), validate=True
+                    )
+                except (ValueError, binascii.Error, UnicodeEncodeError):
+                    continue  # junk frames never end dormancy
+                hit = await run_in_threadpool(detector.feed, pcm)
+                if hit:
+                    logger.info(
+                        "wake detected matched=%r infer_ms=%d rms=%d",
+                        hit["matched"],
+                        hit["infer_ms"],
+                        hit["rms"],
+                    )
+                    try:
+                        write_receipt(
+                            {
+                                "recorded_by": "server",
+                                "kind": "wake",
+                                "matched": hit["matched"],
+                                "infer_ms": hit["infer_ms"],
+                                "rms": hit["rms"],
+                                "dormant_s": int(
+                                    __import__("time").monotonic() - opened
+                                ),
+                            }
+                        )
+                    except Exception:  # noqa: BLE001 — receipts never break waking
+                        pass
+                    await websocket.send_json({"type": "wake", **hit})
+            elif kind == "end":
+                return
+    except WebSocketDisconnect:
+        pass
 
 
 @router.post("/converse/sessions")

@@ -581,10 +581,7 @@ def test_a_failed_write_on_one_line_never_costs_the_other_line_its_action(
             hers = _function_outputs(fakes[1])[0]
             assert hers["item"]["call_id"] == "her-prop"
             assert json.loads(hers["item"]["output"])["status"] == "staged"
-            assert ws_b.receive_json() == {
-                "type": "proposal_staged",
-                "label": "plumber Thursday",
-            }
+            assert_staged(ws_b.receive_json(), "plumber Thursday")
 
             # his line got no staged frame and no second answer
             fakes[0].feed(model_said("I couldn't save that one, sorry."))

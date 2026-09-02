@@ -15,9 +15,11 @@
  *   after Stop or after the line closed can never re-animate the scene;
  * - work overlays expire (WORK_TTL_MS > the server's 30 s worker
  *   timeout) so a lost completion event cannot claim eternal work;
- * - `action` can only ever reach "staged" from a real proposal_staged
- *   frame; nothing here may claim execution (no browser signal exists —
- *   see the brief), so "executed"/"failed" have no entry path yet.
+ * - `action` reaches "staged" only from a real proposal_staged frame,
+ *   and "executed"/"failed" ONLY from the bridge's action_result frame —
+ *   which itself carries the actual pipeline outcome of his spoken
+ *   yes (companion take 2, 2026-09-01). No timer, animation, or
+ *   optimistic UI path may claim execution.
  *
  * UMD-ish: `module.exports` under Node (tests), `window.ParkerExpression`
  * in the page.
@@ -30,8 +32,8 @@
   'use strict';
 
   var PHASES = [
-    'offline', 'idle', 'connecting', 'listening', 'hearing', 'thinking',
-    'talking', 'interrupted', 'closing', 'stopped', 'error',
+    'offline', 'dormant', 'idle', 'connecting', 'listening', 'hearing',
+    'thinking', 'talking', 'interrupted', 'closing', 'stopped', 'error',
   ];
 
   // Phases in which a live session is actually underway: only these may
@@ -55,6 +57,9 @@
     // A staged proposal waits on the screen; the pose relaxes after this
     // (the confirmation card itself stays until acted on).
     actionTtlMs: 120000,
+    // An executed/failed outcome pose is a brief acknowledgment — the
+    // card and journal are the durable record.
+    resultTtlMs: 12000,
     guardTtlMs: 20000,
     // Waiting-for-choice / waiting-for-confirmation are DURABLE overlays:
     // they survive spoken playback draining to idle, and clear only when
@@ -150,6 +155,19 @@
       error: function () { return setPhase('error'); },
       stopped: function () { return setPhase('stopped'); },
 
+      // Powered on, resting: ONLY local wake listening is armed — no
+      // session, no cloud line, overlays cleared. The page asserts this
+      // state itself (its wake lane is open), so entry is unconditional
+      // like stopped/offline (docs/plans/2026-09-01-wake-word.md).
+      dormant: function () { return setPhase('dormant'); },
+      // "Hey Parker" was actually detected by the local engine — the one
+      // event that may pop the scene out of dormancy.
+      wake_detected: function () {
+        if (state.phase !== 'dormant') return false;
+        state.mode = 'live';
+        return setPhase('connecting');
+      },
+
       connect: function (data) {
         state.mode = (data && data.mode) === 'turns' ? 'turns' : 'live';
         return setPhase('connecting');
@@ -226,6 +244,24 @@
         state.action = 'staged';
         state.attention = 'confirmation';
         actionSince = attentionSince = now();
+        return true;
+      },
+      // The bridge's action_result frame carries the REAL pipeline
+      // outcome of his spoken yes/no — the only entry paths to
+      // executed/failed (companion take 2, 2026-09-01). Both relax on
+      // the action TTL; the cards/journal are the durable record.
+      action_executed: function () {
+        if (!active()) return false;
+        state.action = 'executed';
+        state.attention = 'none';
+        actionSince = now();
+        return true;
+      },
+      action_failed: function () {
+        if (!active()) return false;
+        state.action = 'failed';
+        state.attention = 'none';
+        actionSince = now();
         return true;
       },
 
@@ -343,6 +379,13 @@
         state.action = 'none';
         changed = true;
       }
+      if (
+        (state.action === 'executed' || state.action === 'failed')
+        && t - actionSince >= opts.resultTtlMs
+      ) {
+        state.action = 'none';
+        changed = true;
+      }
       if (state.guard !== 'none' && t - guardSince >= opts.guardTtlMs) {
         state.guard = 'none';
         changed = true;
@@ -380,10 +423,13 @@
   // disagree. (The Start/Done fallback keeps its own longer coaching
   // lines — a different lane with different mechanics.)
   function describe(state) {
+    if (state.phase === 'dormant') return 'Resting. Say \u201CHey Parker\u201D any time.';
     if (state.guard === 'redirect') return 'That one is for your doctor or family.';
+    if (state.action === 'executed') return 'Done — that ran, exactly as read back.';
+    if (state.action === 'failed') return 'That didn’t go through — it’s on the family review page.';
     if (state.action === 'staged' || state.attention === 'confirmation') {
-      if (state.phase === 'talking') return 'Parker is talking — an action is on the screen to confirm.';
-      return 'Waiting for you to confirm on the screen. Nothing has happened yet.';
+      if (state.phase === 'talking') return 'Parker is asking — say yes to do it, or no to cancel.';
+      return 'Say yes to do it, or no to cancel. Nothing has happened yet.';
     }
     if (state.attention === 'choice') {
       if (state.phase === 'talking') return 'Parker is asking — the choices are on the screen.';

@@ -235,6 +235,16 @@ class ConverseStore:
         create_tables()
         return SessionLocal()
 
+    def transcriber(self):
+        """The warmed shared local transcriber, or None when unavailable.
+
+        The wake lane (app/parker/wake.py) runs on the SAME model the
+        push-button lane transcribes with — one load, one cache.
+        """
+
+        self._warm_transcriber()
+        return self._transcriber
+
     def _warm_transcriber(self) -> bool:
         """Load the shared local model exactly once; remember an unavailable state."""
 

@@ -59,6 +59,7 @@ __all__ = [
     "_response_creates",
     "_system_items",
     "_wait_until",
+    "assert_staged",
     "audio_delta",
     "browser_frame",
     "client",
@@ -91,6 +92,18 @@ def user_said(text: str) -> dict:
 
 def model_said(text: str) -> dict:
     return {"type": "response.output_audio_transcript.delta", "delta": text}
+
+
+def assert_staged(frame: dict, label: str) -> None:
+    """Exact proposal_staged pin. The frame also carries `readback` (the
+    spoken-confirmation line, companion take 2 2026-09-01) whose CONTENT
+    is pinned by _action_readback's own unit tests — here it only has to
+    exist; any OTHER new field still fails loudly."""
+
+    frame = dict(frame)
+    readback = frame.pop("readback", None)
+    assert isinstance(readback, str) and readback, frame
+    assert frame == {"type": "proposal_staged", "label": label}, frame
 
 
 def audio_delta(data: str = "UENN") -> dict:

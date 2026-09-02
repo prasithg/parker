@@ -550,7 +550,7 @@ def test_misdirection_guard_is_inert_until_a_family_fills_in_the_lexicon(
         unguarded = json.loads(_function_outputs(fake)[0]["item"]["output"])
         assert unguarded["status"] == "staged"
         staged_note = ws.receive_json()
-        assert staged_note == {"type": "proposal_staged", "label": "message Dr. Patel"}
+        assert_staged(staged_note, "message Dr. Patel")
         ws.send_json({"type": "end"})
 
     # session one's finalize must land before session two's staging shares

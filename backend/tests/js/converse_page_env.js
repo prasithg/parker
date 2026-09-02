@@ -29,6 +29,7 @@ function createEnv() {
     pageshow: [],
     keydown: [],
     audioContexts: [],
+    processors: [],
     streams: [],
     reloads: 0,
     getUserMediaMode: 'grant', // or 'deny'
@@ -62,6 +63,9 @@ function createEnv() {
       focus() {},
       remove() {},
       querySelector() { return fakeElement('anon'); },
+      _attrs: {},
+      setAttribute(name, value) { this._attrs[name] = String(value); },
+      getAttribute(name) { return this._attrs[name] ?? null; },
     };
   }
 
@@ -113,6 +117,7 @@ function createEnv() {
   class FakeAudioContext {
     constructor() {
       this.closed = false;
+      this.state = 'running';
       this.sampleRate = 48000;
       this.destination = {};
       this.startedSources = [];
@@ -125,7 +130,9 @@ function createEnv() {
     }
     createMediaStreamSource() { return { connect() {} }; }
     createScriptProcessor() {
-      return { onaudioprocess: null, connect() {}, disconnect() {} };
+      const proc = { onaudioprocess: null, connect() {}, disconnect() {} };
+      env.processors.push(proc);
+      return proc;
     }
     createBuffer(channels, length, rate) {
       const data = new Float32Array(length);
@@ -193,6 +200,7 @@ function createEnv() {
   };
 
   // ------------------------------------------------------------ network
+  env.settings = { power_on: false, cc_on: false }; // the persisted store
   function jsonResponse(body) {
     return { ok: true, status: 200, json: async () => body, body: null };
   }
@@ -202,6 +210,13 @@ function createEnv() {
       return Promise.resolve(jsonResponse({
         session_id: 'sess-test', realtime_available: true, asr_ready: true,
       }));
+    }
+    if (String(url).includes('/companion/settings')) {
+      if (opts && opts.method === 'POST') {
+        try { Object.assign(env.settings, JSON.parse(opts.body)); } catch (err) {}
+        return Promise.resolve(jsonResponse(env.settings));
+      }
+      return Promise.resolve(jsonResponse(Object.assign({}, env.settings)));
     }
     return Promise.resolve(jsonResponse({}));
   };
@@ -265,6 +280,13 @@ function createEnv() {
   env.firePageshow = (persisted) => env.pageshow.forEach((fn) => fn({ persisted: !!persisted }));
   env.flush = () => new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
   env.pcmBase64 = (samples) => Buffer.alloc(samples * 2).toString('base64');
+  env.micFrame = (level) => {
+    const proc = env.processors[env.processors.length - 1];
+    if (!proc || !proc.onaudioprocess) return false;
+    const data = new Float32Array(4096).fill(level == null ? 0.2 : level);
+    proc.onaudioprocess({ inputBuffer: { getChannelData: () => data } });
+    return true;
+  };
 
   env.boot = function boot(pageScriptPath) {
     const expressionSource = fs.readFileSync(
