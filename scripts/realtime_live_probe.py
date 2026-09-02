@@ -20,6 +20,8 @@ What it does, for real money (one realtime session + one searched brain call):
    injected, sources on screen.
 
 It ends the session cleanly and exits non-zero if the contract failed.
+The first output line is ``probe revision: <git sha>`` so a saved log binds
+to the tree it ran on.
 """
 
 from __future__ import annotations
@@ -226,4 +228,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     WAKE_TAIL = " ".join(args.wake_tail.split())
     PENDING = bool(args.pending and WAKE_TAIL)
+    from app.version import git_sha  # noqa: E402 — after the sys.path insert
+
+    print(f"probe revision: {git_sha()}", flush=True)
     sys.exit(asyncio.run(main()))

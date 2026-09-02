@@ -10,7 +10,9 @@
 # bundled engine's `parker version --json` and the shell's first stdout
 # line (`parker-desktop <ver> git=<sha>`, stamped by build.rs) must both
 # equal --expect-sha (default: this checkout's HEAD, `-dirty` when the
-# tree has changes; a dirty expectation fails unless --allow-dirty). The
+# tree has changes; a dirty expectation fails unless --allow-dirty). An
+# expectation of `unknown` (what a git-less build stamps) binds the .app
+# to no revision at all and is refused unless --allow-unknown. The
 # engine sidecar is identified as the shell's child running `serve --port`
 # and must be the bundled binary; after the shell quits, the probe waits
 # for THAT pid to exit.
@@ -25,7 +27,8 @@
 # the human gate.
 #
 # Usage: scripts/packaged_companion_probe.sh [--expect-sha SHA] [--allow-dirty]
-#                                             [--tcc-log] [path-to-Parker.app]
+#                                             [--allow-unknown] [--tcc-log]
+#                                             [path-to-Parker.app]
 # Exit 0 = the packaged companion window booted, reported its scene, and
 # the bundle is the expected source revision.
 set -u
@@ -33,6 +36,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXPECT_SHA=""
 ALLOW_DIRTY=0
+ALLOW_UNKNOWN=0
 TCC_LOG=0
 APP=""
 while [ $# -gt 0 ]; do
@@ -40,8 +44,9 @@ while [ $# -gt 0 ]; do
     --expect-sha) EXPECT_SHA="${2:-}"; shift 2 ;;
     --expect-sha=*) EXPECT_SHA="${1#*=}"; shift ;;
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
+    --allow-unknown) ALLOW_UNKNOWN=1; shift ;;
     --tcc-log) TCC_LOG=1; shift ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "FAIL: unknown option $1"; exit 2 ;;
     *) APP="$1"; shift ;;
   esac
@@ -72,6 +77,13 @@ case "$EXPECT_SHA" in
       echo "note: expecting a dirty build ($EXPECT_SHA) — --allow-dirty given; this run cannot vouch for a reviewed revision"
     else
       echo "FAIL: expected revision is dirty ($EXPECT_SHA): a reviewed SHA needs a clean build (commit, or pass --allow-dirty to probe anyway)"
+      exit 1
+    fi ;;
+  unknown)
+    if [ "$ALLOW_UNKNOWN" -eq 1 ]; then
+      echo "note: expecting 'unknown' (a git-less build) — --allow-unknown given; this run binds the .app to no source revision"
+    else
+      echo "FAIL: expected revision is 'unknown' (what a git-less build stamps): that binds the .app to no source revision — pass --expect-sha <sha>, or --allow-unknown to probe anyway"
       exit 1
     fi ;;
 esac
