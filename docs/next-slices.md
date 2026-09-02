@@ -1478,3 +1478,55 @@ confirmation accessibility, lifecycle/performance verification, semantic
 state transitions in the session-review trail, and a branch/PR/Fable-review/
 CI flow. Physical Reachy control, cameras, and a general avatar system are
 explicitly outside this slice.
+
+### Status: BUILT overnight 2026-08-31→09-01 (PRs open, mic pass pending)
+
+Fable's overnight session shipped both fronts as separate PRs:
+"yes one" spoken selection (`fable/spoken-selection-yes-one`, CI green)
+and the 3D Reachy Mini presence (`fable/reachy-mini-converse-3d`):
+expression state machine (33 node tests under pytest), procedural
+Three.js Reachy (vendored 0.185.1, SHA-pinned, sidecar-packaged),
+Live-primary layout, truthful `working` presence frames from the bridge,
+reduced-motion/no-WebGL fallbacks. Full record, deliberate deviations,
+and the morning checklist:
+[2026-09-01-reachy-overnight-handoff.md](plans/2026-09-01-reachy-overnight-handoff.md).
+Remaining gates: Pras's real-microphone session, then the packaged
+Tauri/WKWebView capture (release gate). Named follow-ups: expression
+trail into session review; audio-deck spoken-selection variants;
+server-VAD-driven hearing.
+
+## 2026-09-01 — Independent review + always-available companion direction
+
+Hermes (GPT-5.6 SOL, acting AI CEO and Pras's planning/strategy/review
+extension) reviewed PR #37 at `9639fc8` and the merged PR #36 at
+`19d4f1c`. Verdict: **NEEDS_FIX**. The permanent review is
+[2026-09-01-pr37-independent-review.md](reviews/2026-09-01-pr37-independent-review.md).
+It records the guard-TTS/Stop bypass, missing response-active lifecycle,
+worker start/finish ordering race, stale event fences, fallback
+repair/confirmation state loss, page-hide resource retention, missing
+expression trail, open real-mic/Tauri gates, and the `thank you two` /
+repeated-ordinal spoken-selection false positives. PR #37 remains open.
+
+Pras also set the next product direction: Parker has two separate
+interfaces. The primary experience is an always-available virtual Reachy
+companion—Reachy plus one real power control, local "Hey Parker" wake while
+dormant, continuous full-duplex conversation while active, and return to
+dormancy after a conservative session end. Power off means no wake,
+listening, streaming, processing, or response. Visible transcript/type/
+numbered controls leave the primary scene; an optional CC/subtitles mode is
+a future setting. The separate session lab owns transcripts, played speech,
+actions, visual-state evidence, corrections, and local learning.
+
+The full product/architecture brief, including wake/session state, power
+semantics, correction provenance, future controlled expert review, and the
+critical gaps around endpointing, pending workers, consent, and physical
+Reachy parity, is
+[2026-09-01-always-available-reachy-companion.md](plans/2026-09-01-always-available-reachy-companion.md).
+It explicitly keeps the current Start/Done/type surface as a separate
+harness/fallback rather than the flagship.
+
+Implementation order: first close PR #36/#37 correctness and acceptance
+gates; then split the minimal companion from the session/developer surfaces;
+then build/evaluate local wake + dormant/active session ownership. Do not
+expand PR #37 into the entire wake-word/companion program before its current
+contract is fixed and independently re-reviewed.

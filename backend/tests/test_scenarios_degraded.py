@@ -88,12 +88,19 @@ def test_timed_out_lookup_is_honest_and_the_second_ask_really_retries(
             time.sleep(0.3)  # assert something did NOT happen
             assert len(lookup_notes(fake)) == note_count  # no late success note
 
-            # nothing reached the browser: no sources chips, no hiccup notice
+            # nothing but the honest presence pairs reached the browser:
+            # no sources chips, no hiccup notice — each timed-out ask is
+            # started then FAILED, never silently pending.
             fake.feed(model_said("Still with you."))
-            assert ws.receive_json() == {
-                "type": "assistant_transcript_delta",
-                "text": "Still with you.",
-            }
+            delta = browser_frame(
+                ws,
+                "assistant_transcript_delta",
+                working=[
+                    ("search", "started"), ("search", "failed"),
+                    ("search", "started"), ("search", "failed"),
+                ],
+            )
+            assert delta["text"] == "Still with you."
             ws.send_json({"type": "end"})
     finally:
         gate.set()
@@ -136,13 +143,15 @@ def test_both_workers_crash_and_only_the_asked_for_one_speaks(voice_world, monke
         assert "could not finish" in note
         assert "it hit a problem partway" in note  # honest, class names stay in logs
 
-        # the call survived both crashes
+        # the call survived both crashes; the presence pair owns the crash
+        # honestly (started -> failed) and nothing else reached the browser
         fake.feed(model_said("Let me tell you what I can."))
-        delta = ws.receive_json()
-        assert delta == {
-            "type": "assistant_transcript_delta",
-            "text": "Let me tell you what I can.",
-        }
+        delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "failed")],
+        )
+        assert delta["text"] == "Let me tell you what I can."
         time.sleep(0.3)  # give a wrong card every chance to arrive
         assert context_cards(fake) == []  # not an empty card, not an error card
         ws.send_json({"type": "end"})
@@ -276,7 +285,9 @@ def test_error_storm_never_double_fires_and_the_answer_still_lands(voice_world):
             fake.feed(upstream_error("", code="conversation_already_has_active_response"))
             # ...and a genuinely malformed error right behind it
             fake.feed({"type": "error", "error": "the upstream just sent a bare string"})
-            first_notice = ws.receive_json()
+            first_notice = browser_frame(
+                ws, "notice", working=[("search", "started")]
+            )
 
             fake.feed(upstream_error("no active response to cancel"))
             fake.feed(
@@ -288,7 +299,7 @@ def test_error_storm_never_double_fires_and_the_answer_still_lands(voice_world):
 
             gate.set()
             assert _wait_until(lambda: lookup_notes(fake))
-            chips = ws.receive_json()
+            chips = browser_frame(ws, "sources", working=[("search", "done")])
 
             # the note's nudge waits behind the phantom-active response
             assert _response_creates(fake) == 2
