@@ -185,10 +185,11 @@ def main() -> int:
     parser.add_argument("--skip-soak", action="store_true", help="only the recall/over-TV matrices")
     parser.add_argument("--skip-recall", action="store_true", help="only the soak and over-TV rows")
     parser.add_argument("--overlay-snrs", default="0,-6", help="voice/TV SNRs in dB for the over-TV rows")
+    parser.add_argument("--burst-window", action="store_true", help="second look at the loud burst alone (experiment)")
     args = parser.parse_args()
 
     def make_detector(t):
-        return WakeDetector(t, hop_seconds=args.hop, relative_gate=args.relative_gate)
+        return WakeDetector(t, hop_seconds=args.hop, relative_gate=args.relative_gate, burst_window=args.burst_window)
 
     print(f"loading local transcriber (faster-whisper {args.model}, threads={args.threads or 'auto'})…", flush=True)
     transcriber = load_local_transcriber(model_size=args.model, cpu_threads=args.threads)
@@ -216,7 +217,8 @@ def main() -> int:
         "infer_ms_max": round(max(timings), 1) if timings else 0.0,
         "false_wakes": false_wakes,
         "hops_gated_by_background": detector.gated_by_background,
-        "config": {"model": args.model, "threads": args.threads, "hop": args.hop, "relative_gate": args.relative_gate},
+        "burst_inferences": detector.burst_inferences,
+        "config": {"model": args.model, "threads": args.threads, "hop": args.hop, "relative_gate": args.relative_gate, "burst_window": args.burst_window},
     }
     print(
         f"soak: {audio_minutes:.1f} min audio, {detector.inferences} inferences, "

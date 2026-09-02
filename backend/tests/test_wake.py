@@ -274,6 +274,41 @@ def test_the_gate_is_opt_in_and_off_by_default(monkeypatch):
     assert settings.parker_wake_relative_gate == 0.0  # a missed wake costs Dad more than CPU
 
 
+def test_the_burst_window_takes_a_second_look_only_on_a_rise():
+    """Opt-in (parker_wake_burst_window): when the last 1.3 s of the window
+    is clearly louder than what came before, the loud part alone gets a
+    second transcription; a wake found there counts. Steady sound never
+    costs the extra inference."""
+
+    calls: list[float] = []
+
+    def transcriber(path):
+        import wave
+
+        with wave.open(str(path), "rb") as handle:
+            seconds = handle.getnframes() / WAKE_SAMPLE_RATE
+        calls.append(round(seconds, 1))
+        # Only the 1.3 s burst clip reads as him; every full window (0.8,
+        # 1.6, 2.4 s as it fills) reads as the TV.
+        return ["hey parker"] if 1.2 < seconds < 1.4 else ["the parking garage downtown"]
+
+    detector = WakeDetector(transcriber, burst_window=True)
+    for _ in range(3):  # steady room: only the full window is transcribed
+        assert detector.feed(_tone(0.8, amplitude=2500)) is None
+    assert detector.burst_inferences == 0
+    hit = detector.feed(_tone(0.8, amplitude=9000))  # someone speaks up
+    assert hit is not None and hit["matched"] == "hey parker"
+    assert detector.burst_inferences == 1
+    assert any(c <= 1.4 for c in calls), calls  # the burst alone was transcribed
+
+
+def test_the_burst_window_is_off_by_default():
+    from app.config import settings
+
+    assert WakeDetector(lambda path: [])._burst_window is False
+    assert settings.parker_wake_burst_window is False
+
+
 def test_a_crashing_transcriber_never_ends_dormancy():
     def transcriber(path):
         raise RuntimeError("model exploded")

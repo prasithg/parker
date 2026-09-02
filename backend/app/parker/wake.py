@@ -51,6 +51,13 @@ _PARKER_EXACT = {"parker", "parka", "barker", "packer", "parcker", "parkers"}
 # ("parkuh", "parkah", a trailing syllable that slurred).
 _PARK_WORDS = {"park", "parks", "parked", "parking", "parkway", "parkland", "parkin"}
 MAX_TAIL_WORDS = 20
+# Burst-focused second look (experiment, measured by scripts/wake_soak.py
+# over-TV rows): over continuous TV speech the 2.4 s window is mostly TV
+# and the model transcribes the TV through a short "hey Parker". When a
+# hop rises above the room's recent level, ALSO transcribe just the
+# loud burst (the last BURST_SECONDS) — a window that is mostly him.
+BURST_SECONDS = 1.3
+BURST_RATIO = 1.25
 # The adaptive gate's memory: ~60 s of hops. The "room" is a LOW
 # percentile of that memory, and the gate only engages once the room has
 # been continuously energetic for ~20 s (a TV) — so a few seconds of him
@@ -168,6 +175,7 @@ class WakeDetector:
         clock: Callable[[], float] = time.monotonic,
         hop_seconds: float = HOP_SECONDS,
         relative_gate: float = 0.0,
+        burst_window: bool = False,
     ) -> None:
         self._transcriber = transcriber
         self._clock = clock
@@ -183,7 +191,9 @@ class WakeDetector:
         # own steady level does not rise above itself. Off by default:
         # a missed wake costs Dad more than CPU costs the machine.
         self._relative_gate = float(relative_gate)
+        self._burst_window = bool(burst_window)
         self._recent_rms: list[int] = []
+        self.burst_inferences = 0  # second looks at the loud burst alone
         self.inferences = 0  # observable: the energy gate must hold in tests
         self.gated_by_background = 0  # hops the adaptive gate skipped
 
@@ -230,11 +240,41 @@ class WakeDetector:
             logger.warning("wake inference failed", exc_info=True)
             return None
         heard = " ".join(line.strip() for line in lines if line and line.strip())
-        return {
+        result = {
             "heard": heard[:200],
             "rms": rms,
             "infer_ms": int((self._clock() - started) * 1000),
         }
+        if self._burst_window and wake_match(heard) is None:
+            burst = self._burst_transcript(window, rms)
+            if burst:
+                result["burst"] = burst
+        return result
+
+    def _burst_transcript(self, window: bytes, rms: int) -> str:
+        """Transcribe just the recent loud part when it rises above the
+        room: over TV speech the full window reads as TV, the burst reads
+        as him. Costs one extra inference only on a rise."""
+
+        burst_bytes = int(BURST_SECONDS * WAKE_SAMPLE_RATE) * 2
+        if len(window) <= burst_bytes:
+            return ""
+        burst = window[-burst_bytes:]
+        before = window[:-burst_bytes]  # the same window's earlier part: the room just before
+        burst_rms = audioop.rms(burst, 2)
+        before_rms = max(audioop.rms(before, 2), ENERGY_GATE_RMS)
+        if burst_rms < ENERGY_GATE_RMS or burst_rms < BURST_RATIO * before_rms:
+            return ""  # no rise: the burst is just more of the same room
+        self.burst_inferences += 1
+        try:
+            with tempfile.TemporaryDirectory(prefix="parker-wake-burst-") as tmp:
+                path = Path(tmp) / "burst.wav"
+                _write_wav(path, burst)
+                lines = self._transcriber(path)
+        except Exception:  # noqa: BLE001
+            logger.warning("wake burst inference failed", exc_info=True)
+            return ""
+        return " ".join(line.strip() for line in lines if line and line.strip())[:200]
 
     def _remember_rms(self, rms: int) -> None:
         self._recent_rms.append(rms)
@@ -255,6 +295,11 @@ class WakeDetector:
         if result is None:
             return None
         match = wake_match(result["heard"])
+        if match is None and result.get("burst"):
+            match = wake_match(result["burst"])
+            if match is not None:
+                result["heard"] = result["burst"]
+        result.pop("burst", None)
         if match is None:
             return None
         self._window.clear()  # one utterance, one wake

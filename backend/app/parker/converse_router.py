@@ -275,7 +275,9 @@ async def converse_wake(websocket: WebSocket) -> None:
     from app.config import settings as app_settings
 
     detector = wake_module.WakeDetector(
-        transcriber, relative_gate=app_settings.parker_wake_relative_gate
+        transcriber,
+        relative_gate=app_settings.parker_wake_relative_gate,
+        burst_window=app_settings.parker_wake_burst_window,
     )
     opened = time.monotonic()
     woke_at: float | None = None

@@ -1,0 +1,56 @@
+{
+  "confusables": {
+    "extra_wakes": 0,
+    "policy": "reported, not gated \u2014 chairman decision 2026-09-01 (calibrate for Dad's recall)",
+    "rows": []
+  },
+  "date": "2026-09-02",
+  "eval": "wake_soak_v0",
+  "gate": {
+    "false_wakes": 1,
+    "misses": 0,
+    "passed": false
+  },
+  "over_tv": {
+    "rows": [],
+    "total": 0,
+    "woke": 0
+  },
+  "provenance": {
+    "audio": "macOS say synthesized speech only; no private audio",
+    "model": "local faster-whisper"
+  },
+  "recall": {
+    "positives": 1,
+    "recall": 1.0,
+    "rows": [],
+    "woke": 1
+  },
+  "soak": {
+    "audio_minutes": 4.0,
+    "burst_inferences": 59,
+    "config": {
+      "burst_window": true,
+      "hop": 0.7,
+      "model": "base",
+      "relative_gate": 0.0,
+      "threads": 0
+    },
+    "cpu_fraction_of_realtime": 2.958,
+    "cpu_seconds_per_audio_minute": 177.47,
+    "false_wakes": [
+      {
+        "heard": "Hey, I'm Parker something. Hey.",
+        "matched": "hey i'm parker",
+        "tail": "something hey"
+      }
+    ],
+    "hops_gated_by_background": 0,
+    "infer_ms_max": 5501.9,
+    "infer_ms_p50": 435.9,
+    "infer_ms_p95": 884.4,
+    "inferences": 312,
+    "inferences_per_audio_minute": 78.0,
+    "wall_seconds": 173.5
+  }
+}
