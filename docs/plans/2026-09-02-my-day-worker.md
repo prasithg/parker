@@ -136,7 +136,7 @@ Untested / caveats:
 - Human gate: in a live session, with a dated reminder on record, ask
   "what do I have today" and hear the due day, not the set-date.
 
-Adjacent defects reported, NOT fixed here (outside this slice's files):
+Adjacent defects reported at the time (the first, `_coerce_datetime`, was then fixed in fix round 2 below — P03-2; the second remains open):
 
 1. `pipeline._coerce_datetime` (`app/parker/pipeline.py:425-428`) is bare
    `datetime.fromisoformat`: an offset-bearing ISO due time
