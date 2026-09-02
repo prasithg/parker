@@ -46,6 +46,7 @@ from test_realtime import (  # noqa: F401 — re-exported for scenario files
     _response_creates,
     _system_items,
     _wait_until,
+    browser_frame,
     client,
 )
 
@@ -59,6 +60,7 @@ __all__ = [
     "_system_items",
     "_wait_until",
     "audio_delta",
+    "browser_frame",
     "client",
     "context_cards",
     "done",

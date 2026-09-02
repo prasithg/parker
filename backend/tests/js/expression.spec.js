@@ -1,0 +1,572 @@
+/*
+ * Unit tests for ParkerExpression (app/parker/static/converse/expression.js).
+ *
+ * Run by tests/test_expression_state.py via `node`; exits non-zero on the
+ * first failure. Plain node asserts — no test framework, no DOM, no WebGL,
+ * matching the brief's requirement that the expression state unit-tests
+ * without a renderer.
+ */
+'use strict';
+
+const assert = require('assert');
+const path = require('path');
+
+const ParkerExpression = require(
+  path.join(__dirname, '..', '..', 'app', 'parker', 'static', 'converse', 'expression.js')
+);
+
+let clock = 0;
+function makeController(extra) {
+  clock = 0;
+  return ParkerExpression.createController(Object.assign({ now: () => clock }, extra || {}));
+}
+
+const results = [];
+function test(name, fn) {
+  try {
+    fn();
+    results.push({ name, ok: true });
+  } catch (err) {
+    results.push({ name, ok: false, error: err && err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase transitions from real events
+// ---------------------------------------------------------------------------
+
+test('starts idle', () => {
+  const c = makeController();
+  assert.strictEqual(c.getState().phase, 'idle');
+  assert.strictEqual(c.getState().mode, null);
+});
+
+test('connect -> connected reaches listening in live mode', () => {
+  const c = makeController();
+  assert.ok(c.handleEvent('connect', { mode: 'live' }));
+  assert.strictEqual(c.getState().phase, 'connecting');
+  assert.strictEqual(c.getState().mode, 'live');
+  assert.ok(c.handleEvent('connected'));
+  assert.strictEqual(c.getState().phase, 'listening');
+});
+
+test('a stale connected frame is rejected outside connecting', () => {
+  const c = makeController();
+  assert.strictEqual(c.handleEvent('connected'), false);
+  assert.strictEqual(c.getState().phase, 'idle');
+});
+
+test('transcript means thinking; scheduled audio means talking', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  assert.ok(c.handleEvent('user_transcript'));
+  assert.strictEqual(c.getState().phase, 'thinking');
+  assert.ok(c.handleEvent('assistant_audio'));
+  assert.strictEqual(c.getState().phase, 'talking');
+});
+
+test('drained audio returns to listening in live, idle in turns', () => {
+  const live = makeController();
+  live.handleEvent('connect', { mode: 'live' });
+  live.handleEvent('connected');
+  live.handleEvent('assistant_audio');
+  assert.ok(live.handleEvent('assistant_audio_drained'));
+  assert.strictEqual(live.getState().phase, 'listening');
+
+  const turns = makeController();
+  turns.handleEvent('connect', { mode: 'turns' });
+  turns.handleEvent('connected');
+  turns.handleEvent('user_transcript');
+  turns.handleEvent('assistant_audio');
+  turns.handleEvent('assistant_audio_drained');
+  assert.strictEqual(turns.getState().phase, 'idle');
+});
+
+test('drained is ignored unless actually talking', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  assert.strictEqual(c.handleEvent('assistant_audio_drained'), false);
+  assert.strictEqual(c.getState().phase, 'listening');
+});
+
+// ---------------------------------------------------------------------------
+// Interruption / barge-in
+// ---------------------------------------------------------------------------
+
+test('interruption yields only from talking or thinking', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  // The live lane sends `clear` on every speech_started — nothing to
+  // yield while merely listening.
+  assert.strictEqual(c.handleEvent('interrupted'), false);
+  c.handleEvent('assistant_audio');
+  assert.ok(c.handleEvent('interrupted'));
+  assert.strictEqual(c.getState().phase, 'interrupted');
+});
+
+test('the interrupt dwell settles back to listening on tick', () => {
+  const c = makeController({ interruptDwellMs: 500 });
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('assistant_audio');
+  c.handleEvent('interrupted');
+  clock = 400;
+  c.tick();
+  assert.strictEqual(c.getState().phase, 'interrupted');
+  clock = 600;
+  c.tick();
+  assert.strictEqual(c.getState().phase, 'listening');
+});
+
+test('new audio during the yield goes straight back to talking', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('assistant_audio');
+  c.handleEvent('interrupted');
+  assert.ok(c.handleEvent('assistant_audio'));
+  assert.strictEqual(c.getState().phase, 'talking');
+});
+
+// ---------------------------------------------------------------------------
+// Hearing derives from real mic energy with hysteresis
+// ---------------------------------------------------------------------------
+
+test('sustained mic energy raises hearing; sustained quiet releases it', () => {
+  const c = makeController({ hearingAttackMs: 100, hearingReleaseMs: 500 });
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+
+  c.setEnergy({ user: 0.2 });
+  assert.strictEqual(c.getState().phase, 'listening'); // attack not yet met
+  clock = 120;
+  c.setEnergy({ user: 0.2 });
+  assert.strictEqual(c.getState().phase, 'hearing');
+
+  clock = 200;
+  c.setEnergy({ user: 0.0 });
+  assert.strictEqual(c.getState().phase, 'hearing'); // release not yet met
+  clock = 800;
+  c.setEnergy({ user: 0.0 });
+  assert.strictEqual(c.getState().phase, 'listening');
+});
+
+test('a blip below the exit threshold does not release hearing', () => {
+  const c = makeController({ hearingAttackMs: 100, hearingReleaseMs: 500 });
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.setEnergy({ user: 0.2 });
+  clock = 150;
+  c.setEnergy({ user: 0.2 });
+  assert.strictEqual(c.getState().phase, 'hearing');
+  clock = 300;
+  c.setEnergy({ user: 0.0 });
+  clock = 400;
+  c.setEnergy({ user: 0.3 }); // he resumed before the release window
+  clock = 900;
+  c.setEnergy({ user: 0.3 });
+  assert.strictEqual(c.getState().phase, 'hearing');
+});
+
+test('energy never drives hearing outside listening/hearing', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('user_transcript');
+  clock = 5000;
+  c.setEnergy({ user: 1.0 });
+  clock = 6000;
+  c.setEnergy({ user: 1.0 });
+  assert.strictEqual(c.getState().phase, 'thinking');
+});
+
+test('energy values clamp to [0, 1]', () => {
+  const c = makeController();
+  c.setEnergy({ user: 7, parker: -3 });
+  assert.strictEqual(c.getState().userEnergy, 1);
+  assert.strictEqual(c.getState().parkerEnergy, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Close / Stop / stale-event rejection
+// ---------------------------------------------------------------------------
+
+test('closing then closed reaches stopped', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  assert.ok(c.handleEvent('closing'));
+  assert.strictEqual(c.getState().phase, 'closing');
+  assert.ok(c.handleEvent('closed'));
+  assert.strictEqual(c.getState().phase, 'stopped');
+});
+
+test('stop is terminal for the ENTIRE event vocabulary', () => {
+  // Proven over the machine's actual registered handlers, not a guess
+  // list (the guess list omitted repair_offered — independent review,
+  // 2026-09-01). The only events allowed to leave `stopped` are the ones
+  // a person can genuinely cause from rest: a new session, page
+  // readiness, a typed turn, or a real error/offline report.
+  const allowedFromStopped = new Set([
+    'connect', 'ready', 'user_transcript', 'error', 'offline', 'stopped',
+  ]);
+  const c = makeController();
+  assert.ok(c.events.length >= 20, 'vocabulary introspection lost events');
+  for (const name of c.events) {
+    if (allowedFromStopped.has(name)) continue;
+    const fresh = makeController();
+    fresh.handleEvent('connect', { mode: 'live' });
+    fresh.handleEvent('connected');
+    fresh.handleEvent('stopped');
+    assert.strictEqual(fresh.handleEvent(name, { kind: 'search' }), false, name);
+    const s = fresh.getState();
+    assert.strictEqual(s.phase, 'stopped', name);
+    assert.deepStrictEqual(s.work, [], name);
+    assert.strictEqual(s.action, 'none', name);
+    assert.strictEqual(s.guard, 'none', name);
+    assert.strictEqual(s.attention, 'none', name);
+  }
+});
+
+test('a genuine typed turn starts a turns session from rest', () => {
+  // user_transcript is the one event a person can cause from rest (the
+  // Type-instead flow); the page never forwards it for stale turns, and
+  // late live-socket frames are dropped page-side by socket identity.
+  for (const from of ['idle', 'stopped', 'error']) {
+    const c = makeController();
+    if (from !== 'idle') c.handleEvent(from === 'stopped' ? 'stopped' : 'error');
+    assert.ok(c.handleEvent('user_transcript'), from);
+    assert.strictEqual(c.getState().phase, 'thinking', from);
+    assert.strictEqual(c.getState().mode, 'turns', from);
+    // ...and the rest of the typed turn animates: talking, then idle.
+    assert.ok(c.handleEvent('assistant_audio'), from);
+    assert.ok(c.handleEvent('assistant_audio_drained'), from);
+    assert.strictEqual(c.getState().phase, 'idle', from);
+  }
+});
+
+test('a new connect after stop starts a fresh session', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('stopped');
+  assert.ok(c.handleEvent('connect', { mode: 'live' }));
+  assert.ok(c.handleEvent('connected'));
+  assert.strictEqual(c.getState().phase, 'listening');
+});
+
+test('terminal rest clears work, staged action, guard, and attention', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('work_start', { kind: 'search' });
+  c.handleEvent('proposal_staged');
+  c.handleEvent('guard_redirect');
+  c.handleEvent('stopped');
+  const s = c.getState();
+  assert.deepStrictEqual(s.work, []);
+  assert.strictEqual(s.action, 'none');
+  assert.strictEqual(s.guard, 'none');
+  assert.strictEqual(s.attention, 'none');
+});
+
+// ---------------------------------------------------------------------------
+// Attention: waiting-for-choice / waiting-for-confirmation are DURABLE
+// (independent review, 2026-09-01 — the repair/confirmation pose must not
+// vanish at TTS drain while the cards still wait on screen)
+// ---------------------------------------------------------------------------
+
+function drainToIdle(c) {
+  c.handleEvent('assistant_audio');
+  c.handleEvent('assistant_audio_drained');
+  assert.strictEqual(c.getState().phase, 'idle');
+}
+
+test('choices survive playback draining to idle', () => {
+  const c = makeController();
+  c.handleEvent('user_transcript'); // typed/spoken turn from rest
+  c.handleEvent('choices_offered');
+  assert.strictEqual(c.getState().attention, 'choice');
+  assert.strictEqual(c.getState().guard, 'repair'); // asking, attentively
+  drainToIdle(c);
+  assert.strictEqual(c.getState().attention, 'choice'); // still waiting
+  assert.strictEqual(c.getState().guard, 'repair');
+});
+
+test('a confirmation offer is the staged/waiting state, not repair', () => {
+  const c = makeController();
+  c.handleEvent('user_transcript');
+  c.handleEvent('yes_no_offered');
+  const s = c.getState();
+  assert.strictEqual(s.attention, 'confirmation');
+  assert.strictEqual(s.action, 'staged'); // waiting on screen; nothing ran
+  assert.strictEqual(s.guard, 'none');
+  drainToIdle(c);
+  assert.strictEqual(c.getState().attention, 'confirmation');
+  assert.strictEqual(c.getState().action, 'staged');
+});
+
+test('attention_resolved clears the wait, the staged pose, and the asking face', () => {
+  const c = makeController();
+  c.handleEvent('user_transcript');
+  c.handleEvent('choices_offered');
+  drainToIdle(c);
+  assert.ok(c.handleEvent('attention_resolved'));
+  const s = c.getState();
+  assert.strictEqual(s.attention, 'none');
+  assert.strictEqual(s.guard, 'none');
+  assert.strictEqual(s.action, 'none');
+  assert.strictEqual(c.handleEvent('attention_resolved'), false); // idempotent
+});
+
+test('a waiting overlay expires on its own TTL as the safety net', () => {
+  const c = makeController({ attentionTtlMs: 120000 });
+  c.handleEvent('user_transcript');
+  c.handleEvent('yes_no_offered');
+  drainToIdle(c);
+  clock = 121000;
+  c.tick();
+  assert.strictEqual(c.getState().attention, 'none');
+  assert.strictEqual(c.getState().action, 'none');
+});
+
+test('proposal_staged also means waiting for confirmation', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('proposal_staged');
+  assert.strictEqual(c.getState().attention, 'confirmation');
+});
+
+test('waiting labels never overclaim', () => {
+  const choice = ParkerExpression.describe({
+    phase: 'idle', work: [], action: 'none', guard: 'repair', attention: 'choice',
+  });
+  assert.ok(/choice|number/i.test(choice), choice);
+  const confirm = ParkerExpression.describe({
+    phase: 'idle', work: [], action: 'none', guard: 'none', attention: 'confirmation',
+  });
+  assert.ok(/nothing has happened/i.test(confirm), confirm);
+  assert.ok(!/done|executed|sent|saved/i.test(confirm), confirm);
+});
+
+test('subscribers learn the CAUSE of each change', () => {
+  const c = makeController();
+  const causes = [];
+  c.subscribe((s, cause) => causes.push(cause));
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.setEnergy({ user: 0.2 });
+  clock = 200;
+  c.setEnergy({ user: 0.2 }); // hearing via energy
+  c.handleEvent('guard_redirect');
+  clock = 30000;
+  c.tick(); // guard TTL expiry
+  assert.deepStrictEqual(causes, ['connect', 'connected', 'energy', 'guard_redirect', 'tick']);
+});
+
+// ---------------------------------------------------------------------------
+// Work overlay: real dispatch/completion plus a TTL safety net
+// ---------------------------------------------------------------------------
+
+test('work overlay tracks start and done per kind', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('work_start', { kind: 'context' });
+  c.handleEvent('work_start', { kind: 'search' });
+  assert.deepStrictEqual(c.getState().work, ['context', 'search']);
+  c.handleEvent('work_done', { kind: 'context' });
+  assert.deepStrictEqual(c.getState().work, ['search']);
+  c.handleEvent('work_failed', { kind: 'search' });
+  assert.deepStrictEqual(c.getState().work, []);
+});
+
+test('work_done for unknown work is rejected', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  assert.strictEqual(c.handleEvent('work_done', { kind: 'search' }), false);
+});
+
+test('a lost completion frame expires: no eternal work claim', () => {
+  const c = makeController({ workTtlMs: 45000 });
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('work_start', { kind: 'search' });
+  clock = 44000;
+  c.tick();
+  assert.deepStrictEqual(c.getState().work, ['search']);
+  clock = 46000;
+  c.tick();
+  assert.deepStrictEqual(c.getState().work, []);
+});
+
+test('work cannot start outside a session', () => {
+  const c = makeController();
+  assert.strictEqual(c.handleEvent('work_start', { kind: 'search' }), false);
+});
+
+// ---------------------------------------------------------------------------
+// Action overlay: staged only, never executed
+// ---------------------------------------------------------------------------
+
+test('concurrent same-kind lookups only clear when the LAST one finishes', () => {
+  // The stress deck's real shape: several look_that_up calls in flight at
+  // once. One completion must not silently drop the claim of ongoing work.
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  for (let i = 0; i < 3; i++) c.handleEvent('work_start', { kind: 'search' });
+  c.handleEvent('work_done', { kind: 'search' });
+  assert.deepStrictEqual(c.getState().work, ['search']);
+  c.handleEvent('work_failed', { kind: 'search' });
+  assert.deepStrictEqual(c.getState().work, ['search']);
+  c.handleEvent('work_done', { kind: 'search' });
+  assert.deepStrictEqual(c.getState().work, []);
+  assert.strictEqual(c.handleEvent('work_done', { kind: 'search' }), false);
+});
+
+test('proposal_staged sets the waiting-on-screen overlay', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  assert.ok(c.handleEvent('proposal_staged'));
+  assert.strictEqual(c.getState().action, 'staged');
+});
+
+test('no event path can ever claim an executed action', () => {
+  // Proven over the machine's ACTUAL vocabulary, not a guess list: fire
+  // every registered handler inside an active session and assert `action`
+  // never reads executed — and that no execution-shaped event exists at
+  // all (no browser signal proves execution; see the brief).
+  const c = makeController();
+  assert.ok(Array.isArray(c.events) && c.events.length >= 15);
+  for (const name of c.events) {
+    assert.ok(!/exec|confirm|complete/.test(name), name);
+  }
+  for (const name of c.events) {
+    const fresh = makeController();
+    fresh.handleEvent('connect', { mode: 'live' });
+    fresh.handleEvent('connected');
+    fresh.handleEvent('proposal_staged');
+    fresh.handleEvent(name, { kind: 'search', mode: 'live' });
+    assert.notStrictEqual(fresh.getState().action, 'executed', name);
+    fresh.tick();
+    assert.notStrictEqual(fresh.getState().action, 'executed', name);
+  }
+});
+
+test('the staged pose relaxes after its TTL; the card is the durable truth', () => {
+  const c = makeController({ actionTtlMs: 120000 });
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('proposal_staged');
+  clock = 121000;
+  c.tick();
+  assert.strictEqual(c.getState().action, 'none');
+});
+
+// ---------------------------------------------------------------------------
+// Guard / repair overlay
+// ---------------------------------------------------------------------------
+
+test('guard redirect shows concern and clears when he speaks again', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('guard_redirect');
+  assert.strictEqual(c.getState().guard, 'redirect');
+  c.handleEvent('user_transcript');
+  assert.strictEqual(c.getState().guard, 'none');
+});
+
+test('guard expires on its own if he never replies', () => {
+  const c = makeController({ guardTtlMs: 20000 });
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  c.handleEvent('guard_redirect');
+  clock = 21000;
+  c.tick();
+  assert.strictEqual(c.getState().guard, 'none');
+});
+
+test('repair posture sets and resolves', () => {
+  const c = makeController();
+  c.handleEvent('connect', { mode: 'turns' });
+  c.handleEvent('connected');
+  c.handleEvent('repair_offered');
+  assert.strictEqual(c.getState().guard, 'repair');
+  c.handleEvent('repair_resolved');
+  assert.strictEqual(c.getState().guard, 'none');
+});
+
+// ---------------------------------------------------------------------------
+// Subscription semantics
+// ---------------------------------------------------------------------------
+
+test('subscribers fire on semantic change only, never on plain energy', () => {
+  const c = makeController();
+  const seen = [];
+  c.subscribe((s) => seen.push(s.phase));
+  c.handleEvent('connect', { mode: 'live' });
+  c.handleEvent('connected');
+  const before = seen.length;
+  c.setEnergy({ user: 0.01 });
+  c.setEnergy({ parker: 0.5 });
+  c.handleEvent('notice');
+  assert.strictEqual(seen.length, before);
+  c.handleEvent('user_transcript');
+  assert.strictEqual(seen.length, before + 1);
+  assert.strictEqual(seen[seen.length - 1], 'thinking');
+});
+
+test('unsubscribe stops delivery', () => {
+  const c = makeController();
+  const seen = [];
+  const off = c.subscribe((s) => seen.push(s.phase));
+  c.handleEvent('connect', { mode: 'live' });
+  off();
+  c.handleEvent('connected');
+  assert.deepStrictEqual(seen, ['connecting']);
+});
+
+// ---------------------------------------------------------------------------
+// Labels: the words may never overclaim
+// ---------------------------------------------------------------------------
+
+test('every phase has a plain-language label', () => {
+  for (const phase of ParkerExpression.PHASES) {
+    const text = ParkerExpression.describe({ phase, work: [], action: 'none', guard: 'none' });
+    assert.ok(text && text.length > 0, phase);
+  }
+});
+
+test('the staged label says nothing has happened yet', () => {
+  const text = ParkerExpression.describe({
+    phase: 'listening', work: [], action: 'staged', guard: 'none',
+  });
+  assert.ok(/nothing has happened/i.test(text), text);
+  assert.ok(!/done|executed|sent|saved/i.test(text), text);
+});
+
+test('search overlay reads as checking, not as an answer', () => {
+  const text = ParkerExpression.describe({
+    phase: 'thinking', work: ['search'], action: 'none', guard: 'none',
+  });
+  assert.ok(/checking/i.test(text), text);
+});
+
+// ---------------------------------------------------------------------------
+// Report
+// ---------------------------------------------------------------------------
+
+const failed = results.filter((r) => !r.ok);
+for (const r of results) {
+  process.stdout.write((r.ok ? 'ok  ' : 'FAIL') + '  ' + r.name + (r.ok ? '' : '  — ' + r.error) + '\n');
+}
+process.stdout.write('\n' + (results.length - failed.length) + '/' + results.length + ' passed\n');
+process.exit(failed.length ? 1 : 0);
