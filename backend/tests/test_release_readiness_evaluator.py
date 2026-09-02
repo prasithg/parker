@@ -18,10 +18,28 @@ EVALUATOR = REPO / "benchmark/evaluate_release_readiness_v0.py"
 MAKEFILE = REPO / "Makefile"
 
 
+def _reports_as_of() -> date:
+    """The checked-in reports' own newest date.
+
+    The unit tests pin the rollup LOGIC against the committed evidence; the
+    calendar-relative freshness gate belongs to the release lane
+    (`make eval-release-readiness`, which regenerates every source report
+    first). Judging the committed reports against wall-clock today made the
+    whole suite go red every second midnight UTC (PR #42 CI, 2026-09-02).
+    """
+
+    dates = []
+    for path in REQUIRED_REPORTS.values():
+        raw = json.loads(path.read_text()).get("date")
+        if isinstance(raw, str):
+            dates.append(date.fromisoformat(raw))
+    return max(dates)
+
+
 def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> None:
     """One command should tell Pras exactly what the README/launch post can safely claim."""
 
-    payload = evaluate_release_readiness().as_dict()
+    payload = evaluate_release_readiness(as_of=_reports_as_of()).as_dict()
 
     assert payload["eval"] == "release_readiness_v0"
     assert payload["readiness_gate"]["passed"] is True
@@ -90,10 +108,11 @@ def test_release_readiness_rollup_summarizes_actionable_public_evidence() -> Non
     assert payload["release_summary"]["caregiver_legibility_caveat"] == "Caregiver state legibility is synthetic proxy checked only; human caregiver task-completion time/error rate remains an open research gap."
 
     freshness = payload["source_report_freshness"]
-    assert freshness["expected_date"] == date.today().isoformat()
+    as_of = _reports_as_of()
+    assert freshness["expected_date"] == as_of.isoformat()
     assert freshness["accepted_dates"] == [
-        (date.today() - timedelta(days=1)).isoformat(),
-        date.today().isoformat(),
+        (as_of - timedelta(days=1)).isoformat(),
+        as_of.isoformat(),
     ]
     assert freshness["all_current"] is True
     assert freshness["stale_reports"] == []
@@ -175,7 +194,8 @@ def test_release_readiness_fails_closed_when_source_report_date_is_stale(tmp_pat
     stale_report["date"] = "1999-01-01"
     report_paths["task_taxonomy"].write_text(json.dumps(stale_report))
 
-    payload = evaluate_release_readiness(report_paths=report_paths).as_dict()
+    as_of = _reports_as_of()
+    payload = evaluate_release_readiness(report_paths=report_paths, as_of=as_of).as_dict()
 
     assert payload["readiness_gate"]["passed"] is False
     assert payload["source_report_freshness"]["all_current"] is False
@@ -184,7 +204,7 @@ def test_release_readiness_fails_closed_when_source_report_date_is_stale(tmp_pat
             "report": "task_taxonomy",
             "path": str(report_paths["task_taxonomy"]),
             "date": "1999-01-01",
-            "expected_date": date.today().isoformat(),
+            "expected_date": as_of.isoformat(),
         }
     ]
     assert any(
@@ -203,7 +223,7 @@ def test_release_readiness_does_not_require_retired_grant_lane_reports() -> None
 
 def test_release_readiness_cli_json_outputs_briefing_fields() -> None:
     completed = subprocess.run(
-        [sys.executable, str(EVALUATOR), "--json"],
+        [sys.executable, str(EVALUATOR), "--json", "--as-of", _reports_as_of().isoformat()],
         capture_output=True,
         text=True,
     )
