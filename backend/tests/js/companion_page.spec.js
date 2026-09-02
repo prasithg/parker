@@ -833,6 +833,216 @@ async function poweredActive(env) {
     assert.ok(env.streams[0].track.stopped);
   });
 
+  // Every write to an element's textContent, with the state at the moment
+  // of the write (the fake DOM is plain objects, so a setter can watch it).
+  function recordWrites(env, id) {
+    const el = env.element(id);
+    const writes = [];
+    let current = el.textContent;
+    Object.defineProperty(el, 'textContent', {
+      configurable: true,
+      get: () => current,
+      set: (value) => {
+        current = value;
+        writes.push({ text: value, hidden: el.hidden, power: env.document.body.dataset.power });
+      },
+    });
+    return writes;
+  }
+
+  // The line refused at open (no cloud key / the bridge is busy) while the
+  // wake lane is still finishing his request: power IS on and the mic is
+  // held, so the honest state is RESTING with the card — never an 'error'
+  // switch whose click is a no-op for the whole tail window (PAGE-1).
+  async function unavailableWhileFinishing(env) {
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker can you', matched: 'hey parker', tail: 'can you' });
+    await env.flush();
+    const live = liveSockets(env)[0];
+    live.open();
+    assert.ok(!wakeWs.closed, 'precondition: the lane is still finishing');
+    live.message({ type: 'unavailable', text: 'Live conversation needs a cloud key on this computer.' });
+    live.dropped(); // the engine closes the refused line after the frame
+    await env.flush();
+    return { wakeWs, live };
+  }
+
+  await test('realtime unavailable while the lane is finishing: the lane is abandoned and Parker rests, honestly', async () => {
+    const env = await bootedEnv();
+    const { wakeWs, live } = await unavailableWhileFinishing(env);
+    assert.ok(live.closed, 'the refused line is closed');
+    assert.ok(wakeWs.closed, 'the finishing lane is abandoned — its tail has nowhere to go');
+    assert.strictEqual(power(env), 'dormant', 'power is on and the mic is held: resting, not "error"');
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'true', 'the switch agrees with the engine');
+    assert.strictEqual(env.settings.power_on, true, 'engine truth: still on');
+    assert.strictEqual(env.powerReleases.length, 0, 'nothing was released');
+    assert.ok(!env.streams[0].track.stopped, 'the mic is still held');
+    assert.strictEqual(wakeSockets(env).length, 2, 'a fresh wake lane is armed');
+    const c = card(env);
+    assert.ok(c && c.region === 'alert' && /cloud key/.test(c.text), JSON.stringify(c));
+    assert.strictEqual(phase(env), 'dormant');
+    env.advance(5000);
+    await env.flush();
+    assert.strictEqual(liveSockets(env).length, 1, 'no retry line without his wake');
+    // …and a later "Hey Parker" simply meets the same honest card again.
+    const again = wakeSockets(env)[1];
+    again.open();
+    again.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker', tail: '' });
+    await env.flush();
+    const second = liveSockets(env)[1];
+    second.open();
+    second.message({ type: 'unavailable', text: 'Live conversation needs a cloud key on this computer.' });
+    second.dropped();
+    await env.flush();
+    assert.strictEqual(power(env), 'dormant');
+    assert.ok(/cloud key/.test(card(env).text));
+    assert.strictEqual(wakeSockets(env).length, 3);
+  });
+
+  await test('from the unavailable card, the switch turns Parker OFF (it reads on/resting) — one release', async () => {
+    const env = await bootedEnv();
+    await unavailableWhileFinishing(env);
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(power(env), 'off');
+    assert.strictEqual(env.powerReleases.length, 1, 'one off request');
+    assert.strictEqual(env.powerClaims.length, 1, 'no re-claim: it was not an error retry');
+    assert.ok(env.streams[0].track.stopped, 'microphone released');
+    assert.strictEqual(env.settings.power_on, false);
+    assert.strictEqual(card(env), null, 'the card went with the power');
+  });
+
+  await test('sr-status never speaks lab-page wording during power transitions', async () => {
+    const env = createEnv();
+    const writes = recordWrites(env, 'sr-status');
+    await env.boot(pageScript);
+    await env.flush();
+    const forbidden = /not available|tap|start again/i;
+    const clean = (label) => {
+      const bad = writes.filter((w) => forbidden.test(w.text));
+      assert.deepStrictEqual(bad, [], label + ': ' + JSON.stringify(writes));
+    };
+    clean('boot');
+    assert.ok(/off/i.test(env.element('sr-status').textContent));
+    // powerOn: 'starting' announces waking up, then rest.
+    const starting = env.context.powerOn();
+    assert.strictEqual(power(env), 'starting');
+    assert.ok(/waking/i.test(env.element('sr-status').textContent), env.element('sr-status').textContent);
+    await starting;
+    await env.flush();
+    wakeSockets(env)[0].open();
+    clean('starting -> dormant');
+    assert.ok(/hey parker/i.test(env.element('sr-status').textContent));
+    // powerOff.
+    env.context.powerOff();
+    await env.flush();
+    clean('powerOff');
+    assert.ok(/off/i.test(env.element('sr-status').textContent));
+    // Microphone denial.
+    env.getUserMediaMode = 'deny';
+    await env.context.powerOn();
+    await env.flush();
+    clean('denial');
+    assert.ok(/snag/i.test(env.element('sr-status').textContent));
+    // A dropped live line (the retry visual) and the wake-lane hiccup.
+    env.getUserMediaMode = 'grant';
+    click(env, 'power');
+    await env.flush();
+    const wakeWs = wakeSockets(env)[wakeSockets(env).length - 1];
+    wakeWs.open();
+    wakeWs.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker', tail: '' });
+    await env.flush();
+    const live = liveSockets(env)[liveSockets(env).length - 1];
+    live.open();
+    wakeWs.message({ type: 'tail', text: '', final: true });
+    live.dropped();
+    clean('line dropped');
+    env.context.powerOff();
+    await env.flush();
+    clean('powerOff from error');
+    // No write repeats the text already in the region (no re-announcement).
+    for (let i = 1; i < writes.length; i += 1) {
+      assert.notStrictEqual(writes[i].text, writes[i - 1].text, 'duplicate write: ' + writes[i].text);
+    }
+  });
+
+  await test('cards unhide the live region before the text lands, so the change is announced', async () => {
+    const env = await bootedEnv();
+    const cardWrites = recordWrites(env, 'card');
+    const alertWrites = recordWrites(env, 'alert');
+    const ws = await poweredActive(env);
+    ws.message({ type: 'proposal_staged', label: 'a reminder', readback: 'a reminder' });
+    ws.message({ type: 'action_result', status: 'failed', label: 'a reminder' });
+    assert.strictEqual(cardWrites.length, 1);
+    assert.strictEqual(cardWrites[0].hidden, false, 'polite region exposed before its text changes');
+    assert.strictEqual(alertWrites.length, 1);
+    assert.strictEqual(alertWrites[0].hidden, false, 'assertive region exposed before its text changes');
+  });
+
+  // The off write after a microphone denial is still in flight when he
+  // grants the permission and activates the switch: the retry's claim must
+  // land AFTER it, or the engine would process on then off (F-2).
+  function gateOffWrites(env) {
+    const realFetch = env.context.fetch;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    env.context.fetch = (url, opts) => {
+      let body = {};
+      try { body = JSON.parse(opts && opts.body); } catch (err) {}
+      if (String(url).includes('/companion/power') && body.on === false) {
+        return gate.then(() => realFetch(url, opts));
+      }
+      return realFetch(url, opts);
+    };
+    return release;
+  }
+
+  await test('a retry after microphone denial waits for the off write to land before re-claiming', async () => {
+    const env = await bootedEnv();
+    env.getUserMediaMode = 'deny';
+    const release = gateOffWrites(env);
+    await env.context.powerOn();
+    await env.flush();
+    assert.strictEqual(power(env), 'error');
+    assert.strictEqual(env.powerReleases.length, 0, 'the off write is still in flight');
+    env.getUserMediaMode = 'grant';
+    click(env, 'power');
+    await env.flush(); await env.flush();
+    assert.strictEqual(power(env), 'starting', 'the retry is under way…');
+    assert.strictEqual(env.powerClaims.length, 1, '…but has not claimed over the in-flight off');
+    release();
+    await env.flush(); await env.flush(); await env.flush();
+    assert.strictEqual(env.powerReleases.length, 1, 'the off landed');
+    assert.strictEqual(env.powerClaims.length, 2, 'then the retry claimed');
+    const order = env.fetches
+      .filter((f) => String(f.url).includes('/companion/power'))
+      .map((f) => JSON.parse(f.opts.body).on);
+    assert.deepStrictEqual(order, [true, false, true], 'engine order: claim, off, claim');
+    const ws = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.ok(ws, 'the wake lane opened');
+    ws.open();
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(env.settings.power_on, true);
+  });
+
+  await test('…and does not wait forever: an off write that never returns is bounded', async () => {
+    const env = await bootedEnv();
+    env.getUserMediaMode = 'deny';
+    gateOffWrites(env); // never released
+    await env.context.powerOn();
+    await env.flush();
+    env.getUserMediaMode = 'grant';
+    click(env, 'power');
+    await env.flush(); await env.flush();
+    assert.strictEqual(env.powerClaims.length, 1);
+    env.advance(2100);
+    await env.flush(); await env.flush();
+    assert.strictEqual(env.powerClaims.length, 2, 'the bound let the retry through');
+    const ws = wakeSockets(env)[wakeSockets(env).length - 1];
+    ws.open();
+    assert.strictEqual(power(env), 'dormant');
+  });
+
   // ------------------------------------------------------------------------
   // The scene boot (the page's second inline script), when it is given.
   // ------------------------------------------------------------------------

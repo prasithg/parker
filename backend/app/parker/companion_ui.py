@@ -218,8 +218,10 @@ function showCard(kind, text, ttlMs) {
   clearTimeout(cardTimer);
   other.hidden = true;
   region.className = kind;
-  region.textContent = text;
+  // Expose the live region BEFORE its text changes: content injected into
+  // a hidden region is not reliably announced (WebKit/VoiceOver).
   region.hidden = false;
+  region.textContent = text;
   if (ttlMs) cardTimer = setTimeout(() => { region.hidden = true; }, ttlMs);
 }
 function hideCard() { clearTimeout(cardTimer); $('card').hidden = true; $('alert').hidden = true; }
@@ -340,7 +342,7 @@ let startingLive = false;
 // here first and then persists, retrying a failed write out loud.
 const clientId = (window.crypto && crypto.randomUUID)
   ? crypto.randomUUID() : ('page-' + Math.random().toString(36).slice(2));
-const power = {token: null, gen: 0};
+const power = {token: null, gen: 0, pendingRelease: null}; // pendingRelease: the in-flight off write
 let offSaveTimer = null;
 function powerQuery() {
   return '?owner=' + encodeURIComponent(power.token || '') + '&gen=' + power.gen;
@@ -635,10 +637,20 @@ function handleLiveEvent(event) {
   } else if (event.type === 'notice') {
     showCard('notice', event.text || '', 8000);
   } else if (event.type === 'unavailable') {
+    // The line was refused at open (no cloud key, the bridge is busy). The
+    // lane still finishing his request has nowhere to send it: abandon it.
+    // Power IS on and the microphone is held, so the truthful state is
+    // RESTING with the card saying why — never an 'error' switch that reads
+    // off while the engine says on and whose click is a no-op until the
+    // lane's bound. His next "Hey Parker" meets the same honest card.
     endLine();
-    presence('offline');
-    setPowerVisual('error');
-    showCard('error', event.text || 'Live conversation is not available right now.', 0);
+    clearTimeout(wake.tailTimer);
+    stopWakeLane();
+    wake.tail = ''; wake.head = '';
+    const text = event.text || 'Live conversation is not available right now.';
+    if (powered() && audio.stream) startDormant();
+    else { presence('offline'); setPowerVisual('error'); }
+    showCard('error', text, 0);
   }
 }
 
@@ -715,12 +727,15 @@ function releasePower(attempt) {
       body: JSON.stringify({on: false, client_id: clientId}),
     });
   } catch (err) { failed(); return; }
-  pending.then(async (res) => {
+  // The in-flight off is kept so a quick on (a retry after a denial) waits
+  // for it to land before claiming — the engine must never see on, then off.
+  const settled = pending.then(async (res) => {
     if (!res.ok) { failed(); return; }
     let data = null;
     try { data = await res.json(); } catch (err) {}
     if (!data || data.saved !== true) failed();
-  }).catch(failed);
+  }).catch(failed).then(() => { if (power.pendingRelease === settled) power.pendingRelease = null; });
+  power.pendingRelease = settled;
 }
 
 let reclaimedGen = -1;
@@ -767,6 +782,18 @@ async function powerOn(options) {
   hideCard();
   setPowerVisual('starting');
   live.retries = 0;
+  if (power.pendingRelease) {
+    // An off write is still in flight (mic denial, a quick off->on): let it
+    // land first, bounded, so the engine processes off then on — not the
+    // reverse, which would revoke the claim we are about to make.
+    let bound = null;
+    await Promise.race([
+      power.pendingRelease,
+      new Promise((resolve) => { bound = setTimeout(resolve, 2000); }),
+    ]);
+    clearTimeout(bound);
+    if (myGen !== powerGen) { startingLive = false; return; }
+  }
   let claim = await claimPower();
   if (myGen !== powerGen) { startingLive = false; return; }
   if (!claim.ok && claim.reason === 'elsewhere' && fromBoot) {
@@ -892,8 +919,8 @@ function startDormant() {
         if (audio.mode === 'wake' && powered() && !wake.ws) startDormant();
       }, 1500);
     } else {
-      presence('error');
       setPowerVisual('error');
+      presence('error');
       showCard('error', 'Wake listening hiccuped — flip the switch to try again.', 0);
     }
   };
@@ -999,12 +1026,12 @@ function lineDropped() {
     // (still 'error' when the retry died before opening) — decides whether
     // the card's promise can be kept.
     if (audio.stream) startDormant();
-    else { presence('error'); setPowerVisual('error'); }
+    else { setPowerVisual('error'); presence('error'); }
     return;
   }
   live.retries += 1;
+  setPowerVisual('error'); // visual before presence: the status speaks the companion's words
   presence('error');
-  setPowerVisual('error');
   showCard('error', 'The line dropped — Parker is reconnecting…', 0);
   clearTimeout(retryTimer);
   retryTimer = setTimeout(() => {
@@ -1029,9 +1056,9 @@ function powerOff(options) {
   wake.tail = ''; wake.head = '';
   live.retries = 0;
   hideCard();
+  setPowerVisual('off'); // the visual first: the presence events must not narrate 'stopped'
   presence('stopped');
   presence('offline');
-  setPowerVisual('off');
   power.token = null;
   if (!silent) releasePower(0);
 }
@@ -1052,14 +1079,25 @@ document.addEventListener('keydown', (event) => {
 // Screen-reader status: the semantic state, in words, without visible chrome.
 // ---------------------------------------------------------------------------
 
+// The companion's own words for every power state; the expression
+// controller's description only while Parker is actually on (dormant/on).
+// A presence event that lands before the visual moves (offline, stopped,
+// error) must never surface the lab page's wording here, and an unchanged
+// sentence is not rewritten (a live-region change is a re-announcement).
 function updateSrStatus() {
   if (!expr) return;
   const state = document.body.dataset.power;
-  $('sr-status').textContent =
+  const text =
     state === 'off' ? 'Parker is off. Nothing is listening.'
+    : state === 'starting' ? 'Parker is waking up.'
     : state === 'error' ? 'Parker hit a snag. Use the power switch to try again.'
     : state === 'elsewhere' ? 'Parker is on another screen. Use the switch here to turn it off everywhere.'
-    : ParkerExpression.describe(expr.getState());
+    : powered() ? ParkerExpression.describe(expr.getState())
+    : null; // not yet booted: nothing to say
+  if (text == null) return;
+  const region = $('sr-status');
+  if (region.textContent === text) return;
+  region.textContent = text;
 }
 
 // ---------------------------------------------------------------------------
