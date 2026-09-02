@@ -56,9 +56,15 @@ _PARK_WORDS = {"park", "parks", "parked", "parking", "parkway", "parkland", "par
 MAX_TAIL_WORDS = 20
 # A greeting latched across a pause: "Hey" ... (a Parkinsonian hesitation
 # longer than the window) ... "Parker". Bounded in AUDIO time from the
-# last window that held the greeting and nothing else of substance;
-# measured silence envelope 6-7 s (F3 bound sweep, keyless and real base
-# model). A window with this many non-greeting tokens — a sentence, his or
+# last window that held the greeting and nothing else of substance. The
+# effective silence envelope (end of "hey" to start of "parker") is this
+# constant PLUS the window drain — the stamp refreshes on every hop whose
+# window still holds the greeting, up to ~WINDOW_SECONDS after it ended —
+# minus the hop that first hears the name: measured with the keyless
+# temporal fake 7.0 s still wakes, 7.1 s does not (the real base model
+# agreed on a 6-7 s envelope in the F3 bound sweep). tests/test_wake.py
+# pins 6.8 s wakes / 7.4 s stays quiet; the pair fails if this moves by
+# +-1 s. A window with this many non-greeting tokens — a sentence, his or
 # the TV's — clears it; a word or two on a cut syllable ("Okay.") does not.
 GREETING_LATCH_SECONDS = 6.0
 _LATCH_RESET_TOKENS = 3

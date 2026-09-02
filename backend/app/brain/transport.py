@@ -13,9 +13,11 @@ first thing in its shutdown, before any persistence.
 wire it into httpx/httpcore so a cancel reaches the provider socket:
 every stream the pool opens registers ``sock.shutdown(SHUT_RDWR)`` on the
 token, and ``connect_tcp`` refuses to dial once it is cancelled (the SDK's
-retries then die instantly instead of redialling). Measured: cancel to
-thread-exit 0.3 s bare (plain and TLS), under ~1.8 s through the anthropic
-SDK with its default retries (backoff sleeps only).
+retries then die instantly instead of redialling). Pinned on a loopback
+socket in tests/test_brain_transport.py: cancel to thread-exit under 1 s
+bare, and under 3 s through the real anthropic SDK with max_retries=2
+(only its backoff sleeps remain — exactly one request reaches the server
+and the call raises ``APIConnectionError``).
 """
 
 from __future__ import annotations

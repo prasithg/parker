@@ -465,6 +465,26 @@ def test_a_stale_greeting_never_lets_a_bare_parker_wake():
     assert _stream(detector, _paused(10.0)) == []
 
 
+@pytest.mark.parametrize("gap, wakes", [(6.8, True), (7.4, False)])
+def test_the_latch_silence_envelope_is_bounded_near_seven_seconds(gap, wakes):
+    """Where "bounded" sits, in audio time between the end of "hey" and the
+    start of "parker": GREETING_LATCH_SECONDS (6.0) plus the window drain
+    (the stamp refreshes on every hop whose window still holds the
+    greeting), minus the hop that first hears the name. Measured with this
+    fake: 7.0 s still wakes (latch_s 5.4), 7.1 s does not. The pair pins
+    the envelope so it cannot drift to ~9 s (the TV saying "Parker" long
+    after a stray "hey") with every test green — it fails if the constant
+    moves by +-1 s."""
+
+    detector = WakeDetector(_speech({HEY: "hey", NAME: "parker"}))
+    hits = _stream(detector, _paused(gap))
+    if wakes:
+        assert len(hits) == 1 and hits[0]["matched"] == "hey parker", hits
+        assert 0 < hits[0]["latch_s"] <= wake.GREETING_LATCH_SECONDS
+    else:
+        assert hits == []
+
+
 def test_intervening_speech_clears_the_greeting_latch():
     """"Hey" ... "I'm parking the car" ... "Parker": a sentence between the
     greeting and the name means he moved on. Pins that the latch is not

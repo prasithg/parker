@@ -15,6 +15,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import anthropic
 import httpcore
 import httpx
 import pytest
@@ -30,11 +31,13 @@ from app.brain.transport import (
 
 
 def _slow_server(started: threading.Event, release: threading.Event) -> ThreadingHTTPServer:
-    """A loopback provider that holds every response until *release*."""
+    """A loopback provider that holds every response until *release*.
+    ``server.requests`` counts the POSTs that reached it."""
 
     class Slow(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802 — http.server naming
             self.rfile.read(int(self.headers.get("content-length", 0)))
+            self.server.requests += 1
             started.set()
             release.wait(5.0)
             body = b"{}"
@@ -51,8 +54,79 @@ def _slow_server(started: threading.Event, release: threading.Event) -> Threadin
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+    server.requests = 0
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+def test_the_installed_sdk_takes_an_httpx_client():
+    """``provider_http_client`` is an ``httpx.Client``; the SDK must accept
+    one as ``http_client=``. anthropic 1.x moved to httpx2 and raises
+    TypeError here — which claude.py swallows into ``brain is None``, so
+    every bridged lookup silently became 'no brain' on a fresh install
+    (review F1). Pin the contract loudly instead."""
+
+    pin = "anthropic 1.x moved to httpx2; keep anthropic<1 until app/brain/transport.py is ported"
+    assert issubclass(anthropic.DefaultHttpxClient, httpx.Client), pin
+    client = httpx.Client()
+    try:
+        try:
+            sdk = anthropic.Anthropic(api_key="x", http_client=client)
+        except TypeError as exc:
+            pytest.fail(f"{pin} (constructor raised {exc!r})")
+        assert sdk._client is client, pin
+    finally:
+        client.close()
+
+
+def test_cancel_token_unwinds_the_anthropic_sdk_on_a_real_socket():
+    """Off means off at the provider boundary through the REAL SDK, not a
+    fake that unblocks itself: ``messages.create`` blocked in a loopback
+    read unwinds within 3 s of ``token.cancel()`` with the SDK's own
+    ``APIConnectionError``, and its retries (max_retries=2, backoff sleeps
+    only) never redial — exactly one request reaches the server. Control:
+    over a stock ``httpx.HTTPTransport`` the thread is still blocked at 3 s."""
+
+    started, release = threading.Event(), threading.Event()
+    server = _slow_server(started, release)
+    token = CancelToken()
+    client = provider_http_client(token)
+    sdk = anthropic.Anthropic(
+        api_key="x",
+        base_url=f"http://127.0.0.1:{server.server_address[1]}",
+        max_retries=2,
+        http_client=client,
+    )
+    outcome: dict = {}
+
+    def worker() -> None:
+        try:
+            sdk.messages.create(
+                model="m", max_tokens=8, messages=[{"role": "user", "content": "hi"}]
+            )
+            outcome["result"] = "returned"
+        except Exception as exc:  # noqa: BLE001 — the exception IS the observation
+            outcome["result"] = exc
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    try:
+        assert started.wait(3.0), "the SDK request never reached the loopback provider"
+        time.sleep(0.2)
+        assert thread.is_alive()  # blocked in the provider read
+        cancelled_at = time.monotonic()
+        token.cancel()
+        thread.join(3.0)
+        unwound_after = time.monotonic() - cancelled_at
+        assert not thread.is_alive(), "the SDK call did not unwind within 3 s of cancel"
+        assert unwound_after < 3.0
+        assert isinstance(outcome["result"], anthropic.APIConnectionError), outcome["result"]
+        assert server.requests == 1, "a post-cancel retry redialled the provider"
+    finally:
+        release.set()
+        client.close()
+        server.shutdown()
+        server.server_close()
 
 
 def test_cancel_token_aborts_an_inflight_provider_read():
