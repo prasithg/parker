@@ -35,8 +35,10 @@ from __future__ import annotations
 import logging
 import re
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Iterator, Optional
 
 from app.brain.adapter import Source
 from app.brain.guard import (
@@ -46,10 +48,34 @@ from app.brain.guard import (
     speech_violates_medical_boundary,
     trim_for_speech,
 )
+from app.brain.transport import CancelToken, provider_http_client
 
 logger = logging.getLogger("parker.realtime")
 
 MAX_QUESTION_LENGTH = 300
+
+# Strict power-off (P0.1 F1): the bridge's per-session CancelToken. The
+# bridge sets it inside its worker thread (anyio copies the context into
+# the threadpool) and fires it first thing in shutdown; workers read it
+# here — one source of truth, so the (question)/(make_db) signatures the
+# test fakes implement never change. An explicit ``cancel=`` wins and
+# becomes the contextvar for nested helpers (the gateway probe).
+CURRENT_CANCEL: ContextVar[Optional[CancelToken]] = ContextVar(
+    "parker_worker_cancel", default=None
+)
+LOOKUP_STOPPED = "the lookup was stopped"
+
+
+@contextmanager
+def _cancel_scope(cancel: Optional[CancelToken]) -> Iterator[Optional[CancelToken]]:
+    if cancel is None:
+        yield CURRENT_CANCEL.get()
+        return
+    reset = CURRENT_CANCEL.set(cancel)
+    try:
+        yield cancel
+    finally:
+        CURRENT_CANCEL.reset(reset)
 
 LOOK_THAT_UP_TOOL: dict[str, Any] = {
     "name": "look_that_up",
@@ -153,7 +179,7 @@ def local_date_line() -> str:
     return f"{now:%A}, {now.day} {now:%B %Y}, {now.strftime('%I:%M %p').lstrip('0')} {zone}"
 
 
-def run_search_worker(question: str) -> WorkerResult:
+def run_search_worker(question: str, *, cancel: Optional[CancelToken] = None) -> WorkerResult:
     """Answer one self-contained question through the household brain.
 
     The brain is handed today's local date/time in front of the question
@@ -161,10 +187,29 @@ def run_search_worker(question: str) -> WorkerResult:
     the ORIGINAL question: dedupe keys, journal rows, and the injected
     note all cite what the front model actually asked.
 
+    ``cancel`` (or the bridge's ``CURRENT_CANCEL``) stops the provider call
+    at the socket; a stopped lookup returns the honest ``LOOKUP_STOPPED``
+    envelope, never speech. Without a token: today's path, unchanged.
+
     Never raises: every failure comes back as an error envelope the front
     model can be honest about.
     """
 
+    with _cancel_scope(cancel) as token:
+        return _run_search(question, token)
+
+
+def _stopped(question: str, started: float) -> WorkerResult:
+    return WorkerResult(
+        kind="search",
+        question=question,
+        error=LOOKUP_STOPPED,
+        started_at=started,
+        finished_at=time.time(),
+    )
+
+
+def _run_search(question: str, token: Optional[CancelToken]) -> WorkerResult:
     started = time.time()
     question = str(question or "").strip()[:MAX_QUESTION_LENGTH]
     if not question:
@@ -184,11 +229,20 @@ def run_search_worker(question: str) -> WorkerResult:
             started_at=started,
             finished_at=time.time(),
         )
+    client = None
     try:
         from app.brain.build import build_brain_adapter
         from app.brain.claude import build_brain_context
 
-        brain = build_brain_adapter()
+        if token is None:
+            brain = build_brain_adapter()
+        elif token.cancelled():
+            return _stopped(question, started)
+        else:
+            # The provider call rides a client the bridge can abort at the
+            # socket (app/brain/transport.py); closed below on every path.
+            client = provider_http_client(token)
+            brain = build_brain_adapter(http_client=client)
         if brain is None:
             return WorkerResult(
                 kind="search",
@@ -199,6 +253,8 @@ def run_search_worker(question: str) -> WorkerResult:
             )
         grounded = f"Right now it is {local_date_line()}. {question}"
         reply = brain.respond([], grounded, build_brain_context())
+        if token is not None and token.cancelled():
+            return _stopped(question, started)  # the line is gone; never speech
         screened = screen_reply(reply, proposable=frozenset())  # workers never propose
         speech = trim_for_speech(screened.reply.speech)
         if speech.endswith(WANT_MORE_SUFFIX):
@@ -223,6 +279,9 @@ def run_search_worker(question: str) -> WorkerResult:
             finished_at=time.time(),
         )
     except Exception:  # noqa: BLE001 — a worker must never take the call down
+        if token is not None and token.cancelled():
+            # A shut-down socket surfaces as a connection error: stopped, not broken.
+            return _stopped(question, started)
         # Exception class names live in the log only — the model must never
         # be handed "RuntimeError" to say aloud (UX-audit find).
         logger.warning("search worker failed", exc_info=True)
@@ -233,6 +292,12 @@ def run_search_worker(question: str) -> WorkerResult:
             started_at=started,
             finished_at=time.time(),
         )
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -261,18 +326,30 @@ def _medication_lines(db: Any) -> list[str]:
 
 
 def _gateway_lines(db: Any) -> list[str]:
-    """Ambient context from the family's agent harness, when one is configured."""
+    """Ambient context from the family's agent harness, when one is configured.
+
+    Under a bridge token the probe rides a cancellable client (power off
+    shuts its socket); otherwise the gateway's own client, as before.
+    """
 
     from app.brain.openclaw import GatewayError, build_openclaw_gateway
 
-    gateway = build_openclaw_gateway()
-    if gateway is None:
-        return []
+    token = CURRENT_CANCEL.get()
+    client = provider_http_client(token) if token is not None else None
     try:
-        return gateway.current_context()[:6]
-    except GatewayError as exc:
-        logger.debug("gateway context probe skipped: %s", exc)
-        return []
+        gateway = (
+            build_openclaw_gateway(client=client) if client is not None else build_openclaw_gateway()
+        )
+        if gateway is None:
+            return []
+        try:
+            return gateway.current_context()[:6]
+        except GatewayError as exc:
+            logger.debug("gateway context probe skipped: %s", exc)
+            return []
+    finally:
+        if client is not None:
+            client.close()
 
 
 CONTEXT_SOURCES: tuple[tuple[str, Callable[[Any], list[str]]], ...] = (
@@ -473,20 +550,35 @@ def render_my_day_item(result: WorkerResult) -> str:
 def run_context_worker(
     make_db: Callable[[], Any],
     sources: tuple[tuple[str, Callable[[Any], list[str]]], ...] = CONTEXT_SOURCES,
+    *,
+    cancel: Optional[CancelToken] = None,
 ) -> WorkerResult:
     """Build the session context card. One failing source never kills it.
 
     ``sources`` lets a read-side caller (the session-review card preview)
     reuse the exact assembly while skipping the live gateway probe — a
     review page request must never block on the family agent's network.
+    ``cancel`` (or the bridge's ``CURRENT_CANCEL``) stops the assembly
+    between sources — an empty card beats a probe that outlives power off.
     """
 
+    with _cancel_scope(cancel) as token:
+        return _run_context(make_db, sources, token)
+
+
+def _run_context(
+    make_db: Callable[[], Any],
+    sources: tuple[tuple[str, Callable[[Any], list[str]]], ...],
+    token: Optional[CancelToken],
+) -> WorkerResult:
     started = time.time()
     lines: list[str] = []
     db = None
     try:
         db = make_db()
         for name, source in sources:
+            if token is not None and token.cancelled():
+                break  # power off: stop here, keep what we have
             try:
                 lines.extend(source(db))
             except Exception:  # noqa: BLE001 — card sources are best-effort

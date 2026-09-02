@@ -274,3 +274,156 @@ def test_local_date_line_names_the_weekday_date_and_time():
 
     # …and the zone name, so the brain can convert "2 PM ET" to his clock.
     assert re.match(r"^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), \d{1,2} [A-Z][a-z]+ \d{4}, \d{1,2}:\d{2} (AM|PM) \S+$", line), line
+
+
+# ---------------------------------------------------------------------------
+# Strict power-off (P0.1 F1): a cancel token reaches the provider boundary.
+# ---------------------------------------------------------------------------
+
+_MESSAGE_JSON = {
+    "id": "msg_1",
+    "type": "message",
+    "role": "assistant",
+    "model": "m",
+    "content": [{"type": "text", "text": "Friday night."}],
+    "stop_reason": "end_turn",
+    "stop_sequence": None,
+    "usage": {"input_tokens": 1, "output_tokens": 1},
+}
+
+
+class _FakeProviders:
+    """Stands in for ``provider_http_client``: every client it hands out
+    rides a MockTransport that holds the anthropic call until the token
+    fires (``hold``) or answers at once, and answers the gateway probe."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.started = threading.Event()
+        self.aborted = threading.Event()
+        self.hold = True
+        self.clients: list[httpx.Client] = []
+        self.probes: list[str] = []
+
+    def __call__(self, token, *, timeout=None) -> httpx.Client:
+        token.on_cancel(self.aborted.set)  # what the socket shutdown does for real
+        client = httpx.Client(transport=httpx.MockTransport(self._handle))
+        self.clients.append(client)
+        return client
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == "gateway.test":
+            self.probes.append(request.url.path)
+            return httpx.Response(200, json={"lines": ["He is watching the tennis."]})
+        self.started.set()
+        if self.hold:
+            self.aborted.wait(3.0)
+            # A shut-down socket surfaces as a transport error, which the
+            # SDK retries (each redial dies the same way) and then raises.
+            raise httpx.RemoteProtocolError("connection shut down")
+        return httpx.Response(200, json=_MESSAGE_JSON)
+
+
+def test_search_and_context_workers_honour_a_cancel_token(db, monkeypatch):
+    """Power off must stop provider work, not just drop its result: a
+    cancelled search comes back as the honest 'stopped' envelope (never
+    speech), its client closed; a context worker handed a dead token
+    never probes the gateway; a live token changes nothing."""
+
+    import threading
+
+    from app.brain.transport import CancelToken
+    from app.config import settings
+
+    providers = _FakeProviders()
+    monkeypatch.setattr(realtime_workers, "provider_http_client", providers)
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-anthropic-key")
+    # Pay the SDK / text-loop import cost (seconds, cold) before the clock starts.
+    import anthropic  # noqa: F401
+
+    from app.brain.claude import build_brain_context
+
+    build_brain_context()
+
+    # -- search: cancelled mid-call ------------------------------------
+    token = CancelToken()
+    outcome: dict = {}
+
+    def run() -> None:
+        outcome["result"] = realtime_workers.run_search_worker("when is the final?", cancel=token)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    assert providers.started.wait(3.0), "the lookup never reached the provider"
+    token.cancel()
+    worker.join(6.0)
+    assert not worker.is_alive(), "the cancelled lookup thread never returned"
+    result = outcome["result"]
+    assert result.error == "the lookup was stopped"
+    assert result.speech == "" and result.question == "when is the final?"
+    assert providers.clients and all(c.is_closed for c in providers.clients)
+
+    # -- search: a dead token never dials -------------------------------
+    dead = CancelToken()
+    dead.cancel()
+    built = len(providers.clients)
+    stopped = realtime_workers.run_search_worker("when is the final?", cancel=dead)
+    assert stopped.error == "the lookup was stopped"
+    assert len(providers.clients) == built  # nothing was even built
+
+    # -- search: a live token leaves today's answer untouched -----------
+    providers.hold = False
+    live = realtime_workers.run_search_worker("when is the final?", cancel=CancelToken())
+    assert live.error == "" and live.speech == "Friday night."
+    assert providers.clients[-1].is_closed
+
+    # -- context: a dead token stops before the gateway probe -----------
+    monkeypatch.setattr(settings, "parker_openclaw_gateway_url", "http://gateway.test")
+    card = realtime_workers.run_context_worker(lambda: db, cancel=dead)
+    assert card.kind == "context" and card.speech == ""
+    assert providers.probes == []
+
+    # -- context: a live token probes through the cancellable client ----
+    built = len(providers.clients)
+    card = realtime_workers.run_context_worker(lambda: db, cancel=CancelToken())
+    assert "watching the tennis" in card.speech
+    assert providers.probes == ["/parker/v1/context"]
+    assert len(providers.clients) == built + 1 and providers.clients[-1].is_closed
+
+
+def test_workers_read_the_bridge_cancel_from_the_contextvar(db, monkeypatch):
+    """The bridge sets ``CURRENT_CANCEL`` inside its worker thread; the
+    (unchanged) ``run_search_worker(question)`` / ``run_context_worker(
+    make_db)`` signatures pick it up, and so does the nested gateway
+    probe — one source of truth, no kwarg on every fake."""
+
+    from app.brain.transport import CancelToken
+    from app.config import settings
+
+    providers = _FakeProviders()
+    providers.hold = False
+    monkeypatch.setattr(realtime_workers, "provider_http_client", providers)
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-anthropic-key")
+    assert realtime_workers.CURRENT_CANCEL.get() is None
+
+    dead = CancelToken()
+    dead.cancel()
+    reset = realtime_workers.CURRENT_CANCEL.set(dead)
+    try:
+        assert realtime_workers.run_search_worker("when is the final?").error == "the lookup was stopped"
+        monkeypatch.setattr(settings, "parker_openclaw_gateway_url", "http://gateway.test")
+        assert realtime_workers.run_context_worker(lambda: db).speech == ""
+        assert providers.probes == [] and providers.clients == []
+    finally:
+        realtime_workers.CURRENT_CANCEL.reset(reset)
+
+    live = CancelToken()
+    reset = realtime_workers.CURRENT_CANCEL.set(live)
+    try:
+        card = realtime_workers.run_context_worker(lambda: db)
+        assert "watching the tennis" in card.speech
+        assert providers.probes == ["/parker/v1/context"]
+        assert len(providers.clients) == 1 and providers.clients[0].is_closed
+    finally:
+        realtime_workers.CURRENT_CANCEL.reset(reset)
