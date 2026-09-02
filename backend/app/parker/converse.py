@@ -262,8 +262,16 @@ class ConverseStore:
                 self._transcriber = loader()
                 self._transcriber_error = None
                 return True
-            except RuntimeError as exc:
-                self._transcriber_error = str(exc)
+            except Exception as exc:  # noqa: BLE001 — any load failure is "unavailable", never a dead socket
+                # ImportError arrives as RuntimeError(VOICE_DEPS_HINT); the
+                # realistic first-run failures (weights not cached while
+                # offline, hub unreachable, a half-downloaded snapshot) are
+                # huggingface_hub's LocalEntryNotFoundError — a
+                # FileNotFoundError — and a bad model size is a ValueError.
+                # Not sticky: the next call retries the load, human-paced
+                # (the page powers off on "unavailable").
+                logger.warning("local transcriber failed to load: %s", exc, exc_info=True)
+                self._transcriber_error = str(exc) or type(exc).__name__
                 return False
 
     def _sweep_expired(self) -> None:

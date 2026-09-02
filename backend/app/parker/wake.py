@@ -43,6 +43,9 @@ WINDOW_SECONDS = 2.4
 HOP_SECONDS = 0.7
 # RMS of int16 samples below this is a quiet room: never run the model.
 ENERGY_GATE_RMS = 260
+# ``finish``: less new audio than this since the last run is not worth an
+# inference (a cut syllable at most).
+MIN_FLUSH_SECONDS = 0.25
 
 _GREETINGS = {"hey", "hay", "hi", "eh", "hei"}
 _PARKER_EXACT = {"parker", "parka", "barker", "packer", "parcker", "parkers"}
@@ -51,6 +54,14 @@ _PARKER_EXACT = {"parker", "parka", "barker", "packer", "parcker", "parkers"}
 # ("parkuh", "parkah", a trailing syllable that slurred).
 _PARK_WORDS = {"park", "parks", "parked", "parking", "parkway", "parkland", "parkin"}
 MAX_TAIL_WORDS = 20
+# A greeting latched across a pause: "Hey" ... (a Parkinsonian hesitation
+# longer than the window) ... "Parker". Bounded in AUDIO time from the
+# last window that held the greeting and nothing else of substance;
+# measured silence envelope 6-7 s (F3 bound sweep, keyless and real base
+# model). A window with this many non-greeting tokens — a sentence, his or
+# the TV's — clears it; a word or two on a cut syllable ("Okay.") does not.
+GREETING_LATCH_SECONDS = 6.0
+_LATCH_RESET_TOKENS = 3
 # The adaptive gate's memory: ~60 s of hops. The "room" is a LOW
 # percentile of that memory, and the gate only engages once the room has
 # been continuously energetic for ~20 s (a TV) — so a few seconds of him
@@ -184,8 +195,17 @@ class WakeDetector:
         # a missed wake costs Dad more than CPU costs the machine.
         self._relative_gate = float(relative_gate)
         self._recent_rms: list[int] = []
+        # The greeting latch's clock is audio fed, not the wall clock, so
+        # scripts that stream faster than real time and the live lane
+        # (where audio time == wall time) behave identically.
+        self._fed_samples = 0
+        self._greeting: Optional[tuple[str, int]] = None  # (token, fed samples)
         self.inferences = 0  # observable: the energy gate must hold in tests
         self.gated_by_background = 0  # hops the adaptive gate skipped
+        # Consecutive inference failures (reset by any success): one bad
+        # window is still just a bad window; the route gives up — and says
+        # so — at WAKE_FATAL_FAILURES, instead of silent dead dormancy.
+        self.failures = 0
 
     def hear(self, pcm16: bytes) -> Optional[dict[str, Any]]:
         """Accumulate audio; on each energetic hop, transcribe the window.
@@ -200,6 +220,7 @@ class WakeDetector:
             return None
         self._window.extend(pcm16[:usable])
         self._samples_since_run += usable // 2
+        self._fed_samples += usable // 2
         overflow = len(self._window) // 2 - self._window_samples
         if overflow > 0:
             del self._window[: overflow * 2]
@@ -219,6 +240,33 @@ class WakeDetector:
                 self.gated_by_background += 1
                 return None  # steady background (a TV) is not someone speaking up
         self._remember_rms(rms)
+        return self._transcribe(window, rms)
+
+    def begin_tail(self, max_seconds: float) -> None:
+        """After a wake: stop sliding. The window was cleared at the wake,
+        so from here it grows and holds everything he says (up to
+        ``max_seconds``) for the tail lane's lifetime — every tail frame is
+        a superset transcript and the first post-wake words never slide
+        out (F2: a 2.4 s rolling window had erased them by the 5th hop)."""
+
+        self._window_samples = int(max_seconds * WAKE_SAMPLE_RATE)
+
+    def finish(self) -> Optional[dict[str, Any]]:
+        """Transcribe the current window once, regardless of the hop: the
+        lane's last words before the live line takes over. Same return
+        shape as ``hear``; None when less than MIN_FLUSH_SECONDS of audio
+        arrived since the last run or the window is quiet."""
+
+        if self._samples_since_run < int(MIN_FLUSH_SECONDS * WAKE_SAMPLE_RATE):
+            return None
+        self._samples_since_run = 0
+        window = bytes(self._window)
+        rms = audioop.rms(window, 2) if window else 0
+        if rms < ENERGY_GATE_RMS:
+            return None
+        return self._transcribe(window, rms)
+
+    def _transcribe(self, window: bytes, rms: int) -> Optional[dict[str, Any]]:
         started = self._clock()
         self.inferences += 1
         try:
@@ -228,7 +276,9 @@ class WakeDetector:
                 lines = self._transcriber(path)
         except Exception:  # noqa: BLE001 — a bad window must not end dormancy
             logger.warning("wake inference failed", exc_info=True)
+            self.failures += 1
             return None
+        self.failures = 0
         heard = " ".join(line.strip() for line in lines if line and line.strip())
         return {
             "heard": heard[:200],
@@ -254,9 +304,44 @@ class WakeDetector:
         result = self.hear(pcm16)
         if result is None:
             return None
-        match = wake_match(result["heard"])
+        heard = result["heard"]
+        match = wake_match(heard)
         if match is None:
+            greeting = self._pending_greeting()
+            if greeting is not None:
+                # His greeting, carried across the pause, through the same
+                # single-window grammar (one filler/slip token tolerated).
+                match = wake_match(f"{greeting} {heard}")
+                if match is not None:
+                    result["latch_s"] = round(
+                        (self._fed_samples - self._greeting[1]) / WAKE_SAMPLE_RATE, 1
+                    )
+        if match is None:
+            self._note_greeting(heard)
             return None
+        self._greeting = None
         self._window.clear()  # one utterance, one wake
         result["matched"], result["tail"] = match
         return result
+
+    def _pending_greeting(self) -> Optional[str]:
+        if self._greeting is None:
+            return None
+        token, at = self._greeting
+        if (self._fed_samples - at) / WAKE_SAMPLE_RATE > GREETING_LATCH_SECONDS:
+            self._greeting = None
+            return None
+        return token
+
+    def _note_greeting(self, heard: str) -> None:
+        tokens = _tokens(heard)
+        others = [t for t in tokens if t not in _GREETINGS]
+        if len(others) >= _LATCH_RESET_TOKENS:
+            self._greeting = None  # a sentence — his or the TV's: he moved on
+        elif any(t in _GREETINGS for t in tokens):
+            self._greeting = (
+                next(t for t in tokens if t in _GREETINGS),
+                self._fed_samples,
+            )
+        # else: a word or two on a cut syllable ("Okay.", "Thank you.",
+        # "TARAKER" — observed real-model drain windows) change nothing.

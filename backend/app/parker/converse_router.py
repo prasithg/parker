@@ -234,10 +234,21 @@ def converse_static(asset_path: str) -> FileResponse:
     )
 
 
+from app.parker.wake import HOP_SECONDS as WAKE_HOP_SECONDS  # the wake lane's hop
+
 # After a wake fires, the lane keeps transcribing for this long so the
 # rest of a same-breath request ("Hey Parker, can you help me") reaches
 # the live line as text while that line is still connecting.
 WAKE_TAIL_SECONDS = 3.0
+# The post-wake window grows from the cleared wake point and holds
+# everything he says until the line takes over (`tail_end`): the lane's
+# lifetime plus one hop, so nothing he said slides out inside it (F2).
+TAIL_WINDOW_SECONDS = WAKE_TAIL_SECONDS + WAKE_HOP_SECONDS
+# Consecutive failing inferences (the warmed model died under the lane:
+# model.bin gone, temp dir unwritable) before the lane says so and closes
+# — ~2.1 s of energetic hops at HOP_SECONDS. A single bad window still
+# never ends dormancy, and a quiet room never counts (F5).
+WAKE_FATAL_FAILURES = 3
 
 
 @router.websocket("/converse/wake")
@@ -295,6 +306,28 @@ async def converse_wake(websocket: WebSocket) -> None:
         # Power moved while the model warmed: off, or a new owner.
         await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
         return
+
+    async def _give_up() -> None:
+        # The warmed model keeps failing under the lane. Say so and close
+        # (the page powers off, honestly) instead of listening to nothing
+        # forever. The store keeps its loaded model: a transient disk error
+        # must not throw it away; the next power-on starts a fresh counter.
+        logger.warning("wake lane giving up after %d failed inferences", detector.failures)
+        try:
+            await websocket.send_json(
+                {
+                    "type": "unavailable",
+                    "text": (
+                        "Wake listening keeps failing on this computer, so Parker "
+                        "turned off. Ask the family to check the local voice model "
+                        "(make voice-deps)."
+                    ),
+                }
+            )
+            await websocket.close()
+        except RuntimeError:
+            pass  # revoked already: nothing to tell
+
     try:
         while True:
             message = await websocket.receive_json()
@@ -313,6 +346,9 @@ async def converse_wake(websocket: WebSocket) -> None:
                     if time.monotonic() - woke_at > WAKE_TAIL_SECONDS:
                         continue
                     heard = await run_in_threadpool(detector.hear, pcm)
+                    if detector.failures >= WAKE_FATAL_FAILURES:
+                        await _give_up()
+                        return
                     if heard and heard["heard"]:
                         try:
                             await websocket.send_json(
@@ -322,8 +358,12 @@ async def converse_wake(websocket: WebSocket) -> None:
                             return  # revoked mid-tail
                     continue
                 hit = await run_in_threadpool(detector.feed, pcm)
+                if detector.failures >= WAKE_FATAL_FAILURES:
+                    await _give_up()
+                    return
                 if hit:
                     woke_at = time.monotonic()
+                    detector.begin_tail(TAIL_WINDOW_SECONDS)
                     logger.info(
                         "wake detected matched=%r infer_ms=%d rms=%d",
                         hit["matched"],
@@ -339,6 +379,8 @@ async def converse_wake(websocket: WebSocket) -> None:
                                 "infer_ms": hit["infer_ms"],
                                 "rms": hit["rms"],
                                 "dormant_s": int(time.monotonic() - opened),
+                                # a paused wake ("Hey" ... "Parker") vs a same-breath one
+                                **({"latch_s": hit["latch_s"]} if "latch_s" in hit else {}),
                             }
                         )
                     except Exception:  # noqa: BLE001 — receipts never break waking
@@ -347,6 +389,20 @@ async def converse_wake(websocket: WebSocket) -> None:
                         await websocket.send_json({"type": "wake", **hit})
                     except RuntimeError:
                         return  # revoked mid-inference: the socket is already closed
+            elif kind == "tail_end":
+                # The line is up. Every audio frame the page sent before this
+                # one has already been fed (the loop is sequential): transcribe
+                # what the lane still holds once — even sub-hop audio — answer
+                # with the FINAL tail (empty is still an answer, so the page
+                # never waits on the lane) and hand over.
+                heard = await run_in_threadpool(detector.finish) if woke_at is not None else None
+                text = str((heard or {}).get("heard", ""))[:200]
+                try:
+                    await websocket.send_json({"type": "tail", "text": text, "final": True})
+                    await websocket.close()  # the lane's job is done: an orderly close
+                except RuntimeError:
+                    pass  # revoked meanwhile: nothing to hand over to
+                return
             elif kind == "end":
                 return
     except WebSocketDisconnect:

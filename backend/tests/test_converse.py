@@ -222,6 +222,34 @@ def test_asr_unavailable_creates_session_but_audio_turns_are_503(db):
     assert typed["kind"] == "confirm_offer"  # typing still works
 
 
+def test_asr_missing_model_files_creates_session_with_hint(db, monkeypatch):
+    """F5: the realistic first-run failures (weights not cached while
+    offline, hub unreachable, a half-downloaded snapshot) come out of
+    huggingface_hub as LocalEntryNotFoundError — a FileNotFoundError, not
+    the RuntimeError the ImportError path raises. They must land in the
+    same honest unavailable state as above: a session with a hint, audio
+    turns 503, typing fine, and the sessions route a 200 — never a 500."""
+
+    def missing():
+        raise FileNotFoundError("cache miss")
+
+    store = make_store(db, loader=missing)
+    created = store.create_session()
+    assert created["asr_ready"] is False
+    assert "cache miss" in (created["asr_hint"] or "")
+
+    with pytest.raises(ConverseError) as excinfo:
+        store.run_turn(created["session_id"], turn_id=1, audio_base64=WAV_B64)
+    assert excinfo.value.status_code == 503
+
+    typed = store.run_turn(created["session_id"], turn_id=2, text="Remind me to stretch")
+    assert typed["kind"] == "confirm_offer"
+
+    monkeypatch.setattr(converse_router, "converse_store", store)
+    response = client.post("/parker/converse/sessions")
+    assert response.status_code == 200 and response.json()["asr_ready"] is False
+
+
 def test_repair_choices_expose_position_and_label_only(db):
     store = make_store(db)
     session_id = store.create_session()["session_id"]
