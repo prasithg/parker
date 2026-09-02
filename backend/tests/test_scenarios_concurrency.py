@@ -220,7 +220,11 @@ def test_the_owners_reconnect_supersedes_the_old_line_and_each_line_keeps_its_ow
         # -- the same owner opens a second line: handover -----------------
         with world.connect() as ws_b:
             assert _wait_until(lambda: _opened(fakes[1]))
-            assert realtime._active_bridges == 2  # the overlap the cap exists for
+            # The cap allows the overlap; since the P0.1 revoke hook the
+            # superseded bridge is revoked the instant the reconnect lands,
+            # so it may already have released its slot by the time the new
+            # line has opened (1) — or still be draining (2). Never a third.
+            assert realtime._active_bridges in (1, 2)
             world.settle_open(fakes[1])  # her card is built before his line closes
             _revoked(ws_a, "superseded")
             _page_hangs_up(ws_a, fakes[0])
@@ -248,10 +252,22 @@ def test_the_owners_reconnect_supersedes_the_old_line_and_each_line_keeps_its_ow
     assert _wait_until(lambda: realtime._active_bridges == 0)
     assert fakes[0].closed is True and fakes[1].closed is True
 
-    # per-socket routing: the new upstream never carried the old line
+    # per-socket routing: the new upstream never carried the old line's
+    # audio, transcripts, or nudges. (Its CONTEXT CARD may know about the
+    # cricket: since the P0.1 revoke hook the superseded line finalizes at
+    # the handover, and the next session's card is built from what the
+    # last one persisted — that is the card's job, not a routing leak.)
     assert _audio_appends(fakes[0]) == ["QUJD"]
     assert _audio_appends(fakes[1]) == ["WFla"]
-    assert "cricket" not in json.dumps(fakes[1].sent)
+    not_the_card = [
+        e for e in fakes[1].sent
+        if not (
+            e["type"] == "conversation.item.create"
+            and e["item"].get("role") == "system"
+            and "Background context" in e["item"]["content"][0]["text"]
+        )
+    ]
+    assert "cricket" not in json.dumps(not_the_card)
     assert "plumber" not in json.dumps(fakes[0].sent)
 
     calls = _realtime_calls(world)
@@ -896,3 +912,46 @@ def test_power_off_stops_a_provider_blocked_lookup_at_the_boundary(voice_world):
     assert not any("LOOKUP RESULT" in text for text in _system_items(fake))
     # And the record is honest: no late "done" frame reached the page.
     assert converse_router.authority.snapshot()["power_on"] is False
+
+
+# ---------------------------------------------------------------------------
+# C09 — off reaches the BRIDGE the instant power moves, not on the page's
+# next frame: nothing in flight goes upstream, and a routine off is not a crash
+# ---------------------------------------------------------------------------
+
+
+def test_power_off_revokes_the_bridge_before_the_pages_next_frame(voice_world, caplog):
+    """Fresh review (2026-09-02): the authority's closer told the page
+    (`revoked`) and closed its socket but never the bridge, so a mic frame
+    already in flight was still forwarded to OpenAI after the page had
+    been told off, the upstream close waited for the page's next frame or
+    disconnect, and the pump died in Starlette's receive with an ERROR
+    'realtime bridge failed'. Now the closer revokes the bridge first."""
+
+    import logging
+
+    world = voice_world
+    world.disable_brain()
+    fake = world.script([])
+    with caplog.at_level(logging.ERROR, logger="parker.converse"):
+        with world.connect() as ws:
+            world.settle_open(fake, expect_card=False)
+            ws.send_json({"type": "audio", "data": "QUJD"})
+            assert _wait_until(lambda: _audio_appends(fake) == ["QUJD"])
+            off = _power_off("sarah-phone")
+            assert off.status_code == 200
+            assert ws.receive_json() == {"type": "revoked", "reason": "power_off"}
+            assert _wait_until(lambda: fake.closed, timeout=2.0), "the upstream must close at the revoke, not at the page's next frame"
+            # The page's frames already in flight: they go nowhere.
+            for _ in range(3):
+                try:
+                    ws.send_json({"type": "audio", "data": "TEFURQ=="})
+                except Exception:  # noqa: BLE001 — the server already hung up
+                    break
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+    assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
+    assert _audio_appends(fake) == ["QUJD"], "a frame after the flip reached the provider"
+    assert not any("realtime bridge failed" in r.getMessage() for r in caplog.records), (
+        "a routine off must not log as a bridge crash"
+    )

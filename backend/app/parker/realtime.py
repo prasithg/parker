@@ -1008,6 +1008,11 @@ class RealtimeBridge:
         self._goodbye_at = 0.0
         self._wrapup_asked = False
         self._goodbye_requested = False
+        # A goodbye was injected but its nudge has not gone upstream yet
+        # (a response was active / he was speaking). `closing` may ride
+        # only the goodbye's OWN done — never the done of the server's
+        # auto-reply to his closer (fresh review, 2026-09-02).
+        self._goodbye_nudge_pending = False
         self._closing_sent = False
         self._last_assistant_speech = ""  # the soft closer needs a real answer before it
         self._session_end_kind = ""  # "hard" | "soft" once he ended it
@@ -1110,13 +1115,32 @@ class RealtimeBridge:
             detail["truncated"] = True  # later transitions are dropped
         self._journal_in_background("expression", detail=detail)
 
+    def revoke(self) -> None:
+        """Off, now: the synchronous first step of shutdown, callable from the
+        route the instant power moves (before the page's socket is even
+        closed). Idempotent. Nothing is forwarded, injected, or nudged from
+        here on; the pumps and workers are cancelled; every provider socket
+        this bridge opened is shut down. ``_shutdown`` (run()'s finally)
+        does the awaits: upstream close, drain, persistence."""
+
+        self._closed = True
+        for task in self._pump_tasks:
+            task.cancel()
+        self._cancel.cancel()
+        for task in self._worker_tasks:
+            task.cancel()
+
     async def run(self) -> None:
         connect = self._upstream_connect or globals()["connect_openai"]
         self._upstream = await connect()
         try:
+            if self._closed:
+                return  # revoked while connecting: shutdown closes what opened
             await self._upstream.send(json.dumps(build_session_update()))
             await _tracked_thread(lambda: _ensure_call_log_sync(self._call_sid))
             await self._await_hello()
+            if self._closed:
+                return
             # The greeting never waits for context: speak first, load behind.
             if self._wake_tail or self._tail_pending:
                 # He woke Parker and went straight on: the instruction goes
@@ -1131,10 +1155,16 @@ class RealtimeBridge:
                 else:
                     await self._deliver_tail(self._wake_tail)
             else:
+                # No wake handoff opened: a stray `tail` frame later must not
+                # mint a user item (the handoff delivers exactly once, and only
+                # when a wake hello started it).
+                self._tail_delivered = True
                 await self._send_system_item(
                     _GREETING_INSTRUCTION.format(patient_name=self._patient_name())
                 )
                 await self._request_nudge()
+            if self._closed:
+                return
             self._spawn_context_worker()
             browser_task = asyncio.create_task(self._pump_browser())
             upstream_task = asyncio.create_task(self._pump_upstream())
@@ -1178,15 +1208,9 @@ class RealtimeBridge:
         boundary open.
         """
 
-        # 1. Revoke, synchronously, before any await: nothing is forwarded,
-        #    injected, or nudged from here on; the pumps and workers stop;
-        #    every provider socket this bridge opened is shut down.
-        self._closed = True
-        for task in self._pump_tasks:
-            task.cancel()
-        self._cancel.cancel()
-        for task in self._worker_tasks:
-            task.cancel()
+        # 1. Revoke, synchronously, before any await (idempotent: the route
+        #    may already have done it the instant power moved).
+        self.revoke()
         # 2. Close the upstream FIRST — bounded: a wedged socket must never
         #    pin the bridge slot open.
         close = getattr(self._upstream, "close", None)
@@ -1360,6 +1384,7 @@ class RealtimeBridge:
         if self._response_active or self._user_speaking:
             return  # deferred; response.done retries
         self._pending_nudge_count = 0
+        self._goodbye_nudge_pending = False  # the goodbye (if owed) rides THIS response
         self._response_active = True  # optimistic — response.created confirms
         await self._upstream.send(json.dumps({"type": "response.create"}))
 
@@ -1533,6 +1558,7 @@ class RealtimeBridge:
                 # speech must not stand itself down) — back to normal.
                 self._wrapup_asked = False
                 self._goodbye_requested = False
+                self._goodbye_nudge_pending = False
                 self._session_end_kind = ""
                 continue
             if not self._wrapup_asked and idle >= IDLE_WRAPUP_SECONDS:
@@ -1553,6 +1579,7 @@ class RealtimeBridge:
                 await self._send_system_item(
                     _GOODBYE_INSTRUCTION.format(patient_name=self._patient_name())
                 )
+                self._goodbye_nudge_pending = True
                 await self._request_nudge()
             elif (
                 self._goodbye_requested
@@ -1670,12 +1697,22 @@ class RealtimeBridge:
                 # A spoken end he interrupts is cancelled the same way.
                 self._wrapup_asked = False
                 self._goodbye_requested = False
+                self._goodbye_nudge_pending = False
                 self._session_end_kind = ""
             await self._browser_send({"type": "clear"})
         elif etype == "input_audio_buffer.speech_stopped":
             self._user_speaking = False
             self._last_activity = time.monotonic()
         elif etype == "response.created":
+            if not self._response_active:
+                # Server-initiated (the VAD answering his speech): it was
+                # created after everything injected so far — the tail user
+                # item, a lookup note, even a goodbye — so it IS the response
+                # those nudges asked for. A second one would make him hear
+                # two replies for one wake (fresh review, 2026-09-02). Items
+                # injected from here on count again and nudge at its done.
+                self._pending_nudge_count = 0
+                self._goodbye_nudge_pending = False
             self._response_active = True
         elif etype == "response.done":
             await self._on_response_done(event)
@@ -1689,6 +1726,11 @@ class RealtimeBridge:
                 if response_active:
                     self._response_active = True
                     self._pending_nudge_count = max(self._pending_nudge_count, 1)
+                    if self._goodbye_requested and not self._closing_sent:
+                        # Our goodbye nudge collided with a server response
+                        # that was already running (created before the
+                        # goodbye went in): the goodbye is still owed.
+                        self._goodbye_nudge_pending = True
                 return
             detail = error.get("message", "") if isinstance(error, dict) else str(error)
             logger.warning("realtime upstream error: %s", detail)
@@ -1762,6 +1804,13 @@ class RealtimeBridge:
                 await self._handle_my_day(item, arguments)
 
         if self._goodbye_requested and not self._closing_sent:
+            if self._goodbye_nudge_pending:
+                # The response that just ended was the server's own reply
+                # to his closer (the VAD had it running before the goodbye
+                # went in); the goodbye is still to be spoken — nudge it now
+                # and hang up on ITS done, never on this one.
+                await self._try_nudge()
+                return
             # The goodbye just finished streaming; hand the browser the
             # hang-up so the audio tail plays out before the line drops.
             self._closing_sent = True
@@ -1874,6 +1923,10 @@ class RealtimeBridge:
         self._escalation_at = now
         instruction = _SESSION_END_INSTRUCTION if kind == "hard" else _SOFT_CLOSE_INSTRUCTION
         await self._send_system_item(instruction.format(patient_name=self._patient_name()))
+        # Under the real VAD order the server's auto-reply to his closer is
+        # already running: the nudge defers, and `closing` must wait for
+        # the goodbye's own done (see _on_response_done).
+        self._goodbye_nudge_pending = True
         await self._request_nudge()
         await self._journal(
             "session_end",

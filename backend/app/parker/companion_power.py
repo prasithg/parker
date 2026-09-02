@@ -60,6 +60,14 @@ class CompanionPower:
     generation: int = 0
     owner_token: Optional[str] = None
     owner_client: str = ""
+    # True from a release() until the next claim(): "off in this process".
+    # The route persists the durable flag AFTER revoking the lines, so a
+    # revoked page that reads the settings inside that write window must
+    # see OFF — not the still-ON durable flag plus "no owner", which is
+    # exactly the engine-restart shape it re-claims on (negative-space
+    # review, 2026-09-02). A fresh process starts False, so the restart
+    # re-claim keeps working.
+    released: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _next_id: int = 1
     _sockets: dict[int, _Registration] = field(default_factory=dict, repr=False)
@@ -109,6 +117,7 @@ class CompanionPower:
             self.owner_token = secrets.token_urlsafe(24)
             self.owner_client = client_id
             self.on = True
+            self.released = False
             gen = self.generation
             token = self.owner_token
         return {
@@ -132,6 +141,7 @@ class CompanionPower:
 
         with self._lock:
             self.on = False
+            self.released = True
             self.generation += 1
             self.owner_token = None
             self.owner_client = ""
@@ -212,6 +222,7 @@ class CompanionPower:
         with self._lock:
             return {
                 "power_on": self.on,
+                "released": self.released,
                 "gen": self.generation,
                 "owner_client": self.owner_client,
                 "live": {

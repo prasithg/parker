@@ -2061,3 +2061,54 @@ def test_my_day_store_failure_is_honest_never_nothing_on_record(db, realtime_ena
     item = next(i for i in _system_items(fake) if "could not read his notes" in i)
     assert "Never say nothing is on record" in item
     assert "nothing written down" not in item
+
+
+def test_a_vad_reply_created_after_the_tail_satisfies_its_nudge(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    """He is still talking as the line opens (the common same-breath case):
+    the final tail lands while the server VAD has him speaking, so the
+    nudge is deferred — and the VAD's own reply, created AFTER the user
+    item, already answers it. That reply's done must not fire a second
+    reply for one wake (fresh review, 2026-09-02). The inverse — no VAD
+    reply — is pinned by test_a_pending_hello_waits_for_the_final_tail."""
+
+    monkeypatch.setattr(realtime, "TAIL_WAIT_SECONDS", 30.0)
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        ws.send_json({"type": "hello", "tail": "can you", "pending": True})
+        assert _wait_until(lambda: any("his own message" in t for t in _system_items(fake)))
+        fake.feed({"type": "input_audio_buffer.speech_started"})
+        assert ws.receive_json() == {"type": "clear"}
+        ws.send_json({"type": "tail", "text": "can you help me with the tv"})
+        assert _wait_until(lambda: _user_items(fake) == ["can you help me with the tv"])
+        assert _response_creates(fake) == 0  # deferred: he is speaking
+        fake.feed({"type": "input_audio_buffer.speech_stopped"})
+        fake.feed({"type": "response.created"})  # the VAD answers him — after the user item
+        fake.feed({"type": "response.output_audio_transcript.delta", "delta": "Sure, the TV."})
+        assert ws.receive_json() == {"type": "assistant_transcript_delta", "text": "Sure, the TV."}
+        fake.feed({"type": "response.done", "response": {"output": []}})
+        # A later injection still nudges at that response's done as usual.
+        fake.feed(_look_done_event("what's on tonight?"))
+        assert _wait_until(lambda: any(e["type"] == "conversation.item.create" and e["item"].get("type") == "function_call_output" for e in fake.sent))
+        ws.send_json({"type": "end"})
+    creates = _response_creates(fake)
+    assert creates == 1, f"one wake, one VAD reply, then exactly the lookup's nudge — got {creates}"
+    assert _user_items(fake) == ["can you help me with the tv"]
+
+
+def test_a_tail_frame_without_a_wake_handoff_is_ignored(db, realtime_enabled, brainless, upstream):
+    """The handoff delivers his words exactly once and only when a wake
+    hello opened it: a stray `tail` on the plain-greeting path mints no
+    user item (fresh review, 2026-09-02)."""
+
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        ws.send_json({"type": "hello", "tail": ""})
+        assert _wait_until(lambda: any("line just opened" in t for t in _system_items(fake)))
+        ws.send_json({"type": "tail", "text": "injected after the greeting"})
+        ws.send_json({"type": "audio", "data": base64.b64encode(b"\x00\x00").decode()})
+        assert _wait_until(lambda: any(e["type"] == "input_audio_buffer.append" for e in fake.sent))
+        ws.send_json({"type": "end"})
+    assert _user_items(fake) == []
+    assert _response_creates(fake) == 1

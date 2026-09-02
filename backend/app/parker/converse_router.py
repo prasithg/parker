@@ -106,6 +106,11 @@ def companion_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
 
     settings = get_companion_settings(db)
     live = authority.snapshot()
+    if live["released"]:
+        # Off in this process: the durable flag may still be landing (the
+        # route revokes first, then writes). A revoked page must read OFF
+        # here, never "on with no owner" — the restart shape it re-claims on.
+        settings["power_on"] = False
     settings["gen"] = live["gen"]
     settings["owner_client"] = live["owner_client"]
     settings["live"] = live["live"]
@@ -162,7 +167,10 @@ async def companion_power(
         for close in granted.pop("displaced"):
             await _revoke(close, "superseded")
         return granted
-    released = authority.release()  # memory only: nothing to await, nothing to wait on
+    # Memory only — but claim() persists under the same lock from a
+    # threadpool thread, so an off that lands mid-claim must wait for that
+    # write off the event loop, never on it (fresh review, 2026-09-02).
+    released = await run_in_threadpool(authority.release)
     for close in released.pop("revoked"):
         await _revoke(close, "power_off")
     # Off is off; now the durable record (F1 probe 3b: written under the
@@ -281,7 +289,11 @@ async def converse_wake(websocket: WebSocket) -> None:
     if refusal is not None:
         await _refuse(websocket, refusal)
         return
-    transcriber = converse_store.transcriber()
+    # The warm-up loads the model (and, with weights missing, may try the
+    # hub) — never on the event loop, where it would stall every other
+    # socket and the power switch (fresh review, 2026-09-02). The store
+    # serialises the load under its own lock.
+    transcriber = await run_in_threadpool(converse_store.transcriber)
     if transcriber is None:
         await websocket.send_json(
             {
@@ -458,14 +470,26 @@ async def converse_realtime(websocket: WebSocket) -> None:
         )
         await websocket.close()
         return
-    sid, superseded = authority.register(
-        token=owner, kind="realtime", close=_closer(websocket)
-    )
+    # The closer tells the BRIDGE first: off must revoke the line the
+    # instant power moves (no more mic frames upstream, the upstream close
+    # begins now), not when the page's next frame or disconnect happens to
+    # reach the pump (fresh review, 2026-09-02).
+    holder: dict[str, Any] = {}
+    close_socket = _closer(websocket)
+
+    async def close(reason: str) -> None:
+        bridge = holder.get("bridge")
+        if bridge is not None:
+            bridge.revoke()
+        await close_socket(reason)
+
+    sid, superseded = authority.register(token=owner, kind="realtime", close=close)
     if sid is None:
         realtime_lane.release_bridge_slot()
         await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
         return
     bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
+    holder["bridge"] = bridge
     try:
         for close in superseded:
             # One owner, one line: the page's own reconnect replaces its

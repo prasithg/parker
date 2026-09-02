@@ -486,7 +486,7 @@ def test_power_off_revokes_the_line_before_the_durable_write(voice_world, monkey
             assert ws.receive_json() == {"type": "revoked", "reason": "power_off"}
             revoked_at = time.monotonic()
             assert "end" not in persist, "the line was revoked only after the durable write"
-            assert revoked_at - post_start < 0.3
+            assert revoked_at - post_start < 0.45  # well inside the 0.5 s write; the ordering asserts carry the pin
             with pytest.raises(WebSocketDisconnect):
                 ws.receive_json()  # hung up on, still inside the write
             assert "end" not in persist
@@ -500,4 +500,68 @@ def test_power_off_revokes_the_line_before_the_durable_write(voice_world, monkey
         assert response == {"power_on": False, "saved": True}
         assert persist["end"] > revoked_at
         assert _audio_appends(fake) == ["QUJD"]  # only what he said before the flip
+    assert _wait_until(lambda: fake.closed)
+
+
+def test_a_revoked_screen_reads_off_while_the_durable_write_is_still_landing(voice_world, monkeypatch):
+    """Negative-space review (2026-09-02): the route now revokes BEFORE it
+    persists, and the revoked page's engine-restart check reads the
+    settings inside that window. It used to see the still-ON durable flag
+    with no owner — exactly the restart shape it re-claims on — and turned
+    Parker back ON from the screen that had just been turned off. The
+    settings must read OFF for as long as this process has released power;
+    a fresh authority (an engine restart) still shows the durable flag so
+    the restart re-claim keeps working."""
+
+    import threading
+    import time
+
+    from scenario_harness import _wait_until
+
+    from app.parker.companion_power import CompanionPower
+
+    world = voice_world
+    world.disable_brain()
+    fake = world.script([])
+    persist: dict = {}
+    real_set = converse_router.set_companion_settings
+
+    def slow_set(db, **fields):
+        persist["start"] = time.monotonic()
+        time.sleep(0.5)
+        try:
+            return real_set(db, **fields)
+        finally:
+            persist["end"] = time.monotonic()
+
+    monkeypatch.setattr(converse_router, "set_companion_settings", slow_set)
+    seen_by_page: dict = {}
+
+    def flip_off() -> None:
+        client.post("/parker/converse/companion/power", json={"on": False, "client_id": "sarah-phone"})
+
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        poster = threading.Thread(target=flip_off, daemon=True)
+        poster.start()
+        try:
+            assert ws.receive_json() == {"type": "revoked", "reason": "power_off"}
+            assert "end" not in persist, "the revoke must land before the durable write"
+            # What the revoked page asks next, inside the write window.
+            seen_by_page.update(client.get("/parker/converse/companion/settings").json())
+            assert "end" not in persist
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+        finally:
+            poster.join(5.0)
+    assert seen_by_page["power_on"] is False, seen_by_page  # never "on with no owner"
+    assert seen_by_page["owner_client"] == ""
+    # After the write, off is durable too.
+    assert client.get("/parker/converse/companion/settings").json()["power_on"] is False
+    # An engine restart: a fresh authority has released nothing, so the
+    # durable flag (whatever it says) is what the page reads — the restart
+    # re-claim path is untouched.
+    world.mp.setattr(converse_router, "authority", CompanionPower())
+    converse_router.set_companion_settings(world.db, power_on=True)
+    assert client.get("/parker/converse/companion/settings").json()["power_on"] is True
     assert _wait_until(lambda: fake.closed)

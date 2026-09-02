@@ -426,3 +426,50 @@ def test_a_question_ending_in_go_to_sleep_never_hangs_up(voice_world):
         ws.send_json({"type": "end"})
     assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
     assert _end_events(world) == []
+
+
+# ---------------------------------------------------------------------------
+# S11 — the real VAD order: the server's auto-reply to his closer is already
+# running when the transcript lands; `closing` must ride the GOODBYE's done
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "closer, marker",
+    [("OK, thanks.", "sounds finished"), ("That's all, Parker.", "said he is done")],
+)
+def test_the_goodbye_is_spoken_even_when_the_vad_already_answered_his_closer(voice_world, closer, marker):
+    """Fresh review (2026-09-02): with create_response=true the server
+    starts a reply to his closer BEFORE the transcript arrives; the goodbye
+    nudge deferred behind it, and `closing` rode that auto-reply's done —
+    the goodbye was never spoken and the line dropped mid-thought."""
+
+    world = voice_world
+    world.disable_brain()
+    fake = world.script([])
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        _answer(world, ws, fake, "what's the weather like",
+                "It is warm and sunny this afternoon, around twenty-six degrees.")
+        creates_before = _response_creates(fake)
+        fake.feed({"type": "response.created"})  # the VAD's reply to what he just said
+        fake.feed(user_said(closer))
+        assert ws.receive_json() == {"type": "user_transcript", "text": closer}
+        assert _wait_until(lambda: any(marker in i for i in _system_items(fake)))
+        assert _response_creates(fake) == creates_before  # deferred behind the active reply
+        # The auto-reply finishes: NOT the hang-up — the goodbye gets nudged now.
+        fake.feed(model_said("You're welcome! Anything else you need tonight?"))
+        assert ws.receive_json() == {
+            "type": "assistant_transcript_delta", "text": "You're welcome! Anything else you need tonight?"
+        }
+        fake.feed(done())
+        assert _wait_until(lambda: _response_creates(fake) == creates_before + 1), "the goodbye was never nudged"
+        # Then the goodbye itself streams and ITS done hands the page the drain.
+        fake.feed({"type": "response.created"})
+        fake.feed(model_said("Goodbye for now — say Hey Parker any time."))
+        frames = [ws.receive_json()]
+        assert frames[0]["type"] == "assistant_transcript_delta", frames
+        fake.feed(done())
+        assert _drain_until_closing(ws)
+    assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
+    assert len(_end_events(world)) == 1
