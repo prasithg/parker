@@ -155,14 +155,15 @@ _ENDER_LEAD_WORDS = frozenset(
     "i think parker and so um uh".split()
 )
 # What may come AFTER an ender ("that's all, thanks Parker", "I'm done now").
-_ENDER_TRAILERS = (
+# Longest first, so "for now" is stripped as a whole, never as "now".
+_ENDER_TRAILERS = tuple(sorted((
     "thanks parker", "thank you parker", "thanks", "thank you", "parker", "now",
     "for now", "for today", "for tonight", "please",
-)
+), key=len, reverse=True))
 _GRATITUDE_RE = __import__("re").compile(
     r"^(?:(?:ok|okay|alright|all right|great|perfect|good|wonderful|lovely|fine|"
     r"right|no) ?)*(?:that's helpful|that helps|thanks|thank you)"
-    r"(?: (?:so much|very much|a lot|a bunch|again))?(?: parker)?$"
+    r"(?: (?:so much|very much|a lot|a bunch|again))?(?: (?:thanks|thank you))?(?: parker)?$"
 )
 
 
@@ -188,15 +189,21 @@ def spoken_session_end(transcript: str) -> Optional[str]:
         return None
     if _GRATITUDE_RE.match(normalized):
         return "gratitude"
+    # Every way of peeling up to two trailers off the end ("that's it,
+    # thanks Parker" must still find "that's it thanks" as well as "that's it").
     candidates = [normalized]
-    core = normalized
-    for _ in range(2):  # at most two trailers ("… now, thanks")
-        for trailer in _ENDER_TRAILERS:
-            if core.endswith(" " + trailer):
-                core = core[: -len(trailer) - 1].strip()
-                candidates.append(core)
-                break
-    for core in candidates:  # the full utterance first ("bye parker"), then without trailers
+    frontier = [normalized]
+    for _ in range(2):
+        peeled = []
+        for text in frontier:
+            for trailer in _ENDER_TRAILERS:
+                if text.endswith(" " + trailer):
+                    shorter = text[: -len(trailer) - 1].strip()
+                    if shorter and shorter not in candidates:
+                        candidates.append(shorter)
+                        peeled.append(shorter)
+        frontier = peeled
+    for core in candidates:  # the full utterance first ("bye parker"), then peeled forms
         for phrase in _HARD_ENDERS:
             if core == phrase:
                 return "hard"
