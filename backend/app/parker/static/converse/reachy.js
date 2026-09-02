@@ -67,6 +67,10 @@ const POSE = {
   antennaL: -0.16, antennaR: 0.16,   // resting splay (z-rotation)
   breathRate: 0.26, breathAmp: 0.014,
   voice: 0,
+  // Scene-level light: 1 = the room lit for company; asleep states dim
+  // the whole room, not just the eyes, so powered-on-resting can never be
+  // mistaken for engaged listening at a glance (Pras, session 3).
+  sceneLight: 1,
   blinks: true, saccades: false, gazeCamera: false,
 };
 
@@ -77,6 +81,7 @@ function resetPose() {
   POSE.antennaL = -0.16; POSE.antennaR = 0.16;
   POSE.breathRate = 0.26; POSE.breathAmp = 0.014;
   POSE.voice = 0;
+  POSE.sceneLight = 1;
   POSE.blinks = true; POSE.saccades = false; POSE.gazeCamera = false;
 }
 
@@ -90,6 +95,7 @@ function poseFor(state) {
       POSE.headPitch = 0.3; POSE.headDrop = 1; POSE.eyeOpen = 0.04; POSE.eyeGlow = 0.04;
       POSE.antennaL = -1.0; POSE.antennaR = 1.0;
       POSE.breathAmp = 0; POSE.blinks = false;
+      POSE.sceneLight = 0.28;
       break;
     case 'dormant':   // powered but resting: same sunken sleep — with the
       // faintest eye ember as the honest "wake listening is armed" cue,
@@ -97,6 +103,7 @@ function poseFor(state) {
       POSE.headPitch = 0.3; POSE.headDrop = 1; POSE.eyeOpen = 0.06; POSE.eyeGlow = 0.14;
       POSE.antennaL = -1.0; POSE.antennaR = 1.0;
       POSE.breathRate = 0.1; POSE.breathAmp = 0.005; POSE.blinks = false;
+      POSE.sceneLight = 0.36; // the room dims with him; wake brings the light back
       break;
     case 'idle':      // present, softly alive, gaze wandering the room
       POSE.headPitch = 0.08; POSE.eyeOpen = 0.66; POSE.eyeGlow = 0.35;
@@ -447,11 +454,12 @@ function buildRobot(groundTexture) {
 // Scene lifecycle
 // ---------------------------------------------------------------------------
 
-const SPRING_KEYS = ['headYaw', 'headPitch', 'headRoll', 'headDrop', 'eyeOpen', 'eyeGlow', 'antennaL', 'antennaR', 'voice', 'gazeX', 'gazeY'];
+const SPRING_KEYS = ['headYaw', 'headPitch', 'headRoll', 'headDrop', 'eyeOpen', 'eyeGlow', 'antennaL', 'antennaR', 'voice', 'gazeX', 'gazeY', 'sceneLight'];
 const SPRING_OMEGA = {
   headYaw: 5.5, headPitch: 5.5, headRoll: 5.5, headDrop: 3.2,
   eyeOpen: 12, eyeGlow: 8, antennaL: 8, antennaR: 8,
   voice: 20, gazeX: 22, gazeY: 22, // saccades snap, they don't drift
+  sceneLight: 3.5, // the room brightens with the wake pop, dims gently to rest
 };
 // Anticipation: a brief counter-impulse before the head commits to a new
 // pose (the classic animation beat). Applied to head springs on phase change.
@@ -484,13 +492,19 @@ export function createReachyScene(container, controller, options) {
 
   // Dark-living-room lighting: dim cool ambience, one warm lamp key, one
   // cool rim so the white shell separates from the dark at 3 meters.
-  scene.add(new THREE.HemisphereLight(0x51719e, 0x1a1512, 0.85));
+  const hemi = new THREE.HemisphereLight(0x51719e, 0x1a1512, 0.85);
+  scene.add(hemi);
   const key = new THREE.DirectionalLight(0xfff1de, 1.9);
   key.position.set(2.2, 2.8, 2.2);
   scene.add(key);
   const rim = new THREE.DirectionalLight(0x6fb0ff, 1.1);
   rim.position.set(-2.6, 1.6, -2.2);
   scene.add(rim);
+  const LIGHTS = [[hemi, 0.85], [key, 1.9], [rim, 1.1]];
+  function applyLights(level) {
+    const l = Math.max(0.15, Math.min(1, level));
+    for (let i = 0; i < LIGHTS.length; i++) LIGHTS[i][0].intensity = LIGHTS[i][1] * l;
+  }
 
   const envTarget = buildEnvironment(renderer);
   scene.environment = envTarget.texture;
@@ -550,6 +564,7 @@ export function createReachyScene(container, controller, options) {
 
   // ---- Apply the DOF state to the scene graph ----
   function applyToScene(pose) {
+    applyLights(dof.sceneLight);
     // Head: springs + talking micro-nod that rides the REAL voice envelope.
     const nod = -voiceEnv * 0.05;
     parts.head.rotation.set(dof.headPitch + nod, dof.headYaw, dof.headRoll);
@@ -681,6 +696,7 @@ export function createReachyScene(container, controller, options) {
     springStep('antennaL', pose.antennaL, dt);
     springStep('antennaR', pose.antennaR, dt);
     springStep('voice', pose.voice, dt);
+    springStep('sceneLight', pose.sceneLight, dt);
     springStep('gazeX', gx, dt);
     springStep('gazeY', gy, dt);
 
@@ -775,6 +791,8 @@ export function createReachyScene(container, controller, options) {
         dof: Object.assign({}, dof),
         eyeColor: '#' + eyeColor.getHexString(),
         workGlow: parts.antR.tip.material.emissiveIntensity,
+        sceneLight: dof.sceneLight,
+        lightIntensity: { hemi: hemi.intensity, key: key.intensity, rim: rim.intensity },
         headRotation: {
           x: parts.head.rotation.x, y: parts.head.rotation.y, z: parts.head.rotation.z,
         },

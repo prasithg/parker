@@ -1020,6 +1020,15 @@ def test_companion_cards_are_accessible_live_regions(db):
     assert "if (!ccOn || !items || !items.length) return;" in html
 
 
+def test_companion_dormant_reads_as_resting_not_on(db):
+    """Powered-on-resting and engaged-listening must never be confusable
+    (Pras, session 3): the switch label names rest and the wake phrase."""
+
+    html = client.get("/parker/converse").text
+    assert "'Resting — say “Hey Parker”'" in html
+    assert "state === 'on' ? 'Parker is on'" in html
+
+
 def test_companion_reports_its_scene_outcome_as_a_receipt(db):
     """The packaged WKWebView gate is judged from the engine's own
     receipts: the page reports webgl_ready or webgl_fallback once."""
