@@ -17,6 +17,7 @@ from app.meds.verification_router import router as dose_verification_router
 from app.parker.router import router as parker_router
 from app.parker.research_handoff import run_research_handoff_retention
 from app.parker.setup_api import router as setup_router
+from app.version import build_identity
 
 
 @asynccontextmanager
@@ -67,4 +68,12 @@ app.include_router(setup_router, prefix="/setup", tags=["setup"])
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "patient": settings.patient_name}
+    # The shell and doctor only read `status`; `version`/`git_sha` let a
+    # packaged probe tie a running engine to its source (app/version.py).
+    identity = build_identity()
+    return {
+        "status": "ok",
+        "patient": settings.patient_name,
+        "version": identity["version"],
+        "git_sha": identity["git_sha"],
+    }

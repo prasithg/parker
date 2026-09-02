@@ -23,3 +23,5 @@ backend/*.egg-info/
 # PyInstaller sidecar build artifacts (the .spec IS committed).
 backend/build/
 backend/dist/
+# Build identity stamped by `make sidecar` (app/version.py write_build_info).
+backend/app/_build_info.py
