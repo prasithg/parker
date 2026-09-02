@@ -14,7 +14,7 @@
   "over_tv": {
     "rows": [
       {
-        "heard": "Hey parko",
+        "heard": "Hey Parker. Hey Parker.",
         "snr_db": 12.0,
         "text": "hey parker",
         "transcripts": [
@@ -22,8 +22,7 @@
           "Good evening, the parking garage.",
           "Good evening, the parking garage down here-",
           "the parking garage down here",
-          "Hey parko",
-          "repairs on money."
+          "Hey Parker. Hey Parker."
         ],
         "voice": "Samantha",
         "woke": true
@@ -37,7 +36,6 @@
           "Good evening, the parking garage.",
           "Good evening, the parking garage down top.",
           "the parking garage down there",
-          "Don't ever close for-",
           "The rush down to the close for repairs on Monday."
         ],
         "voice": "Daniel",
@@ -53,7 +51,7 @@
           "Good evening, the parking garage down here.",
           "The parking garage down here. Hey, parko.",
           "You have someone.",
-          "You have someone."
+          "You help me on day, and draw."
         ],
         "voice": "Samantha",
         "woke": true
@@ -67,8 +65,8 @@
           "Good evening, the parking garage.",
           "Good evening, the parking garage down top.",
           "The parking garage down down here goes for-",
-          "Don't let me close for now",
-          "Hey, Parker. Can you help me?"
+          "Hey, Parker. Can you help me?",
+          "and draw"
         ],
         "voice": "Daniel",
         "woke": true
@@ -96,7 +94,6 @@
           "Good evening, the parking garage.",
           "Good evening, the parking garage down top.",
           "the parking garage down there",
-          "Don't ever close for-",
           "The rush down to the close for repairs on Monday."
         ],
         "voice": "Daniel",
@@ -112,7 +109,7 @@
           "Good evening, the parking garage down here.",
           "The parking garage down here. Hey, Parker.",
           "You have someone.",
-          "You have someone."
+          "You held me on day, and drunk."
         ],
         "voice": "Samantha",
         "woke": true
@@ -126,8 +123,8 @@
           "Good evening, the parking garage.",
           "Good evening, the parking garage down top.",
           "The parking garage down down here goes for-",
-          "Don't let me close for now",
-          "Hey, Parker. Can you help me?"
+          "Hey, Parker. Can you help me?",
+          "and draw"
         ],
         "voice": "Daniel",
         "woke": true
@@ -170,7 +167,7 @@
           "Good evening, the parking garage downtown",
           "The parking garage down to our close friend.",
           "The rush down town will close for repairs on Monday.",
-          "and you have some money."
+          "Marcos for repairs on Monday and dry."
         ],
         "voice": "Samantha",
         "woke": false
@@ -266,7 +263,9 @@
     "audio_minutes": 0.0,
     "burst_inferences": 0,
     "config": {
-      "burst_window": true,
+      "burst_ratio": 1.25,
+      "burst_seconds": 1.3,
+      "burst_window": false,
       "hop": 0.7,
       "model": "base",
       "relative_gate": 0.0,

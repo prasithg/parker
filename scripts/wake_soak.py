@@ -39,7 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from app.parker.wake import WAKE_SAMPLE_RATE, WakeDetector  # noqa: E402
+from app.parker.wake import BURST_RATIO, BURST_SECONDS, WAKE_SAMPLE_RATE, WakeDetector  # noqa: E402
 from app.voice.transcribe import load_local_transcriber  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
@@ -149,8 +149,8 @@ def stream(detector: WakeDetector, pcm: bytes, timings: list[float] | None = Non
 
 def mix_over(voice: bytes, background: bytes, snr_db: float) -> bytes:
     """The voice on top of TV audio, scaled so voice RMS / TV RMS = snr_db.
-    2 s of TV lead-in (so the adaptive gate has a background), then the
-    mix, then 1 s of TV tail."""
+    2 s of TV lead-in (so a room level exists), then the mix, then 1.6 s of
+    TV tail (two hops, so the detector's final window holds the phrase)."""
 
     import audioop
 
@@ -218,7 +218,8 @@ def main() -> int:
         "false_wakes": false_wakes,
         "hops_gated_by_background": detector.gated_by_background,
         "burst_inferences": detector.burst_inferences,
-        "config": {"model": args.model, "threads": args.threads, "hop": args.hop, "relative_gate": args.relative_gate, "burst_window": args.burst_window},
+        "config": {"model": args.model, "threads": args.threads, "hop": args.hop, "relative_gate": args.relative_gate,
+                   "burst_window": args.burst_window, "burst_seconds": BURST_SECONDS, "burst_ratio": BURST_RATIO},
     }
     print(
         f"soak: {audio_minutes:.1f} min audio, {detector.inferences} inferences, "

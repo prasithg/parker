@@ -240,16 +240,12 @@ class WakeDetector:
             logger.warning("wake inference failed", exc_info=True)
             return None
         heard = " ".join(line.strip() for line in lines if line and line.strip())
-        result = {
+        return {
             "heard": heard[:200],
             "rms": rms,
             "infer_ms": int((self._clock() - started) * 1000),
+            "_started": started,
         }
-        if self._burst_window and wake_match(heard) is None:
-            burst = self._burst_transcript(window, rms)
-            if burst:
-                result["burst"] = burst
-        return result
 
     def _burst_transcript(self, window: bytes, rms: int) -> str:
         """Transcribe just the recent loud part when it rises above the
@@ -294,12 +290,17 @@ class WakeDetector:
         result = self.hear(pcm16)
         if result is None:
             return None
+        started = result.pop("_started")
         match = wake_match(result["heard"])
-        if match is None and result.get("burst"):
-            match = wake_match(result["burst"])
-            if match is not None:
-                result["heard"] = result["burst"]
-        result.pop("burst", None)
+        if match is None and self._burst_window:
+            # Only the wake lane takes the second look (the post-wake tail
+            # lane calls hear() directly and never matches).
+            burst = self._burst_transcript(bytes(self._window), result["rms"])
+            if burst:
+                match = wake_match(burst)
+                if match is not None:
+                    result["heard"] = burst[:200]
+            result["infer_ms"] = int((self._clock() - started) * 1000)  # both looks
         if match is None:
             return None
         self._window.clear()  # one utterance, one wake

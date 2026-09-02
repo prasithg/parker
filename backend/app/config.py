@@ -185,13 +185,12 @@ class Settings(BaseSettings):
     # review 2026-09-02 found the first cut gated a wake after his own
     # speech).
     parker_wake_relative_gate: float = 0.0
-    # Opt-in second look at just the loud burst when a hop rises above the
-    # rest of its window: over TV speech the 2.4 s window reads as TV and a
-    # short "hey Parker" is lost; the burst alone reads as him more often.
-    # Measured (scripts/wake_soak.py, 2026-09-02): bare "hey parker" over TV
-    # at +6/+12 dB 0/4 -> 2/4 (the full sentence 4/4 either way; equal
-    # loudness still 0/8), about +12% CPU during TV, no extra false wakes. A
-    # partial gain, not the answer (that is a dedicated wake model).
+    # EXPERIMENT (negative result, kept for the record): a second look at
+    # just the loud burst when a hop rises above the rest of its window.
+    # Against a same-harness baseline it showed no measurable gain over TV
+    # speech (bare "hey parker" at +6/+12 dB: 2/4 either way; equal
+    # loudness 0/8) for about +12% CPU. Off; not the answer (that is a
+    # dedicated wake model). scripts/wake_soak.py --burst-window measures it.
     parker_wake_burst_window: bool = False
     # faster-whisper CPU threads for the shared local model (0 = library
     # default, every core). A cap trades a little latency for headroom.

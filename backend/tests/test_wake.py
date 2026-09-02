@@ -302,6 +302,31 @@ def test_the_burst_window_takes_a_second_look_only_on_a_rise():
     assert any(c <= 1.4 for c in calls), calls  # the burst alone was transcribed
 
 
+def test_the_burst_window_never_runs_in_the_tail_lane():
+    """After a wake the route keeps calling hear() for the request tail;
+    the second look belongs to feed() only (fresh review of PR #47)."""
+
+    calls: list[float] = []
+
+    def transcriber(path):
+        import wave
+
+        with wave.open(str(path), "rb") as handle:
+            calls.append(round(handle.getnframes() / WAKE_SAMPLE_RATE, 1))
+        return ["hey parker"] if len(calls) == 1 else ["can you help me"]
+
+    detector = WakeDetector(transcriber, burst_window=True)
+    hit = detector.feed(_tone(0.8, amplitude=6000))
+    assert hit is not None and "burst" not in hit and "_started" not in hit
+    # The tail lane: a breath, then the request — rises included.
+    detector.hear(_tone(0.8, amplitude=800))
+    heard = detector.hear(_tone(0.8, amplitude=9000))
+    assert heard and set(heard) == {"heard", "rms", "infer_ms", "_started"}
+    assert detector.burst_inferences == 0
+    # One transcription per hop, each the (re-growing) full window — never a 1.3 s clip.
+    assert calls == [0.8, 0.8, 1.6], calls
+
+
 def test_the_burst_window_is_off_by_default():
     from app.config import settings
 
