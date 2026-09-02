@@ -93,7 +93,7 @@ This is especially risky in the intended recliner/TV environment. The energy gat
 Required fix/evidence:
 
 - remove broad tokens such as `a` from greeting acceptance;
-- replace unconstrained edit-distance matching with a small evidence-backed confusion set;
+- keep generous Parker-like acceptance for Parkinsonian speech (chairman override, 2026-09-01 evening: optimize for Dad's wake recall — see the session-3 plan's "Chairman decisions"); do not shrink to a purist confusion set;
 - add the false-wake phrases above and TV-like transcripts as negative fixtures;
 - measure inference count, CPU/latency, wake recall, and false wakes during a real ambient-TV soak;
 - **fail closed when local ASR is unavailable**: the current `unavailable -> startActive('fallback')` path silently opens continuous cloud audio and violates dormant privacy; require an explicit user decision instead;

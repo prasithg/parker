@@ -156,4 +156,52 @@ The original proposed slice order is superseded by the review order below:
 
 Do **not** implement session-ending, My Day, voice-default, or another expressiveness pass in this foundation session. Those become later slices after the gates above pass; the full ordering is in the independent review.
 
-A separate fast current-web spike is planned in [2026-09-01-fast-current-web-search-spike.md](2026-09-01-fast-current-web-search-spike.md). It benchmarks Parallel Turbo against Exa Instant and the existing Claude worker, and changes the realtime turn to route silently before any current-fact audio. Keep that out of the foundation session.
+A separate fast current-web spike is planned in [2026-09-01-fast-current-web-search-spike.md](2026-09-01-fast-current-web-search-spike.md). It benchmarks Parallel Turbo against Exa Instant and the existing Claude worker, and changes the realtime turn to route silently before any current-fact audio.
+
+## Chairman decisions after the review (2026-09-01 evening)
+
+Pras read the independent review and overrode two points. This section supersedes the "foundation closure only" order above and the review's wake wording.
+
+### Wake: calibrate for Dad, do not tighten
+
+This is a Parkinson's user. Words that sound like Parker after a greeting must wake him: `hey parka`, `hey par... ker`, a slurred or trailing second syllable, long pauses between words. While powered-on and dormant, a missed wake is worse than an occasional extra wake — the mic is already held locally, nothing streams to the cloud, and the worst case is Parker perking up and hearing nothing.
+
+Keep:
+
+- the greeting gate (a bare "parker" from the TV must not wake);
+- privacy fail-closed: missing local wake ASR never opens continuous cloud audio;
+- the request tail after the wake phrase (`Hey Parker, can you help me` keeps `can you help me`).
+
+Remove only accidental tokens such as bare `a` as a greeting. Do not shrink the Parker-like set to a purist confusion list. Evidence: an ambient-TV false-wake/CPU soak plus a recall matrix of effortful positives, then calibration against Dad's real voice in the room.
+
+### Run long and compound; install the gate loop instead of shrinking scope
+
+The problem with the prior all-night session was not endurance; it was that nothing external forced a stop when work was declared done but was not (the concurrency bug reported green locally, then failed real CI). The fix is one long autonomous session with a real gate between slices, not a short session.
+
+Per-slice gate — all three required before the next slice starts:
+
+1. full backend suite with spawned-thread exceptions failing the run; concurrency-sensitive tests repeated at least 5x;
+2. push; the real GitHub CI check on the PR passes;
+3. a fresh-context Fable review (`/parker-review` in a new context) of that exact diff returns PASS; NEEDS_FIX findings become the next task before moving on.
+
+Never rerun CI to obtain green. Fix the root cause.
+
+Merge policy (Pras, 2026-09-01): slices that pass all three gates may merge to main without waiting for Hermes, **except** anything touching power, wake, safety/guard, confirmation, or action execution — those stay on the branch for Hermes/human review. Interpretation for the current stack: PR #37 and PR #40 contain power/wake/safety code and stay unmerged; new independent slices (CI/test fixes, docs, accessibility semantics, search date grounding, legibility labels) should land as their own PRs from main where they do not depend on the stack.
+
+Stop only at genuine human/device gates: real microphone in the room, TV-room false-wake soak with Dad's voice, packaged WKWebView, voice audition. Everything before those runs unattended.
+
+### Overnight backlog (dependency order)
+
+1. Deterministic CI: fix the shared-SQLite concurrent-session race; thread errors fail tests; repeated strict passes.
+2. Power: server-authoritative, single-owner, persistence-acknowledged, fail-closed across tabs/restarts; bounded reconnect.
+3. Wake calibration as above, including fail-closed on missing ASR and same-breath request preservation; ambient-TV soak evidence.
+4. Packaged Tauri opens the companion; real WKWebView power/wake/WebGL lifecycle evidence (device gate — checkpoint and continue past it if it cannot be verified headlessly).
+5. Accessible live semantics for action/error cards; search/source truth aligned for CC-off and CC-on.
+6. Spoken session end → wind-down → dormant, per the review's hard-ender/soft-closer design; mid-conversation thanks never hangs up; barge-in during goodbye resumes listening.
+7. Dormant-vs-engaged legibility (label + scene dimming); search worker date grounding.
+8. Local reminders/my-day worker with honest limits.
+9. Voice: audition note for Pras only; no default change without his selection.
+10. Reachy expressiveness pass from `docs/references/2026-09-01-reachy-mini-motion-reference.md`.
+11. Fast current-web spike per `2026-09-01-fast-current-web-search-spike.md`: silent route-then-answer turn and the Parallel Turbo vs Exa Instant vs Claude benchmark on Pras's US Open questions. Deliver the benchmark; no default provider switch without Pras seeing results.
+
+Write a checkpoint handoff after each slice (exact revision, gate evidence, merged PRs, deviations, untested scope) so a context reset or morning review can resume without re-deriving.
