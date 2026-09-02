@@ -769,6 +769,11 @@ async function powerOn(options) {
   startingLive = false;
   if (myGen !== powerGen) { if (granted && !live.ws && !wake.ws) releaseAudio(); return; }
   if (!granted) {
+    // Nothing is held (no mic, no sockets): give the claim back so the
+    // engine and the persisted switch agree with what he sees — off, with
+    // 'Try again' — and activating the switch retries instead of releasing.
+    power.token = null;
+    releasePower(0);
     presence('error');
     setPowerVisual('error');
     showCard('error',
@@ -785,6 +790,7 @@ async function powerOn(options) {
     showCard('notice', 'Turn the switch to wake Parker.', 0);
     return;
   }
+  wake.retried = false; // a fresh activation earns a fresh quiet retry
   startDormant();
 }
 
@@ -794,7 +800,7 @@ function powered() {
 }
 function switchedOn() {
   const state = document.body.dataset.power;
-  return powered() || state === 'error' || state === 'elsewhere';
+  return powered() || state === 'elsewhere'; // 'error' reads as off: activating retries
 }
 
 // ---------------------------------------------------------------------------
@@ -935,7 +941,10 @@ function lineDropped() {
   if (live.retries >= 1) {
     live.retries = 0;
     showCard('notice', 'The line dropped. Say “Hey Parker” to try again.', 12000);
-    if (powered() && audio.stream) startDormant();
+    // The mic is held for the powered-on lifetime, so it — not the visual
+    // (still 'error' when the retry died before opening) — decides whether
+    // the card's promise can be kept.
+    if (audio.stream) startDormant();
     else { presence('error'); setPowerVisual('error'); }
     return;
   }

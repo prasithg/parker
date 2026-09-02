@@ -445,6 +445,130 @@ async function poweredActive(env) {
     assert.ok(/reach its engine/i.test(card(env).text));
   });
 
+  await test('microphone denial: the claim is given back, and ONE activation of "Try again" retries', async () => {
+    const env = await bootedEnv();
+    env.getUserMediaMode = 'deny';
+    await env.context.powerOn();
+    await env.flush();
+    assert.strictEqual(power(env), 'error');
+    assert.strictEqual(env.element('power-label').textContent, 'Try again');
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'false');
+    const c = card(env);
+    assert.ok(c && c.region === 'alert' && /microphone/i.test(c.text), JSON.stringify(c));
+    assert.strictEqual(env.streams.length, 0, 'no microphone');
+    assert.strictEqual(env.sockets.length, 0, 'no sockets');
+    // Engine truth agrees with the switch: nothing is on.
+    assert.strictEqual(env.powerReleases.length, 1, 'the failed claim was released');
+    assert.strictEqual(env.settings.power_on, false, 'persisted power is OFF');
+    // He grants the permission and activates the switch ONCE.
+    env.getUserMediaMode = 'grant';
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(env.powerClaims.length, 2, 'the switch re-claimed (a retry, not an off)');
+    assert.strictEqual(env.streams.length, 1, 'a second getUserMedia happened');
+    assert.strictEqual(env.powerReleases.length, 1, 'no second release — the click did not turn Parker off');
+    const ws = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.ok(ws, 'the wake lane opened');
+    ws.open();
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'true');
+    assert.strictEqual(env.settings.power_on, true, 'the retry claimed power again');
+  });
+
+  await test('a retry that is denied again stays honest: one release per failed attempt, no dangling owner', async () => {
+    const env = await bootedEnv();
+    env.getUserMediaMode = 'deny';
+    await env.context.powerOn();
+    await env.flush();
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(env.powerClaims.length, 2, 'retried');
+    assert.strictEqual(env.powerReleases.length, 2, 'released again');
+    assert.strictEqual(env.settings.power_on, false);
+    assert.strictEqual(power(env), 'error');
+    assert.strictEqual(env.streams.length, 0);
+    assert.strictEqual(env.sockets.length, 0);
+  });
+
+  await test('persisted power with the microphone denied at boot: engine off, "Turn the switch" is true — one flip wakes', async () => {
+    const env = createEnv();
+    env.getUserMediaMode = 'deny';
+    env.settings.power_on = true;
+    await env.boot(pageScript);
+    await env.flush();
+    assert.strictEqual(power(env), 'error');
+    assert.ok(/Turn the switch/i.test(card(env).text), JSON.stringify(card(env)));
+    assert.strictEqual(env.powerReleases.length, 1, 'the boot claim was given back');
+    assert.strictEqual(env.settings.power_on, false, 'engine and switch agree: off');
+    env.getUserMediaMode = 'grant';
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(env.powerClaims.length, 2, 'the flip re-claimed');
+    const ws = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.ok(ws, 'the wake lane opened on the flip');
+    ws.open();
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(env.settings.power_on, true);
+  });
+
+  await test('Escape from the denial card is still the way out', async () => {
+    const env = await bootedEnv();
+    env.getUserMediaMode = 'deny';
+    await env.context.powerOn();
+    await env.flush();
+    env.keydown.forEach((fn) => fn({ key: 'Escape' }));
+    await env.flush();
+    assert.strictEqual(power(env), 'off');
+    assert.strictEqual(env.settings.power_on, false);
+    assert.strictEqual(env.streams.length, 0);
+    assert.strictEqual(env.sockets.length, 0);
+  });
+
+  await test('the switch from the wake-hiccup error retries (re-arms wake on the held mic) instead of turning off', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.dropped();
+    env.advance(1600);
+    const second = wakeSockets(env)[wakeSockets(env).length - 1];
+    second.open();
+    second.dropped();
+    env.advance(1600);
+    assert.strictEqual(power(env), 'error');
+    assert.strictEqual(env.element('power-label').textContent, 'Try again');
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(env.powerReleases.length, 0, 'not an off');
+    assert.strictEqual(env.powerClaims.length, 2, 're-claimed');
+    assert.strictEqual(env.streams.length, 1, 'the held microphone is reused — no second prompt');
+    assert.ok(!env.streams[0].track.stopped, 'mic still held');
+    const third = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.notStrictEqual(third, second, 'a new wake lane');
+    third.open();
+    assert.strictEqual(power(env), 'dormant');
+    // …and the fresh activation earned a fresh quiet retry.
+    third.dropped();
+    env.advance(1600);
+    assert.strictEqual(wakeSockets(env).length, 4, 'one quiet retry after the manual retry');
+    assert.notStrictEqual(power(env), 'error');
+  });
+
+  await test('a retry line that dies before opening still re-arms the wake lane the card promises', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.dropped();
+    env.advance(2600);
+    await env.flush();
+    const retry = liveSockets(env)[liveSockets(env).length - 1];
+    assert.notStrictEqual(retry, ws, 'one quiet retry');
+    const wakeBefore = wakeSockets(env).length;
+    retry.dropped(); // never opened: the visual is still 'error' from the first drop
+    await env.flush();
+    assert.ok(card(env) && /hey parker/i.test(card(env).text), 'the honest way back is named');
+    assert.strictEqual(wakeSockets(env).length, wakeBefore + 1, 'and it is true: wake re-armed');
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(liveSockets(env).length, 2, 'no third line without his wake');
+  });
+
   await test('a power-off write that fails keeps everything dead, retries, then says so', async () => {
     const env = await bootedEnv();
     const wakeWs = await poweredDormant(env);
