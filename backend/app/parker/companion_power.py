@@ -118,12 +118,16 @@ class CompanionPower:
             "displaced": [reg.close for reg in previous],
         }
 
-    def release(self, persist: Callable[[bool], Any]) -> dict[str, Any]:
+    def release(self, persist: Optional[Callable[[bool], Any]] = None) -> dict[str, Any]:
         """Turn Parker off for everyone. Never raises before revoking.
 
         Returns the closers the (async) route must await, plus whether
         the durable write landed — the page shows a failed write and
-        retries; the lines are dead either way.
+        retries; the lines are dead either way. ``persist`` is optional:
+        the route passes none and writes the flag itself AFTER revoking
+        every line (``saved`` is then None here), so neither the revoke
+        nor the ack ever waits behind SQLite (F1 probe 3b: his mic audio
+        reached OpenAI a second after the switch while the write blocked).
         """
 
         with self._lock:
@@ -133,12 +137,14 @@ class CompanionPower:
             self.owner_client = ""
             revoked = list(self._sockets.values())
             self._sockets.clear()
-            saved = True
-            try:
-                persist(False)
-            except Exception:  # noqa: BLE001 — off in memory regardless
-                logger.warning("companion power-off write failed", exc_info=True)
-                saved = False
+            saved: Optional[bool] = None
+            if persist is not None:
+                saved = True
+                try:
+                    persist(False)
+                except Exception:  # noqa: BLE001 — off in memory regardless
+                    logger.warning("companion power-off write failed", exc_info=True)
+                    saved = False
         return {
             "power_on": False,
             "saved": saved,

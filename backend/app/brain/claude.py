@@ -320,8 +320,12 @@ class ClaudeBrainAdapter:
         return self._merge_messages(responses)
 
 
-def build_brain_adapter() -> Optional[ClaudeBrainAdapter]:
-    """A configured brain, or None so callers keep the deterministic stub."""
+def build_brain_adapter(http_client: Any = None) -> Optional[ClaudeBrainAdapter]:
+    """A configured brain, or None so callers keep the deterministic stub.
+
+    ``http_client`` (an ``httpx.Client``) is a worker's cancellable client;
+    the SDK adopts its timeout. None keeps the SDK's own client.
+    """
 
     from app.config import settings
 
@@ -330,7 +334,9 @@ def build_brain_adapter() -> Optional[ClaudeBrainAdapter]:
     try:
         import anthropic
 
-        return ClaudeBrainAdapter(anthropic.Anthropic(api_key=settings.anthropic_api_key))
+        return ClaudeBrainAdapter(
+            anthropic.Anthropic(api_key=settings.anthropic_api_key, http_client=http_client)
+        )
     except Exception:  # noqa: BLE001
         return None
 
