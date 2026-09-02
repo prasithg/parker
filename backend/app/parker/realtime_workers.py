@@ -135,20 +135,22 @@ class WorkerResult:
 # ---------------------------------------------------------------------------
 
 
-def local_date_line() -> str:
+def local_date_line(now: Any = None) -> str:
     """The household's local date and time, speakably, for grounding.
 
     The search worker answered "I don't have a reliable read on today's
     exact date" in Pras's session-3 test (call 41, seq 113): the front
     session is clock-grounded, the worker was not. Same home timezone as
-    the rollups.
+    the rollups. ``now`` (an aware instant) lets the my_day worker speak
+    the same injected clock its reminder window is cut on.
     """
 
     from datetime import datetime
 
     from app.parker.rollup import home_timezone
 
-    now = datetime.now(home_timezone())
+    tz = home_timezone()
+    now = now.astimezone(tz) if now is not None else datetime.now(tz)
     zone = now.strftime("%Z") or "local time"
     return f"{now:%A}, {now.day} {now:%B %Y}, {now.strftime('%I:%M %p').lstrip('0')} {zone}"
 
@@ -317,8 +319,11 @@ MY_DAY_LIMIT_LINE = (
 )
 
 
-def _my_day_medication_lines(db: Any) -> list[str]:
-    """Every active medicine's scheduled times — names and times only, never a dose."""
+def _my_day_medication_lines(db: Any, now_local: Any = None) -> list[str]:
+    """Every active medicine's scheduled times — names and times only, never a dose.
+
+    ``now_local`` is the shared source signature; schedules are daily, so it
+    is unused here."""
 
     from app.meds.tracker import _parse_schedule_times, get_active_medications
 
@@ -343,25 +348,77 @@ def _speakable_time(hhmm: str) -> str:
     return f"{hour12}:{minute:02d} {suffix}" if minute else f"{hour12} {suffix}"
 
 
-def _my_day_reminder_lines(db: Any) -> list[str]:
-    """Reminders he set through Parker: waiting or already set, newest first."""
+def _to_stored(moment: Any) -> Any:
+    """Aware instant → the naive-UTC form the DateTime columns hold
+    (the rollups' storage convention; ``rollup._local_date`` in reverse)."""
+
+    from datetime import timezone
+
+    return moment.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _from_stored(stored: Any, tz: Any) -> Any:
+    """Stored naive-UTC timestamp → aware home-local instant."""
+
+    from datetime import timezone
+
+    return stored.replace(tzinfo=timezone.utc).astimezone(tz)
+
+
+def _local_day_start(now_local: Any) -> Any:
+    return now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
+    """Reminders by when they are DUE on his local day, not when he set them.
+
+    Fresh review of the my_day slice (P0.3): selecting on ``created_at``
+    dropped a reminder set ten days ago for this afternoon and spoke one
+    set today for next month. The window is the home-local day, decoded
+    from naive-UTC storage: today's, tomorrow's, then undated ones he set
+    in the last two days (the realtime lane stores no due time at all, so
+    these are every spoken reminder), then still-open ones whose time has
+    passed — six lines at most. An executed reminder was delivered at his
+    yes: it is his day only while undated-and-recent or its time is still
+    ahead; past-due executed ones are the digest's done list.
+    """
 
     import json as _json
-    from datetime import datetime, timedelta
+    from datetime import timedelta
+
+    from sqlalchemy import and_, or_
 
     from app.db.models import StagedAction
 
-    since = datetime.utcnow() - timedelta(days=2)
+    tz = now_local.tzinfo
+    today = _local_day_start(now_local)
+    tomorrow = today + timedelta(days=1)
+    day_after = today + timedelta(days=2)
+    now_utc = _to_stored(now_local)
     rows = (
         db.query(StagedAction)
         .filter(StagedAction.action_type == "reminder")
         .filter(StagedAction.status.in_(("staged", "confirmed", "executed")))
-        .filter(StagedAction.created_at >= since)
-        .order_by(StagedAction.created_at.desc())
-        .limit(6)
+        .filter(
+            or_(
+                and_(
+                    StagedAction.execute_after.is_(None),
+                    StagedAction.created_at >= now_utc - timedelta(days=2),
+                ),
+                and_(
+                    StagedAction.execute_after.isnot(None),
+                    StagedAction.execute_after < _to_stored(day_after),
+                    or_(StagedAction.status != "executed", StagedAction.execute_after >= now_utc),
+                ),
+            )
+        )
+        .order_by(StagedAction.execute_after.asc(), StagedAction.created_at.desc())
         .all()
     )
-    lines: list[str] = []
+    today_lines: list[str] = []
+    tomorrow_lines: list[str] = []
+    undated_lines: list[str] = []
+    open_lines: list[str] = []
     for action in rows:
         try:
             payload = _json.loads(action.action_payload or "{}")
@@ -371,38 +428,105 @@ def _my_day_reminder_lines(db: Any) -> list[str]:
         if not subject:
             continue
         state = "waiting for his yes" if action.status == "staged" else "set"
-        lines.append(f"A reminder ({state}): {subject}.")
-    return lines
+        head = f"A reminder ({state}): {subject}"
+        if action.execute_after is None:
+            undated_lines.append(f"{head} — no time on record.")
+            continue
+        due = _from_stored(action.execute_after, tz)
+        at = _speakable_time(due.strftime("%H:%M"))
+        if due < now_local:
+            if due >= today:
+                when = f"earlier today at {at}"
+            elif due >= today - timedelta(days=1):
+                when = f"yesterday at {at}"
+            else:
+                when = f"on {due.day} {due:%B} at {at}"
+            open_lines.append(f"{head} — still open, was due {when}.")
+        elif due < tomorrow:
+            today_lines.append(f"{head} — today at {at}.")
+        else:
+            tomorrow_lines.append(f"{head} — tomorrow at {at}.")
+    # Undated before open on purpose: the realtime lane produces only
+    # undated rows, and they must not be starved by stale overdue ones.
+    # Open ones are unbounded in age (the digest's "needs a look"
+    # precedent), most recently due first, bounded here by the cap.
+    open_lines.reverse()
+    return (today_lines + tomorrow_lines + undated_lines + open_lines)[:6]
 
 
-def _my_day_note_lines(db: Any) -> list[str]:
-    """Family/context notes that read like plans — appointments, events."""
+def _my_day_note_lines(db: Any, now_local: Any) -> list[str]:
+    """Family notes that read like plans, dated by the day they were written.
+
+    Read straight from the memory table — the context-card bullets carry
+    no date, and a 20-day-old "appointment tomorrow" was being narrated as
+    a present-tense family plan (P0.3). Family, seed and call notes only:
+    Parker's own realtime session summaries are never "a note the family
+    left". Seven days back, at most four. "tomorrow" in a note counts from
+    the day it was written, so a note not written today says when it was
+    and that the date is uncertain; older notes are left to the context
+    card (``_memory_lines`` is untouched).
+    """
 
     import re as _re
+    from datetime import timedelta
+
+    from app.memory.models import ConversationMemory
 
     keywords = ("appointment", "visit", "tomorrow", "today", "tonight", "friday",
                 "monday", "tuesday", "wednesday", "thursday", "saturday", "sunday",
                 "o'clock", " at ", "coming", "bring")
-    lines = []
-    section = ""
-    for line in _memory_lines(db):
-        if not line.startswith("- "):
-            section = line.strip().lower()  # a header: "Recent memories:", "Ongoing concerns:"
-            continue
-        if "concern" in section:
-            continue  # worries are not plans
-        text = _re.sub(r"^- (\[[^\]]+\] )?", "", line).strip()
+    tz = now_local.tzinfo
+    today = _local_day_start(now_local)
+    rows = (
+        db.query(ConversationMemory)
+        .filter(ConversationMemory.source != "realtime")
+        .filter(ConversationMemory.created_at >= _to_stored(today - timedelta(days=6)))
+        .order_by(ConversationMemory.created_at.desc(), ConversationMemory.id.desc())
+        .limit(20)
+        .all()
+    )
+    lines: list[str] = []
+    for row in rows:
+        text = str(row.content or "").strip()
         lowered = text.lower()
-        if any(key in lowered for key in keywords):
-            lines.append(f"A note the family left: {text}")
-    return lines[:4]
+        if row.created_at is None or not any(key in lowered for key in keywords):
+            continue
+        written = _from_stored(row.created_at, tz)
+        if written >= today:
+            when = "today"
+        elif written >= today - timedelta(days=1):
+            when = "yesterday"
+        else:
+            when = f"on {written:%A}"  # unambiguous inside a week
+        line = f"A note the family left {when}: {text}"
+        relative = _re.search(r"\b(today|tomorrow|tonight)\b", lowered)
+        if when != "today" and relative:
+            line += (
+                f" — written {when}, so its “{relative.group(1)}” counts from then; "
+                "the date is uncertain."
+            )
+        lines.append(line)
+        if len(lines) == 4:
+            break
+    return lines
 
 
-def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
-    """His day from Parker's own records. Never raises; never a dose."""
+def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerResult:
+    """His day from Parker's own records. Never raises; never a dose.
+
+    ``now`` is the clock seam (an aware instant; tests inject it): the date
+    line and the reminder and note windows all read one home-local moment.
+    Production passes nothing (``run_my_day_worker(_make_db)``).
+    """
+
+    from datetime import datetime
+
+    from app.parker.rollup import home_timezone
 
     started = time.time()
-    lines: list[str] = [f"Right now it is {local_date_line()}."]
+    tz = home_timezone()
+    now_local = (now if now is not None else datetime.now(tz)).astimezone(tz)
+    lines: list[str] = [f"Right now it is {local_date_line(now_local)}."]
     db = None
     failed_sources: list[str] = []
     try:
@@ -413,7 +537,7 @@ def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
             ("notes", _my_day_note_lines),
         ):
             try:
-                lines.extend(source(db))
+                lines.extend(source(db, now_local))
             except Exception:  # noqa: BLE001 — one failing source never kills the answer
                 logger.debug("my_day source %s failed", name, exc_info=True)
                 failed_sources.append(name)
@@ -447,7 +571,7 @@ def run_my_day_worker(make_db: Callable[[], Any]) -> WorkerResult:
     safe.append(MY_DAY_LIMIT_LINE)
     speech = "\n".join(safe)
     if speech_violates_medical_boundary(speech):
-        speech = f"Right now it is {local_date_line()}.\n{MY_DAY_LIMIT_LINE}"
+        speech = f"Right now it is {local_date_line(now_local)}.\n{MY_DAY_LIMIT_LINE}"
     return WorkerResult(kind="my_day", speech=speech, started_at=started, finished_at=time.time())
 
 
