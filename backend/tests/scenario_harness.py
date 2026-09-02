@@ -216,11 +216,12 @@ class ScenarioWorld:
     def settle_open(self, fake, *, expect_card: bool = True) -> None:
         """Settle the session open: greeting done + context worker finished.
 
-        ALWAYS call this before feeding DB-touching events (propose_call)
-        in a seeded world: the test engine shares ONE SQLite connection
-        (StaticPool), so the context worker's session racing the staging
-        thread intermittently kills staging — a harness artifact, not a
-        product behavior (production sessions get their own connections).
+        Call this before feeding DB-touching events (propose_call) in a
+        seeded world so the context card's arrival is deterministic in the
+        scripted upstream traffic. (Until 2026-09-01 this also papered over
+        the harness's single shared SQLite connection, where the context
+        worker's session racing the staging thread killed staging; the
+        fixture now gives every session its own connection.)
         """
 
         fake.feed(done())
@@ -357,7 +358,7 @@ def voice_world(db, monkeypatch):
     world = ScenarioWorld(db, monkeypatch)
     yield world
     # Quiescence, not just the slot: threadpool DB threads can outlive a
-    # cancelled worker task, and drop_all must never race one.
+    # cancelled worker task, and the next test must not inherit one.
     _wait_until(
         lambda: realtime._active_bridges == 0 and realtime._inflight_db_threads == 0,
         timeout=3.0,
