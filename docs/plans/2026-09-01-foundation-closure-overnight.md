@@ -211,7 +211,8 @@ Findings so far:
   opt-in, off by default** after the fresh review found the first design
   gated a wake that followed his own speech; the redesigned gate engages
   only after ~20 s of steadily loud room (a TV) against a low-percentile
-  background, so his own talking never becomes the background — but
+  background, so a few seconds of his own talking do not become the
+  background (≈24 s of unbroken talk still would, until a 2.4 s pause) —
   enabling it is a room-calibration decision for the family, not a
   default.
 - **False wake.** One in four minutes: the TV said "…an actor named Parker
@@ -253,6 +254,17 @@ Findings so far:
   ("Hey Parker, can you help me" → window heard "Hey Parker, Ken"); the
   post-wake tail lane is what carries it (recall rows' "tail after wake"
   column), which is why the handoff contract exists.
+
+## Follow-on slices started tonight (stacked, each with its own PR)
+
+- **PR #43** `fable/spoken-session-end` (on PR #40): spoken session end →
+  wind-down → dormant; "Resting — say Hey Parker" label; the room dims to
+  rest ([plan](2026-09-02-spoken-session-end.md)).
+- **PR #44** `fix/search-worker-date-grounding` (from main, per the
+  merge policy): the search worker knows today's date/zone.
+- `fable/my-day-worker` (on PR #43): the local "my day" tool — medicine
+  times by name, reminders he set, family notes, and the honest "no
+  calendar" limit ([plan](2026-09-02-my-day-worker.md)).
 
 ## Next-slice candidates surfaced tonight (not started)
 
