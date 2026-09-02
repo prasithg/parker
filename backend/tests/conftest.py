@@ -3,22 +3,49 @@
 import pytest
 
 pytest.register_assert_rewrite("scenario_harness")
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
 from app.main import app
 
 
 @pytest.fixture
-def db():
-    """In-memory SQLite session for tests."""
+def db(tmp_path_factory):
+    """One file-backed SQLite database per test, shaped like production.
+
+    This used to be ``sqlite:///:memory:`` on a ``StaticPool`` — ONE
+    connection shared by every Session on every thread. SQLite then had no
+    isolation to offer: a reader's ``Session.close()`` (a ROLLBACK on the
+    shared connection) silently discarded a writer's in-flight transaction
+    on another thread, with no exception — the mechanism behind the
+    "unreproducible" realtime/converse flakes and the false-green
+    concurrent-session test (independent review, 2026-09-01). A real file
+    gives every Session its own connection, so a rollback only ever
+    touches its own transaction and concurrent writers queue on SQLite's
+    lock instead of corrupting each other. WAL keeps readers from blocking
+    writers; the busy timeout makes contention a wait, never a crash.
+
+    Teardown disposes the engine instead of ``drop_all``: a threadpool
+    thread that outlives its test cannot race a table drop when the file is
+    simply discarded with pytest's temp tree. The file lives in its own
+    directory, not ``tmp_path`` — tests use ``tmp_path`` as PARKER_HOME
+    and assert on its contents.
+    """
+
+    db_dir = tmp_path_factory.mktemp("parker-db")
     engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        f"sqlite:///{db_dir / 'parker-test.db'}",
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=OFF")  # a throwaway per-test file
+        cursor.close()
+
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine)
     session = Session()
@@ -26,7 +53,7 @@ def db():
         yield session
     finally:
         session.close()
-        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 @pytest.fixture(autouse=True)
