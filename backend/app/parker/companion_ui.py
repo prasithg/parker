@@ -18,7 +18,9 @@ Contract (pinned by tests):
   that is listening. Off stays off across restarts. On = DORMANT: the mic
   feeds only the LOCAL wake lane (no cloud audio) and Reachy rests
   lifeless until "Hey Parker" pops it awake into the live full-duplex
-  line; the words after the wake phrase ride the line's first frame; the
+  line; the words after the wake phrase ride the line's first frame, and
+  the lane's final transcript of everything it heard follows as ONE 'tail'
+  frame (the line opens faster than the lane can finish); the
   session's gentle wind-down returns it to dormancy
   (docs/plans/2026-09-01-wake-word.md). A missing local wake model fails
   CLOSED (power off, honest card) — never continuous cloud audio. A
@@ -310,9 +312,11 @@ const audio = {stream: null, micCtx: null, playCtx: null, proc: null,
                gain: null, source: null, mode: 'idle'};
 
 // Wake lane state: `tail` is what he said right after "Hey Parker" (the
-// wake frame's tail plus any post-wake transcript the lane sends while
-// the line connects); it rides the live socket's first frame.
-const wake = {ws: null, retried: false, head: '', tail: '', tailTimer: null};
+// wake frame's tail plus the lane's latest post-wake transcript); it rides
+// the live socket's first frame. The line usually opens before the lane
+// has finished hearing him, so `pending` means the lane was asked to
+// finish and its final transcript is still owed to the open line.
+const wake = {ws: null, retried: false, head: '', tail: '', tailTimer: null, pending: false};
 
 // `playing` holds the scheduled AudioBufferSourceNodes a flush must stop —
 // nothing else is ever written there (source citations are captions only).
@@ -523,10 +527,25 @@ function endLine() {
 function stopWakeLane() {
   const ws = wake.ws;
   wake.ws = null;
+  wake.pending = false;
   if (ws) {
     try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
     try { ws.close(); } catch (err) {}
   }
+}
+
+// The lane's last words for a line that is already open: forward them ONCE
+// as a 'tail' frame (the bridge holds its first reply for it), then let the
+// lane go. The final frame, the outer bound, and a dropped lane all exit
+// through here, so the line never receives a second tail.
+function forwardTail() {
+  wake.pending = false;
+  if (live.ws && live.ws.readyState === 1) {
+    try { live.ws.send(JSON.stringify({type: 'tail', text: wake.tail || ''})); } catch (err) {}
+  }
+  wake.tail = ''; wake.head = '';
+  clearTimeout(wake.tailTimer);
+  stopWakeLane();
 }
 
 // ---------------------------------------------------------------------------
@@ -811,6 +830,11 @@ function switchedOn() {
 
 function startDormant() {
   if (!audio.stream) return;
+  // A lane still finishing a tail for a line that is gone has nowhere to
+  // send it: abandon it (and its bound) before re-arming a fresh one.
+  clearTimeout(wake.tailTimer);
+  stopWakeLane();
+  wake.tail = ''; wake.head = '';
   audio.mode = 'wake';
   presence('dormant');
   setPowerVisual('dormant');
@@ -825,11 +849,16 @@ function startDormant() {
     if (event.type === 'wake') onWake(event);
     else if (event.type === 'tail') {
       // More of his same-breath request, transcribed while the line connects.
-      // The engine cleared its window at the wake, so these frames hold only
-      // what came AFTER it: keep the wake frame's own words in front.
+      // The engine cleared its window at the wake and only grows it after,
+      // so each frame is a superset of what came AFTER it: keep the wake
+      // frame's own words in front of the latest.
       if (typeof event.text === 'string' && event.text) {
         wake.tail = ((wake.head ? wake.head + ' ' : '') + event.text).trim().slice(0, 200);
       }
+      // The lane's final transcript (answering the line's tail_end): forward
+      // it to the open line. A final before the line is open simply rides
+      // the hello, as before.
+      if (event.final && wake.pending) forwardTail();
     } else if (event.type === 'revoked') {
       onRevoked(event);
     } else if (event.type === 'unavailable') {
@@ -844,6 +873,9 @@ function startDormant() {
   ws.onclose = () => {
     if (ws !== wake.ws) return;
     wake.ws = null;
+    // The lane went before its final word: the open line gets what it gave
+    // (so the bridge is not left waiting out its deadline), nothing more.
+    if (wake.pending) { forwardTail(); return; }
     if (audio.mode !== 'wake' || !powered()) return;
     if (live.ws || startingLive) return; // a line is opening — not dormancy's business
     if (!wake.retried) {
@@ -869,9 +901,13 @@ function onWake(event) {
   chirp();
   // The wake lane stays open (mic frames keep going to it) so the rest of
   // "Hey Parker, can you help me" is transcribed while the line connects;
-  // the line's open ends it, or this bound does.
+  // the line's open asks it to finish, its final word ends it, or this
+  // outer bound does (forwarding whatever it gave if the line is open).
   clearTimeout(wake.tailTimer);
-  wake.tailTimer = setTimeout(() => { if (wake.ws) stopWakeLane(); }, 3000);
+  wake.tailTimer = setTimeout(() => {
+    if (wake.pending) forwardTail();
+    else if (wake.ws) stopWakeLane();
+  }, 3000);
   startActive();
 }
 
@@ -897,13 +933,23 @@ function startActive() {
 
   ws.onopen = () => {
     if (ws !== live.ws) return; // stale open must not restore live state
-    // The handoff contract: hello (with the tail) is the FIRST frame, then
-    // the wake lane ends and the mic streams to this line.
-    try { ws.send(JSON.stringify({type: 'hello', tail: wake.tail || ''})); } catch (err) {}
-    wake.tail = ''; wake.head = '';
-    clearTimeout(wake.tailTimer);
-    stopWakeLane();
+    // The handoff contract: hello (with the tail so far) is the FIRST frame
+    // and the mic streams to this line from here. The line opens faster
+    // than the lane can finish hearing him, so if the lane is still up it
+    // is asked to finish (tail_end) and `pending` tells the bridge that ONE
+    // final 'tail' frame follows; the lane keeps the head/tail until then.
+    const pending = !!wake.ws;
+    const hello = {type: 'hello', tail: wake.tail || ''};
+    hello.pending = pending;
+    try { ws.send(JSON.stringify(hello)); } catch (err) {}
     audio.mode = 'live';
+    if (pending) {
+      wake.pending = true;
+      try { wake.ws.send(JSON.stringify({type: 'tail_end'})); } catch (err) {}
+    } else {
+      wake.tail = ''; wake.head = '';
+      clearTimeout(wake.tailTimer);
+    }
     presence('connected');
     setPowerVisual('on');
   };

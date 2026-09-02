@@ -134,8 +134,11 @@ async function poweredActive(env) {
     assert.ok(live, 'the realtime line opens');
     assert.ok(!wakeWs.closed, 'the wake lane stays open for the request tail until the line is up');
     live.open();
-    assert.ok(wakeWs.closed, 'the wake lane closes once the line is open');
-    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: '' }, 'hello is the first frame');
+    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: '', pending: true }, 'hello is the first frame');
+    assert.ok(!wakeWs.closed, 'the wake lane stays open for its final transcript');
+    assert.ok(wakeWs.sent.some((f) => f.type === 'tail_end'), 'and is asked to finish');
+    wakeWs.message({ type: 'tail', text: '', final: true });
+    assert.ok(wakeWs.closed, 'the wake lane closes once its final tail landed');
     assert.strictEqual(phase(env), 'listening');
     assert.strictEqual(power(env), 'on');
     // The wake transition is in the receipts for session review.
@@ -622,17 +625,79 @@ async function poweredActive(env) {
     // Mic frames keep going to the WAKE lane while the line connects.
     assert.ok(env.micFrame(0.2));
     assert.ok(wakeWs.sent.some((f) => f.type === 'audio'), 'frames still reach the wake lane');
-    // The engine cleared its window at the wake: tail frames hold only what
-    // came AFTER "can you" — the page keeps the wake frame's words in front.
+    // The engine cleared its window at the wake and only grows it after:
+    // each tail frame is a superset of what came AFTER "can you" — the page
+    // keeps the wake frame's words in front of the latest.
     wakeWs.message({ type: 'tail', text: 'help me with' });
     wakeWs.message({ type: 'tail', text: 'help me with the tv' });
     const live = liveSockets(env)[0];
     assert.strictEqual(live.sent.length, 0, 'nothing to the line before it opens');
     live.open();
-    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: 'can you help me with the tv' });
-    assert.ok(wakeWs.closed);
+    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: 'can you help me with the tv', pending: true });
+    assert.ok(!wakeWs.closed, 'the lane is still finishing');
     env.micFrame(0.2);
     assert.ok(live.sent.some((f) => f.type === 'audio'), 'after open, frames go to the line');
+    assert.strictEqual(wakeWs.sent.filter((f) => f.type === 'audio').length, 1, 'and no longer to the lane');
+    wakeWs.message({ type: 'tail', text: 'help me with the tv please', final: true });
+    assert.deepStrictEqual(live.sent.filter((f) => f.type === 'tail'),
+      [{ type: 'tail', text: 'can you help me with the tv please' }], 'the final transcript follows once');
+    assert.ok(wakeWs.closed);
+  });
+
+  await test('the line opening before the lane\'s last words does not lose them', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker can you', matched: 'hey parker', tail: 'can you' });
+    await env.flush();
+    env.micFrame(0.2); env.micFrame(0.2); // his speech, streamed to the WAKE lane while the line connects
+    const live = liveSockets(env)[0];
+    live.open(); // the line opens FIRST (~8 ms after the wake in production)
+    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: 'can you', pending: true }, 'hello says a final tail follows');
+    assert.deepStrictEqual(wakeWs.sent.filter((f) => f.type !== 'audio'), [{ type: 'tail_end' }],
+      'the lane is asked to finish over everything it heard');
+    assert.ok(!wakeWs.closed, 'and stays open until it does');
+    const laneAudioAtOpen = wakeWs.sent.filter((f) => f.type === 'audio').length;
+    env.micFrame(0.2);
+    assert.strictEqual(wakeWs.sent.filter((f) => f.type === 'audio').length, laneAudioAtOpen, 'no more audio to the lane');
+    assert.strictEqual(live.sent.filter((f) => f.type === 'audio').length, 1, 'the mic streams to the line from open');
+    assert.strictEqual(live.sent.filter((f) => f.type === 'tail').length, 0, 'nothing forwarded yet');
+    wakeWs.message({ type: 'tail', text: 'help me with the tv', final: true }); // the lane's last inference lands
+    assert.deepStrictEqual(live.sent.filter((f) => f.type === 'tail'), [{ type: 'tail', text: 'can you help me with the tv' }]);
+    assert.ok(wakeWs.closed, 'the lane ends with its final word');
+    wakeWs.message({ type: 'tail', text: 'help me with the tv now', final: true }); // a late duplicate
+    env.advance(5000);
+    assert.strictEqual(live.sent.filter((f) => f.type === 'tail').length, 1, 'forwarded exactly once');
+    assert.strictEqual(power(env), 'on');
+    assert.strictEqual(wakeSockets(env).length, 1, 'no dormancy restart under a live line');
+  });
+
+  await test('the tail bound still holds after open: what the lane gave is forwarded once, then it ends', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker can you', matched: 'hey parker', tail: 'can you' });
+    await env.flush();
+    const live = liveSockets(env)[0];
+    live.open();
+    wakeWs.message({ type: 'tail', text: 'help me' }); // interim only — the final never comes
+    env.advance(3100);
+    assert.deepStrictEqual(live.sent.filter((f) => f.type === 'tail'), [{ type: 'tail', text: 'can you help me' }]);
+    assert.ok(wakeWs.closed, 'bounded: the tail lane cannot outlive its window');
+    assert.strictEqual(power(env), 'on');
+  });
+
+  await test('a lane that drops while finishing forwards what it had, and never restarts dormancy under a live line', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker can you', matched: 'hey parker', tail: 'can you' });
+    await env.flush();
+    const live = liveSockets(env)[0];
+    live.open();
+    wakeWs.dropped();
+    assert.deepStrictEqual(live.sent.filter((f) => f.type === 'tail'), [{ type: 'tail', text: 'can you' }]);
+    env.advance(5000);
+    assert.strictEqual(wakeSockets(env).length, 1, 'no wake-lane retry while the line is up');
+    assert.strictEqual(power(env), 'on');
+    assert.strictEqual(live.sent.filter((f) => f.type === 'tail').length, 1);
   });
 
   await test('a line that never opens still ends the wake lane within its bound', async () => {
