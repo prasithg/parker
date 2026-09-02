@@ -151,7 +151,7 @@ python3 benchmark/evaluate_release_readiness_v0.py --write-report
 make eval-release-readiness
 ```
 
-`make eval-release-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so public-claim metrics do not silently survive from an older run. (Reports are written under `benchmark/reports/release_readiness_eval_*`; historical dated `grant_readiness_eval_*` reports from the retired grant lane remain in place as records but are no longer read.)
+`make eval-release-readiness` refreshes the task taxonomy, Parker-generated demo interactivity, degraded-input replay, caregiver-state legibility proxy, claim→metric map, construct-validity matrix, and repair-quality rubric reports before writing the rollup, so public-claim metrics do not silently survive from an older run. (Reports are written under `benchmark/reports/release_readiness_eval_*`; historical dated `grant_readiness_eval_*` reports from the retired grant lane remain in place as records but are no longer read.) `--as-of YYYY-MM-DD` is a test-only freshness override and is refused together with `--write-report`, so a dated report can never be minted from evidence that would fail the gate today.
 
 Passing means only that the current synthetic/local reports are safe to cite with caveats. It does **not** establish real-world, clinical, patient, audio, emergency-readiness, or private-data proof.
 
