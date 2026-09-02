@@ -181,8 +181,7 @@ def test_over_tv_groups_rows_by_achieved_snr_to_a_tenth(soak):
 
 
 def test_skipped_soak_is_not_run_and_carries_no_false_wake_claim(soak):
-    assert soak.run_soak(b"", None) == {"status": "not_run", "reason": "--skip-soak"}
-    report = _report(soak, soak=soak.run_soak(b"", None))
+    report = _report(soak, soak=soak.not_run("--skip-soak"))
     section = report["soak"]
     assert section["status"] == "not_run"
     for key in ("false_wakes", "cpu_seconds_per_audio_minute", "inferences_per_audio_minute", "audio_minutes"):
@@ -195,6 +194,48 @@ def test_skipped_soak_is_not_run_and_carries_no_false_wake_claim(soak):
     assert "Gate: INCOMPLETE" in md
     assert "soak: not run (--skip-soak)" in md
     assert "per audio minute" not in md
+
+
+def test_short_soak_is_not_run_and_cannot_mint_a_pass(soak):
+    """EVIDENCE-F2: only an empty track used to be 'not run', so
+    `--minutes 0.05` streamed 3 s, inferred nothing, and printed
+    'Gate: PASS (soak 0.05 min: 0 false wakes …)'. A soak shorter than
+    MIN_SOAK_MINUTES is a section that did not run."""
+
+    assert soak.MIN_SOAK_MINUTES == 1.0
+    section = soak.run_soak(_sine(0.5, 3000), _stub_detector())
+    assert section == {"status": "not_run", "reason": "soak too short (0.01 min < 1.0 min)"}
+    report = _report(soak, soak=section)
+    assert report["gate"]["status"] == "incomplete" and report["gate"]["passed"] is None
+    assert "soak" in report["gate"]["not_run"]
+    assert soak.GATE_EXIT[report["gate"]["status"]] == 2
+    md = soak.render_md(report)
+    gate_line = md.rstrip().splitlines()[-1]
+    assert "INCOMPLETE" in gate_line and gate_line == soak.gate_line(report)
+    assert "Gate: PASS" not in md
+    assert "soak: not run (soak too short (0.01 min < 1.0 min))" in md
+    assert "false wake" not in gate_line
+
+    # EVIDENCE-F6: `--minutes 0` builds an empty track; its reason names
+    # the length, not a flag the operator never passed.
+    zero = soak.run_soak(b"", None)
+    assert zero["status"] == "not_run"
+    assert zero["reason"] == "soak too short (0.00 min < 1.0 min)"
+    assert zero["reason"] != "--skip-soak"
+
+
+def test_soak_that_never_inferred_is_not_run(soak):
+    """A minute of silence clears the length bar but the energy gate holds
+    every hop: zero inferences is no evidence about false wakes."""
+
+    quiet = b"\x00\x00" * (60 * WAKE_SAMPLE_RATE)
+    detector = _stub_detector()
+    section = soak.run_soak(quiet, detector)
+    assert detector.inferences == 0
+    assert section == {"status": "not_run", "reason": "no inferences ran"}
+    report = _report(soak, soak=section)
+    assert report["gate"]["status"] == "incomplete" and "soak" in report["gate"]["not_run"]
+    assert "Gate: PASS" not in soak.render_md(report)
 
 
 def test_skipped_recall_is_not_one_of_one(soak):
@@ -264,12 +305,12 @@ def test_report_schema_is_v1_with_per_section_status(soak):
 
 
 def test_run_soak_measures_a_real_track(soak):
-    track = _sine(3.0, 3000)
+    track = _sine(1.0, 3000) * 60  # exactly MIN_SOAK_MINUTES; 220 Hz repeats seamlessly
     section = soak.run_soak(track, _stub_detector())
     assert section["status"] == "ran"
-    assert section["audio_minutes"] == pytest.approx(0.05, abs=0.001)
+    assert section["audio_minutes"] == pytest.approx(1.0, abs=0.001)
     assert section["inferences"] > 0
-    assert section["inferences_per_audio_minute"] == pytest.approx(section["inferences"] / 0.05, rel=0.05)
+    assert section["inferences_per_audio_minute"] == pytest.approx(section["inferences"] / 1.0, rel=0.05)
     assert section["false_wakes"] == []
 
 

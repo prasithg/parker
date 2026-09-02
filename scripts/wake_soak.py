@@ -28,7 +28,9 @@ browser-sized 16 kHz frames. Sections:
    other negatives are reported.
 
 A section that did not run says so (`status: not_run`) and the gate is
-INCOMPLETE — never a clean zero. Exit 0 PASS, 1 FAIL, 2 INCOMPLETE.
+INCOMPLETE — never a clean zero. A soak shorter than MIN_SOAK_MINUTES, or
+one the detector never inferred on, did not run either: a 3 s track once
+minted "Gate: PASS … 0 false wakes". Exit 0 PASS, 1 FAIL, 2 INCOMPLETE.
 
 Usage: backend/.venv/bin/python scripts/wake_soak.py [--minutes 4]
 Writes benchmark/reports/wake_soak_<date>[_<tag>].{json,md} (aggregate only —
@@ -137,6 +139,7 @@ PEAK_HEADROOM = 0.9  # never drive a voice peak past 90 % of full scale
 
 GATED = ["soak.false_wakes", "recall.misses", "paused.misses", "paused.stale_wakes"]
 GATE_EXIT = {"pass": 0, "fail": 1, "incomplete": 2}
+MIN_SOAK_MINUTES = 1.0  # below this the soak is not_run — no false-wake claim from seconds of audio
 
 
 # --- audio ----------------------------------------------------------------
@@ -311,17 +314,20 @@ def not_run(reason: str) -> dict:
 
 
 def run_soak(track: bytes, detector: WakeDetector | None) -> dict:
-    """Stream the TV track; every wake is a false wake. An empty track is
-    a section that did not run — no per-minute figures, no false-wake
-    claim."""
+    """Stream the TV track; every wake is a false wake. A track shorter
+    than MIN_SOAK_MINUTES (``--minutes 0`` included), or one the detector
+    never inferred on, is a section that did not run — no per-minute
+    figures, no false-wake claim. ``--skip-soak`` is main()'s not_run."""
 
-    if not track:
-        return not_run("--skip-soak")
     audio_minutes = len(track) / 2 / WAKE_SAMPLE_RATE / 60
+    if audio_minutes < MIN_SOAK_MINUTES:
+        return not_run(f"soak too short ({audio_minutes:.2f} min < {MIN_SOAK_MINUTES} min)")
     timings: list[float] = []
     cpu0, wall0 = time.process_time(), time.perf_counter()
     false_wakes = stream(detector, track, timings)
     cpu, wall = time.process_time() - cpu0, time.perf_counter() - wall0
+    if detector.inferences == 0:
+        return not_run("no inferences ran")
     return {
         "status": "ran",
         "audio_minutes": round(audio_minutes, 2),
@@ -722,7 +728,7 @@ def build_cases(args) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--minutes", type=float, default=4.0)
+    parser.add_argument("--minutes", type=float, default=4.0, help=f"TV-like audio to soak (below {MIN_SOAK_MINUTES} the soak is not_run: INCOMPLETE)")
     parser.add_argument("--model", default="base", help="faster-whisper size for the wake lane")
     parser.add_argument("--threads", type=int, default=0, help="cpu_threads cap (0 = library default)")
     parser.add_argument("--hop", type=float, default=0.7, help="seconds of new audio per inference")
@@ -744,7 +750,7 @@ def main() -> int:
     def make_detector():
         return WakeDetector(transcriber, hop_seconds=args.hop, relative_gate=args.relative_gate)
 
-    soak = run_soak(cases["track"], make_detector() if cases["track"] else None)
+    soak = not_run("--skip-soak") if args.skip_soak else run_soak(cases["track"], make_detector())
     if soak["status"] == "ran":
         print(
             f"soak: {soak['audio_minutes']} min audio, {soak['inferences']} inferences, "

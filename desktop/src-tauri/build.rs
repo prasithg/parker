@@ -16,6 +16,9 @@ fn git(repo: &Path, args: &[&str]) -> Option<String> {
 
 fn git_sha(repo: &Path) -> String {
     let Some(head) = git(repo, &["rev-parse", "HEAD"]).filter(|sha| !sha.is_empty()) else {
+        // Loud in the package log: an "unknown" stamp fails the packaged
+        // probe's SHA check by design, so say why at build time.
+        println!("cargo:warning=PARKER_GIT_SHA=unknown (no git)");
         return "unknown".into();
     };
     match git(repo, &["status", "--porcelain"]) {
