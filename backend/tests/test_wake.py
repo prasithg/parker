@@ -285,6 +285,30 @@ def test_a_crashing_transcriber_never_ends_dormancy():
     assert detector.feed(_tone(0.8)) is None  # keeps trying, keeps calm
 
 
+def test_detector_counts_consecutive_failures_and_resets_on_success():
+    """F5: a model that dies after warm-up (model.bin gone, a dead disk)
+    used to mean silent dead dormancy forever — every failure swallowed,
+    nothing counted. The detector counts CONSECUTIVE inference failures:
+    one bad window is still just a bad window, and a recovered model
+    still wakes."""
+
+    calls: list = []
+
+    def transcriber(path):
+        calls.append(path)
+        if len(calls) <= 2:
+            raise OSError("model.bin vanished")
+        return ["hey parker"]
+
+    detector = WakeDetector(transcriber)
+    assert detector.failures == 0
+    assert detector.feed(_tone(0.8)) is None and detector.failures == 1
+    assert detector.feed(_tone(0.8)) is None and detector.failures == 2
+    hit = detector.feed(_tone(0.8))
+    assert hit is not None and hit["matched"] == "hey parker"
+    assert detector.failures == 0 and detector.inferences == 3
+
+
 def _loudness(labels: dict[int, str]):
     """A stand-in ASR keyed on loudness: one phrase per amplitude level
     present in the window WAV, in order — so a test can label hops and
@@ -530,3 +554,70 @@ def test_wake_lane_is_honest_without_the_local_model(monkeypatch, wake_url):
         frame = ws.receive_json()
     assert frame["type"] == "unavailable"
     assert "local voice model" in frame["text"]
+
+
+def test_wake_lane_is_honest_when_the_model_files_are_missing(db, monkeypatch, wake_url):
+    """F5: the realistic first-run failure — weights not cached while
+    offline, hub unreachable, a half-downloaded snapshot — comes out of
+    huggingface_hub as LocalEntryNotFoundError, a FileNotFoundError. It
+    used to escape the store and kill the socket with no frame, so the
+    page took the "network hiccup" retry path with power persisted ON
+    and the mic open. Through a REAL store it must reach the same honest
+    `unavailable` frame as the never-installed case, before any
+    registration."""
+
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+    from tests.test_converse import make_store
+
+    def missing():
+        raise FileNotFoundError("cache miss")
+
+    monkeypatch.setattr(converse_router, "converse_store", make_store(db, loader=missing))
+    with client.websocket_connect(wake_url) as ws:
+        frame = ws.receive_json()
+    assert frame["type"] == "unavailable"
+    assert "local voice model" in frame["text"]
+    assert authority.snapshot()["live"]["wake"] == 0  # nothing leaked into the authority
+
+
+def test_wake_lane_gives_up_after_repeated_inference_failures(monkeypatch, wake_url):
+    """F5: the warmed model dies under the lane (model.bin removed, the
+    temp dir unwritable). After WAKE_FATAL_FAILURES consecutive failing
+    windows the lane says so and closes, so the page powers off honestly
+    instead of listening to nothing forever. The warmed model is never
+    discarded here; the next power-on starts a fresh counter."""
+
+    from app.parker import converse_router
+    from starlette.websockets import WebSocketDisconnect
+
+    def dead(path):
+        raise OSError("model.bin vanished")
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: dead)
+    monkeypatch.setattr("app.parker.converse.write_receipt", lambda entry: None)
+    with client.websocket_connect(wake_url) as ws:
+        for _ in range(converse_router.WAKE_FATAL_FAILURES):
+            ws.send_json({"type": "audio", "data": _b64(_tone(0.8))})
+        ws.send_json({"type": "end"})
+        frame = ws.receive_json()
+        assert frame["type"] == "unavailable" and "local voice model" in frame["text"]
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()  # the lane closed itself
+
+    # One or two bad windows never end dormancy: the lane is still there,
+    # the counter reset on the first good window, and that window wakes.
+    calls: list = []
+
+    def flaky(path):
+        calls.append(path)
+        if len(calls) < converse_router.WAKE_FATAL_FAILURES:
+            raise OSError("model.bin vanished")
+        return ["hey parker"]
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: flaky)
+    with client.websocket_connect(wake_url) as ws:
+        for _ in range(converse_router.WAKE_FATAL_FAILURES):
+            ws.send_json({"type": "audio", "data": _b64(_tone(0.8))})
+        assert ws.receive_json()["type"] == "wake"
+        ws.send_json({"type": "end"})

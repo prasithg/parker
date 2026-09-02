@@ -202,6 +202,10 @@ class WakeDetector:
         self._greeting: Optional[tuple[str, int]] = None  # (token, fed samples)
         self.inferences = 0  # observable: the energy gate must hold in tests
         self.gated_by_background = 0  # hops the adaptive gate skipped
+        # Consecutive inference failures (reset by any success): one bad
+        # window is still just a bad window; the route gives up — and says
+        # so — at WAKE_FATAL_FAILURES, instead of silent dead dormancy.
+        self.failures = 0
 
     def hear(self, pcm16: bytes) -> Optional[dict[str, Any]]:
         """Accumulate audio; on each energetic hop, transcribe the window.
@@ -272,7 +276,9 @@ class WakeDetector:
                 lines = self._transcriber(path)
         except Exception:  # noqa: BLE001 — a bad window must not end dormancy
             logger.warning("wake inference failed", exc_info=True)
+            self.failures += 1
             return None
+        self.failures = 0
         heard = " ".join(line.strip() for line in lines if line and line.strip())
         return {
             "heard": heard[:200],
