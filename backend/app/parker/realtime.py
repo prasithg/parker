@@ -893,6 +893,32 @@ class RealtimeBridge:
         writer = self._event_writer(kind, heard=heard, said=said, detail=detail)
         await _tracked_thread(lambda: _with_local_write_retries("session event", writer))
 
+    def _journal_in_background(
+        self,
+        kind: str,
+        heard: str = "",
+        said: str = "",
+        detail: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Journal without holding the caller: the browser pump forwards his
+        audio and must never queue behind a SQLite lock/retry (Hermes
+        review, blocker 7). The write is a tracked task: shutdown drains
+        it like a worker, and the thread counter still covers the thread."""
+
+        writer = self._event_writer(kind, heard=heard, said=said, detail=detail)
+
+        async def run() -> None:
+            try:
+                await _tracked_thread(lambda: _with_local_write_retries("session event", writer))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — evidence never breaks the call
+                logger.debug("background journal write failed", exc_info=True)
+
+        task = asyncio.create_task(run())
+        self._worker_tasks.add(task)
+        task.add_done_callback(self._worker_tasks.discard)
+
     async def _journal_expression(self, message: dict[str, Any]) -> None:
         """Journal one browser-reported semantic expression transition.
 
@@ -916,7 +942,7 @@ class RealtimeBridge:
                 detail[field] = int(value)
         if self._expression_receipts == MAX_EXPRESSION_RECEIPTS:
             detail["truncated"] = True  # later transitions are dropped
-        await self._journal("expression", detail=detail)
+        self._journal_in_background("expression", detail=detail)
 
     async def run(self) -> None:
         connect = self._upstream_connect or globals()["connect_openai"]
@@ -1056,7 +1082,7 @@ class RealtimeBridge:
             tail = " ".join(tail.split())[:MAX_WAKE_TAIL_CHARS]
             self._wake_tail = tail
             if tail:
-                await self._journal("wake_tail", heard=tail)
+                self._journal_in_background("wake_tail", heard=tail)
             return
         self._early_frames.append(message)
 

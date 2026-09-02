@@ -210,6 +210,7 @@ function createEnv() {
   env.powerGen = 0;
   env.powerClaims = [];
   env.powerReleases = [];
+  env.ownerClient = null; // settings GET: who owns power (null = "this page" by default)
   function jsonResponse(body, status) {
     const code = status || 200;
     return { ok: code >= 200 && code < 300, status: code, json: async () => body, body: null };
@@ -248,7 +249,7 @@ function createEnv() {
         try { Object.assign(env.settings, JSON.parse(opts.body)); } catch (err) {}
         return Promise.resolve(jsonResponse(env.settings));
       }
-      return Promise.resolve(jsonResponse(Object.assign({}, env.settings)));
+      return Promise.resolve(jsonResponse(Object.assign({ owner_client: env.ownerClient == null ? 'this-page' : env.ownerClient }, env.settings)));
     }
     return Promise.resolve(jsonResponse({}));
   };

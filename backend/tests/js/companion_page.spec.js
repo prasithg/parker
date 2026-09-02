@@ -325,6 +325,7 @@ async function poweredActive(env) {
     const env = await bootedEnv();
     const promise = env.context.powerOn();
     assert.strictEqual(power(env), 'starting');
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'false', 'not "on" until the engine says so');
     await promise;
     await env.flush();
     assert.strictEqual(env.powerClaims.length, 1, 'one claim');
@@ -337,6 +338,45 @@ async function poweredActive(env) {
     assert.strictEqual(query(wakeWs.url).gen, '1', '…and the generation');
     wakeWs.open();
     assert.strictEqual(power(env), 'dormant');
+  });
+
+  await test('a boot claim refused by a reload race retries once before believing "elsewhere"', async () => {
+    const env = await bootedEnv({ power_on: true });
+    // bootedEnv already booted with grant; simulate a fresh boot whose first
+    // claim meets the OLD page's still-registered wake socket.
+    const env2 = createEnv();
+    env2.settings.power_on = true;
+    env2.powerMode = 'elsewhere';
+    const booted = env2.boot(pageScript);
+    await booted; await env2.flush();
+    assert.strictEqual(env2.powerClaims.length, 1, 'first claim refused');
+    env2.powerMode = 'grant'; // the old socket has gone by now
+    env2.advance(1600); await env2.flush(); await env2.flush();
+    assert.strictEqual(env2.powerClaims.length, 2, 'one patient retry');
+    assert.strictEqual(env2.document.body.dataset.power, 'dormant', 'and Parker rests, not "elsewhere"');
+    void env;
+  });
+
+  await test('a refused reconnect after an engine restart re-claims and keeps resting', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    // The engine restarted: durable switch still ON, nobody owns it.
+    env.settings.power_on = true;
+    env.ownerClient = '';
+    wakeWs.message({ type: 'revoked', reason: 'power_off' });
+    await env.flush(); await env.flush(); await env.flush();
+    assert.strictEqual(env.powerClaims.length, 2, 're-claimed once');
+    assert.strictEqual(power(env), 'dormant', 'still resting');
+    assert.ok(!env.streams[0].track.stopped, 'the mic was never released');
+    assert.strictEqual(wakeSockets(env).length, 2, 'a fresh wake lane with the new credentials');
+    assert.strictEqual(env.powerReleases.length, 0);
+    // …but a REAL power-off elsewhere (someone owns it / switch off) still turns us off.
+    const second = wakeSockets(env)[1]; second.open();
+    env.settings.power_on = false;
+    second.message({ type: 'revoked', reason: 'power_off' });
+    await env.flush(); await env.flush(); await env.flush();
+    assert.strictEqual(power(env), 'off');
+    assert.ok(/turned off/i.test(card(env).text));
   });
 
   await test('the live line presents the same owner credentials', async () => {
@@ -439,7 +479,10 @@ async function poweredActive(env) {
     // Mic frames keep going to the WAKE lane while the line connects.
     assert.ok(env.micFrame(0.2));
     assert.ok(wakeWs.sent.some((f) => f.type === 'audio'), 'frames still reach the wake lane');
-    wakeWs.message({ type: 'tail', text: 'can you help me with the tv' });
+    // The engine cleared its window at the wake: tail frames hold only what
+    // came AFTER "can you" — the page keeps the wake frame's words in front.
+    wakeWs.message({ type: 'tail', text: 'help me with' });
+    wakeWs.message({ type: 'tail', text: 'help me with the tv' });
     const live = liveSockets(env)[0];
     assert.strictEqual(live.sent.length, 0, 'nothing to the line before it opens');
     live.open();

@@ -176,12 +176,15 @@ class Settings(BaseSettings):
     parker_wake_grace_seconds: int = 120
     # Dormant wake lane (docs/plans/2026-09-01-foundation-closure-overnight.md,
     # "Wake soak"): with a TV on every hop is energetic, so the local model
-    # ran continuously (~2.6 cores). A hop must also be this many times
-    # louder than the room's trailing median to run inference — a voice
-    # near the mic rises above steady TV; the TV never rises above itself.
-    # Measured: 312 -> 54 inferences per 4 min of TV speech, 2.65 -> 0.46
-    # cores, quiet-room recall unchanged. 0 disables the gate.
-    parker_wake_relative_gate: float = 1.3
+    # runs continuously (~2.6 cores). OPT-IN adaptive gate: once the room
+    # has been steadily loud for ~20 s, a hop must also be this many times
+    # louder than the room's low percentile to run inference. Measured at
+    # 1.3: 312 -> 54 inferences per 4 min of TV speech, 2.65 -> 0.46 cores.
+    # Off (0) by default until calibrated in the real room: a missed wake
+    # costs Dad more than CPU costs the machine (chairman priority; fresh
+    # review 2026-09-02 found the first cut gated a wake after his own
+    # speech).
+    parker_wake_relative_gate: float = 0.0
     # faster-whisper CPU threads for the shared local model (0 = library
     # default, every core). A cap trades a little latency for headroom.
     parker_asr_cpu_threads: int = 0

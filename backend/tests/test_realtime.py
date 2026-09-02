@@ -487,6 +487,9 @@ def test_prohibited_action_types_are_rejected_not_staged(
     with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "stop"})  # provoke traffic so we can end cleanly
         assert ws.receive_json() == {"type": "clear"}
+        # The test client cancels the handler the moment this block exits:
+        # wait for the ack we are about to judge (CI flake on PR #43).
+        assert _wait_until(lambda: _function_outputs(fake))
         ws.send_json({"type": "end"})
 
     assert db.query(StagedAction).count() == 0
