@@ -547,6 +547,8 @@ function handleLiveEvent(event) {
     $('cc-parker').hidden = true; $('cc-parker').textContent = '';
   } else if (event.type === 'assistant_transcript_delta') {
     appendParkerCaption(event.text);
+    // A sentence ended in Parker's real words: one motion beat (micro-nod).
+    if (typeof event.text === 'string' && /[.?!]/.test(event.text)) presence('phrase_boundary');
   } else if (event.type === 'working') {
     const status = event.status === 'started' ? 'work_start'
       : event.status === 'failed' ? 'work_failed' : 'work_done';
