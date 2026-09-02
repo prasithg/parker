@@ -975,6 +975,35 @@ def test_both_pages_mount_the_reachy_presence_scene(db):
     assert 'aria-live="polite"' in companion  # nonvisual state announcements
 
 
+def test_companion_reduced_motion_stills_every_css_motion(db):
+    """Under prefers-reduced-motion the companion stills EVERY nonessential
+    CSS motion — the dormant power lamp's breathe, the fallback dot, and
+    both colour transitions — with one universal rule that closes the
+    stylesheet. Layout transforms (the translateX centring of #cc and the
+    cards) must survive, and no declaration outside the block may out-rank
+    the universal rule with its own !important."""
+
+    import re
+
+    html = client.get("/parker/converse").text
+    css = re.search(r"<style>(.*?)</style>", html, re.S).group(1)
+    block_re = re.compile(
+        r"@media \(prefers-reduced-motion: reduce\)\s*\{((?:[^{}]*\{[^{}]*\})*)\s*\}"
+    )
+    blocks = block_re.findall(css)
+    assert len(blocks) == 1, f"exactly one reduced-motion block, found {len(blocks)}"
+    block = blocks[0]
+    rules = {sel.strip(): body for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", block)}
+    assert "*" in rules, f"a universal rule stills everything: {rules}"
+    assert "animation: none !important" in rules["*"]
+    assert "transition: none !important" in rules["*"]
+    assert "transform" not in block  # #cc and the cards centre with translateX
+    # The block closes the stylesheet, and nothing outside it may out-rank it.
+    assert not css[block_re.search(css).end():].strip(), "the block is the last rule"
+    outside = block_re.sub("", css)
+    assert not re.findall(r"(?<![-\w])(?:animation|transition)\s*:[^;]*!important", outside)
+
+
 def test_converse_page_forwards_real_signals_to_the_expression_state(db):
     """Motion tells the truth: every presence input is a real signal."""
 

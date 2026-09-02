@@ -78,7 +78,6 @@ COMPANION_PAGE_HTML = """<!doctype html>
   body[data-power="starting"] #orb-fallback .dot { background: #ffd166; animation: breathe 1s ease-in-out infinite; }
   body[data-power="error"] #orb-fallback .dot { background: #ff9aa4; }
   @keyframes breathe { 0%, 100% { opacity: .5; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.05); } }
-  @media (prefers-reduced-motion: reduce) { #orb-fallback .dot { animation: none !important; } }
 
   /* Captions: TV-style, bottom third, only when CC is on. */
   #cc {
@@ -145,6 +144,15 @@ COMPANION_PAGE_HTML = """<!doctype html>
   body[data-power="elsewhere"] #power { border-color: #34435c; background: #10161f; color: #b9c6d8; }
   body[data-power="off"] #power { border-color: #34435c; background: #10161f; color: #b9c6d8; }
   #power:focus-visible, #cc-toggle:focus-visible { outline: 4px solid #ffd166; outline-offset: 3px; }
+
+  /* Reduced motion: still every nonessential motion (the breathing lamp and
+     dot, the colour transitions) — state colours still change, instantly.
+     Only animation and transition are nulled, never transform: #cc and the
+     cards centre with translateX. Keep this the last rule, and keep every
+     animation/transition above it free of !important, so it always wins. */
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
 </style>
 </head>
 <body data-power="off">

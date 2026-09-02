@@ -2,14 +2,17 @@
  * Executable lifecycle tests for the REAL companion page script
  * (companion_ui.py — the virtual Reachy embodiment with local wake).
  *
- * Usage: node companion_page.spec.js <path-to-extracted-inline-script>
+ * Usage: node companion_page.spec.js <path-to-extracted-inline-script> [<scene-boot-script>]
  *
  * Pins the take-2 + wake-word contracts against the page's actual code:
  * real power semantics with DORMANCY (power on = local wake lane only,
  * no cloud socket, lifeless scene until "Hey Parker"), the wake pop,
  * return-to-dormancy after the gentle wind-down, spoken-confirmation
  * cards that never ask him to tap, CC, and every interleaving the
- * independent review proved broken on the live lane.
+ * independent review proved broken on the live lane. With the page's
+ * second inline script (the Reachy scene boot) it also pins the
+ * page-to-scene reduced-motion seam and the scene receipt's wait for the
+ * receipts session.
  */
 'use strict';
 
@@ -17,8 +20,9 @@ const assert = require('assert');
 const { createEnv } = require('./converse_page_env');
 
 const pageScript = process.argv[2];
+const sceneScript = process.argv[3]; // optional: the scene boot module script
 if (!pageScript) {
-  process.stderr.write('usage: node companion_page.spec.js <inline-script.js>\n');
+  process.stderr.write('usage: node companion_page.spec.js <inline-script.js> [<scene-boot.js>]\n');
   process.exit(2);
 }
 
@@ -828,6 +832,86 @@ async function poweredActive(env) {
     assert.strictEqual(power(env), 'off');
     assert.ok(env.streams[0].track.stopped);
   });
+
+  // ------------------------------------------------------------------------
+  // The scene boot (the page's second inline script), when it is given.
+  // ------------------------------------------------------------------------
+  if (sceneScript) {
+    const receipts = (env) => env.beacons.filter((b) => b.url.includes('/receipts'));
+
+    for (const reduced of [false, true]) {
+      await test(`scene boot forwards prefers-reduced-motion=${reduced} to createReachyScene`, async () => {
+        const env = await bootedEnv();
+        env.reducedMotion = reduced;
+        const calls = [];
+        const scene = { dispose() {} };
+        await env.bootScene(sceneScript, {
+          createReachyScene: (mount, controller, opts) => {
+            calls.push({ mount: mount.id, sameController: controller === env.context.ParkerPresence.controller, opts });
+            return scene;
+          },
+        });
+        // (opts is born in the page's realm: compare values, not prototypes.)
+        assert.deepStrictEqual(JSON.parse(JSON.stringify(calls)),
+          [{ mount: 'reachy-mount', sameController: true, opts: { reducedMotion: reduced } }]);
+        assert.strictEqual(env.element('orb-fallback').hidden, true, 'the dot yields to the scene');
+        assert.strictEqual(env.context.ParkerPresence.scene, scene, 'the page owns the scene for teardown');
+        assert.deepStrictEqual(receipts(env).map((b) => JSON.parse(b.body)), [{ outcome: 'webgl_ready' }]);
+      });
+    }
+
+    // Boot the page with the receipts-session POST parked on a gate so the
+    // scene boots BEFORE sessionId exists (the packaged-WKWebView order).
+    async function bootWithGatedSession() {
+      const env = createEnv();
+      const realFetch = env.context.fetch;
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      env.context.fetch = (url, opts) => {
+        if (String(url).endsWith('/sessions') && opts && opts.method === 'POST') {
+          return gate.then(() => realFetch(url, opts));
+        }
+        return realFetch(url, opts);
+      };
+      await env.boot(pageScript);
+      await env.flush();
+      await env.bootScene(sceneScript, { createReachyScene: () => null }); // no WebGL: the dot stays
+      return { env, release };
+    }
+
+    await test('scene receipt waits for the receipts session, then sends once', async () => {
+      const { env, release } = await bootWithGatedSession();
+      assert.strictEqual(receipts(env).length, 0, 'nothing sent before the session exists');
+      for (let i = 0; i < 3; i += 1) { env.advance(500); await env.flush(); }
+      assert.strictEqual(receipts(env).length, 0, 'still waiting after 1.5 s of retries');
+      release();
+      await env.flush(); await env.flush();
+      env.advance(500);
+      await env.flush();
+      assert.strictEqual(receipts(env).length, 1, 'one scene receipt once the session exists');
+      assert.ok(receipts(env)[0].url.includes('/sessions/sess-test/receipts'), receipts(env)[0].url);
+      assert.deepStrictEqual(JSON.parse(receipts(env)[0].body), { outcome: 'webgl_fallback' });
+      env.advance(20000);
+      await env.flush();
+      assert.strictEqual(receipts(env).length, 1, 'sent exactly once; no further retries');
+    });
+
+    await test('scene receipt gives up after the retry budget when no session ever opens', async () => {
+      const { env } = await bootWithGatedSession();
+      env.advance(500 * 25);
+      await env.flush();
+      assert.strictEqual(receipts(env).length, 0, 'never sent without a session');
+      assert.ok([...env.timers.values()].every((t) => t.every != null),
+        'no one-shot retry timer left — only the page\'s own interval remains');
+    });
+
+    await test('scene receipt sends immediately when the session already exists', async () => {
+      const env = await bootedEnv();
+      await env.bootScene(sceneScript, { createReachyScene: () => null });
+      assert.deepStrictEqual(receipts(env).map((b) => JSON.parse(b.body)), [{ outcome: 'webgl_fallback' }]);
+      assert.strictEqual(env.element('orb-fallback').hidden, false, 'the dot remains the presence');
+    });
+  }
 
   const failed = results.filter((r) => !r.ok);
   for (const r of results) {
