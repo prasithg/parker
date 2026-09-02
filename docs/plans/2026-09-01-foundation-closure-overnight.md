@@ -233,23 +233,27 @@ Findings so far:
 
   | voice / TV | "hey parker" | "hey parker, can you help me" |
   |---|---|---|
-  | +12 dB (he is much louder) | 0/2 | 2/2 |
-  | +6 dB | 0/2 | 2/2 |
+  | +12 dB (he is much louder) | 1/2 | 2/2 |
+  | +6 dB | 1/2 | 2/2 |
   | 0 dB (equal) | 0/2 | 0/2 |
   | −6 dB | 0/2 | 0/2 |
 
-  Whisper keeps transcribing the TV through a short overlapping phrase; a
-  longer same-breath utterance gives it enough voice to switch. Honest
-  product statement until a wake path robust to overlapping speech exists
-  (a dedicated small wake model on consented samples, or TV-feed
-  cancellation): **dormant wake works in a quiet room; over TV speech it
-  needs him clearly louder than the TV AND a full sentence ("Hey Parker,
-  can you…"), and it does not work at equal loudness.** That is the
-  evening human gate's real question and a next slice — not a grammar
-  tuning. (A burst-focused window — transcribe only the loud burst above
-  the room's background instead of the 2.4 s TV-laden window — is the
-  cheapest idea to test first; the adaptive-gate variant below measures
-  the burst detector itself.)
+  (Corrected 2026-09-02 morning: the first table said 0/2 for the bare
+  phrase at +6/+12 dB; that run cut the audio one hop early — the same
+  trailing-silence artifact fixed for the recall matrix — and used a
+  different thread count. Re-run same-harness, `wake_soak_2026-09-02_
+  baseline-overtv.md`: one of the two synthesized voices wakes on the bare
+  phrase; the other reads as TV.) Whisper keeps transcribing the TV through
+  a short overlapping phrase; a longer same-breath utterance gives it
+  enough voice to switch. Honest product statement until a wake path
+  robust to overlapping speech exists (a dedicated small wake model on
+  consented samples, or TV-feed cancellation): **dormant wake works in a
+  quiet room; over TV speech it needs him clearly louder than the TV and
+  works best with a full sentence ("Hey Parker, can you…"); it does not
+  work at equal loudness.** That is the evening human gate's real question
+  and a next slice — not a grammar tuning. A burst-focused second look was
+  tried (`fable/wake-burst-window`): against the corrected baseline it
+  showed **no measurable gain** (2/4 → 2/4), so it is not shipped.
 - **Same-breath tail.** The wake window itself rarely holds the request
   ("Hey Parker, can you help me" → window heard "Hey Parker, Ken"); the
   post-wake tail lane is what carries it (recall rows' "tail after wake"
@@ -271,14 +275,13 @@ Findings so far:
   phrase micro-nods from real transcript punctuation, restrained outcome
   beats, idle weight shift, `advance()` for numeric verification
   ([plan](2026-09-02-reachy-motion-vocabulary.md)).
-- `fable/wake-burst-window` (on PR #40, experiment, opt-in
-  `parker_wake_burst_window`): a second look at just the loud burst when
-  the last 1.3 s of the window is ≥1.25× louder than what came before.
-  Measured (base model): bare "hey parker" over TV at +6/+12 dB 0/4 → 2/4
-  (one synthesized voice still reads as TV even in the burst clip); the
-  full sentence 4/4 either way; equal loudness and below still 0/8; no
-  extra false wakes in 4 min of TV; about +20% CPU during TV. A partial,
-  honest gain — the answer over TV speech remains a dedicated wake model.
+- `fable/wake-burst-window` (PR #47, experiment, opt-in): a second look at
+  just the loud burst when the last 1.3 s of the window is ≥1.25× louder
+  than what came before. Its fresh review caught that the "0/4 → 2/4"
+  claim compared against a non-same-harness baseline; the same-harness
+  baseline is already 2/4, so the burst window shows **no measurable
+  gain** on this synthetic set (+12% CPU, no extra false wakes). Kept as
+  a recorded negative result; not merged.
 
 Each stacked PR had a fresh-context review and a fix round where it
 returned NEEDS_FIX; every fix round added the pin that would have caught
