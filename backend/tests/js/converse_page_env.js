@@ -211,6 +211,7 @@ function createEnv() {
   env.powerClaims = [];
   env.powerReleases = [];
   env.ownerClient = null; // settings GET: who owns power (null = "this page" by default)
+  env.gateSettings = null; // a promise the settings GET awaits (models real fetch latency)
   function jsonResponse(body, status) {
     const code = status || 200;
     return { ok: code >= 200 && code < 300, status: code, json: async () => body, body: null };
@@ -249,7 +250,9 @@ function createEnv() {
         try { Object.assign(env.settings, JSON.parse(opts.body)); } catch (err) {}
         return Promise.resolve(jsonResponse(env.settings));
       }
-      return Promise.resolve(jsonResponse(Object.assign({ owner_client: env.ownerClient == null ? 'this-page' : env.ownerClient }, env.settings)));
+      const body = () => jsonResponse(Object.assign({ owner_client: env.ownerClient == null ? 'this-page' : env.ownerClient }, env.settings));
+      if (env.gateSettings) return env.gateSettings.then(body);
+      return Promise.resolve(body());
     }
     return Promise.resolve(jsonResponse({}));
   };

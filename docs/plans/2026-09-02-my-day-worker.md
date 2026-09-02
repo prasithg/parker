@@ -54,3 +54,15 @@ steers to it; a seeded medicine + family note come back as names, times
 → says so; a reminder he confirmed in-session appears as "(set)". Full
 suite green. Human gate: ask "what do I have today" in a real session
 and hear Parker's notes, not a web search.
+
+## Fix round (2026-09-02, after the fresh review of `182bad3`)
+
+The review found the limit line could be truncated on a busy day and that a
+failed store produced "nothing is on record" — Parker denying reminders he
+holds. `7cb29e1`: the cap is applied before the unconditional limit line; a
+store failure is an error result whose item says Parker could not read his
+notes (never "nothing on record"); a single failing source adds an honest
+partial line; confirmed reminders read as set; plan-like notes come only
+from the memory bullets (never the concerns section) with the prefix
+stripped; the in-flight key is namespaced. Two pins added (busy day; store
+failure).

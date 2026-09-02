@@ -111,3 +111,18 @@ re-run recorded in the PR.
 Human gate: a real-mic evening where "OK, thanks" ends the session and a
 mid-conversation "thanks" does not; the resting label/dimming judged on the
 living-room screen.
+
+## Fix round (2026-09-02, after the fresh review of `304db95`)
+
+The review found the ending match fired on questions and reports that
+merely end with an ender phrase ("should I go to sleep?", "I can't go to
+sleep", "you said that's all") — the hang-up-mid-thought failure. Fixes
+(`92c82d4` … `ace3ed7`): a transcript ending in `?` is never an exit; an
+ender is the whole utterance or its ending after a bounded whitelist lead
+(≤ 3 words) with bounded trailers peeled in every order; wider ender list
+("that's all for today", "goodbye", "good night", "we're done", "i'm
+finished", "go to sleep parker"); gratitude as a small regex; the
+watchdog's stand-down clears the end kind; S03/S08 feed `done()` so their
+"no closing" proof is real; S09 pins barge-in during the soft goodbye; S10
+pins "Should I go to sleep?". Five realtime tests that raced the test
+client's cancel-on-exit now wait for the ack they judge (the CI flake).

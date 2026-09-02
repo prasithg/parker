@@ -703,8 +703,14 @@ async function onRevoked(event) {
     // The engine may simply have restarted (nobody owns power after a
     // restart, but the durable switch still says ON): if so, re-claim once
     // and carry on resting — instead of telling him he was turned off.
+    // The refused socket is detached FIRST so its close (which lands
+    // before the fetch resolves in a real browser) cannot run the wake
+    // lane's error branch and leave a "flip the switch" card behind.
     reclaimedGen = powerGen;
     const genAtCheck = powerGen;
+    const refused = wake.ws;
+    wake.ws = null;
+    if (refused) { try { refused.close(); } catch (err) {} }
     let settings = null;
     try {
       const res = await fetch('/parker/converse/companion/settings');
@@ -714,7 +720,7 @@ async function onRevoked(event) {
     if (settings && settings.power_on && !settings.owner_client) {
       const claim = await claimPower();
       if (genAtCheck !== powerGen) return;
-      if (claim.ok) { stopWakeLane(); wake.retried = false; startDormant(); return; }
+      if (claim.ok) { wake.retried = false; hideCard(); startDormant(); return; }
     }
   }
   powerOff({silent: true}); // the engine already turned us off; do not turn off the new owner

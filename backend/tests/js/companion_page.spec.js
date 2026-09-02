@@ -362,18 +362,31 @@ async function poweredActive(env) {
   await test('a refused reconnect after an engine restart re-claims and keeps resting', async () => {
     const env = await bootedEnv();
     const wakeWs = await poweredDormant(env);
-    // The engine restarted: durable switch still ON, nobody owns it.
+    // The engine restarted: durable switch still ON, nobody owns it. The
+    // lane's own retry already ran once (a real drop preceded the refusal).
+    wakeWs.dropped();
+    env.advance(1600);
+    const retryWs = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.notStrictEqual(retryWs, wakeWs);
     env.settings.power_on = true;
     env.ownerClient = '';
-    wakeWs.message({ type: 'revoked', reason: 'power_off' });
+    let release;
+    env.gateSettings = new Promise((resolve) => { release = resolve; });
+    retryWs.message({ type: 'revoked', reason: 'power_off' });
+    retryWs.dropped(); // in a real browser the close lands before the fetch resolves
+    await env.flush();
+    assert.notStrictEqual(power(env), 'error', 'the refused socket must not run the error branch');
+    assert.ok(!card(env) || !/flip the switch/i.test(card(env).text), 'no misleading card');
+    release(); env.gateSettings = null;
     await env.flush(); await env.flush(); await env.flush();
     assert.strictEqual(env.powerClaims.length, 2, 're-claimed once');
     assert.strictEqual(power(env), 'dormant', 'still resting');
+    assert.strictEqual(card(env), null, 'and nothing tells him to flip the switch');
     assert.ok(!env.streams[0].track.stopped, 'the mic was never released');
-    assert.strictEqual(wakeSockets(env).length, 2, 'a fresh wake lane with the new credentials');
+    assert.strictEqual(wakeSockets(env).length, 3, 'a fresh wake lane with the new credentials');
     assert.strictEqual(env.powerReleases.length, 0);
     // …but a REAL power-off elsewhere (someone owns it / switch off) still turns us off.
-    const second = wakeSockets(env)[1]; second.open();
+    const second = wakeSockets(env)[2]; second.open();
     env.settings.power_on = false;
     second.message({ type: 'revoked', reason: 'power_off' });
     await env.flush(); await env.flush(); await env.flush();
