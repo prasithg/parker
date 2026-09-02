@@ -188,8 +188,9 @@ Findings so far:
   audio ended with 0.5 s of silence, less than one 0.7 s hop, so the
   detector's final inference ran mid-word and no later hop ever came. A
   live microphone keeps streaming silence, so the lane always gets a hop
-  with the whole phrase. The soak now pads 1.6 s (a re-run is recorded
-  below). The slow/effortful rate (120 wpm) woke every time regardless.
+  with the whole phrase. The soak now pads 1.6 s: re-run on `base` with the
+  production gate (`wake_soak_2026-09-01_recall-padded.md`): **48/48, 0
+  false wakes**. The slow/effortful rate (120 wpm) woke every time regardless.
 - **Over the TV — the real-room problem.** Positives mixed INTO continuous
   TV speech (`wake_soak_2026-09-01_overtv-sweep.md`, base model):
 
