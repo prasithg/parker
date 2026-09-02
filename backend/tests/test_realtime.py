@@ -363,6 +363,7 @@ def test_an_oversized_tail_is_bounded_and_a_late_hello_is_ignored(
     with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "hello", "tail": "word " * 200})
         ws.send_json({"type": "hello", "tail": "a second hello must not re-shape anything"})
+        assert _wait_until(lambda: _system_items(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
         assert _wait_until(lambda: _response_creates(fake) >= 1)
     items = _system_items(fake)
@@ -447,6 +448,7 @@ def test_propose_action_stages_through_the_pipeline_and_reports_back(
         staged_note = ws.receive_json()
         assert staged_note["type"] == "proposal_staged"
         assert "water the plants" in staged_note["label"]
+        assert _wait_until(lambda: _function_outputs(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
 
     action = db.query(StagedAction).one()
@@ -1557,6 +1559,7 @@ def test_message_to_unknown_recipient_is_rejected_like_the_text_lane(
     with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "stop"})
         assert ws.receive_json() == {"type": "clear"}
+        assert _wait_until(lambda: _function_outputs(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
 
     assert db.query(StagedAction).count() == 0
@@ -1585,6 +1588,7 @@ def test_gateway_backed_types_without_a_gateway_are_rejected_not_claimed_staged(
     with client.websocket_connect(live_url()) as ws:
         ws.send_json({"type": "stop"})
         assert ws.receive_json() == {"type": "clear"}
+        assert _wait_until(lambda: _function_outputs(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
 
     assert db.query(StagedAction).count() == 0
@@ -1608,6 +1612,7 @@ def test_malformed_function_arguments_never_kill_the_call(
         assert notice["type"] == "notice"  # the string error became a friendly notice
         follow = ws.receive_json()
         assert follow == {"type": "assistant_transcript_delta", "text": "Still alive."}
+        assert _wait_until(lambda: _function_outputs(fake))  # the client cancels the handler on exit
         ws.send_json({"type": "end"})
 
     assert db.query(StagedAction).count() == 0
