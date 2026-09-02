@@ -536,10 +536,17 @@ def test_a_revoked_screen_reads_off_while_the_durable_write_is_still_landing(voi
 
     monkeypatch.setattr(converse_router, "set_companion_settings", slow_set)
     seen_by_page: dict = {}
+    durable_at_get: dict = {}
 
     def flip_off() -> None:
         client.post("/parker/converse/companion/power", json={"on": False, "client_id": "sarah-phone"})
 
+    from app.parker.companion_state import get_companion_settings, set_companion_settings
+
+    # The durable flag is ON (the family left Parker on) — without this the
+    # store already answers False and the pin would hold without the fix
+    # (fresh review of the fix round, 2026-09-02).
+    set_companion_settings(world.db, power_on=True)
     with world.connect() as ws:
         world.settle_open(fake, expect_card=False)
         poster = threading.Thread(target=flip_off, daemon=True)
@@ -547,14 +554,17 @@ def test_a_revoked_screen_reads_off_while_the_durable_write_is_still_landing(voi
         try:
             assert ws.receive_json() == {"type": "revoked", "reason": "power_off"}
             assert "end" not in persist, "the revoke must land before the durable write"
-            # What the revoked page asks next, inside the write window.
+            # What the revoked page asks next, inside the write window —
+            # while the DURABLE flag still says on.
             seen_by_page.update(client.get("/parker/converse/companion/settings").json())
+            durable_at_get.update(get_companion_settings(world.db))
             assert "end" not in persist
             with pytest.raises(WebSocketDisconnect):
                 ws.receive_json()
         finally:
             poster.join(5.0)
-    assert seen_by_page["power_on"] is False, seen_by_page  # never "on with no owner"
+    assert durable_at_get["power_on"] is True, durable_at_get  # the DB still said on…
+    assert seen_by_page["power_on"] is False, seen_by_page  # …and the page read OFF: never "on with no owner"
     assert seen_by_page["owner_client"] == ""
     # After the write, off is durable too.
     assert client.get("/parker/converse/companion/settings").json()["power_on"] is False
