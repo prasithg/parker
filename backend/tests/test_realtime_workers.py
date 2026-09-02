@@ -258,12 +258,13 @@ def test_search_worker_grounds_the_brain_in_todays_local_date(monkeypatch):
 
     brain = FakeBrain(BrainReply(speech="The final is on Sunday afternoon."))
     monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda: brain)
+    monkeypatch.setattr(
+        realtime_workers, "local_date_line", lambda: "Wednesday, 2 September 2026, 12:19 AM EDT"
+    )
     result = realtime_workers.run_search_worker("when is the US Open final?")
-    assert len(brain.calls) == 1
-    sent = brain.calls[0]
-    assert sent.startswith("Right now it is ") and sent.endswith(" when is the US Open final?")
-    assert realtime_workers.local_date_line() in sent
-    assert " local time" in sent
+    assert brain.calls == [
+        "Right now it is Wednesday, 2 September 2026, 12:19 AM EDT. when is the US Open final?"
+    ]
     assert result.question == "when is the US Open final?"  # dedupe/journal key unchanged
 
 
@@ -271,4 +272,5 @@ def test_local_date_line_names_the_weekday_date_and_time():
     line = realtime_workers.local_date_line()
     import re
 
-    assert re.match(r"^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), \d{1,2} [A-Z][a-z]+ \d{4}, \d{1,2}:\d{2} (AM|PM) local time$", line), line
+    # …and the zone name, so the brain can convert "2 PM ET" to his clock.
+    assert re.match(r"^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), \d{1,2} [A-Z][a-z]+ \d{4}, \d{1,2}:\d{2} (AM|PM) \S+$", line), line

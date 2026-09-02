@@ -149,7 +149,8 @@ def local_date_line() -> str:
     from app.parker.rollup import home_timezone
 
     now = datetime.now(home_timezone())
-    return f"{now:%A}, {now.day} {now:%B %Y}, {now.strftime('%I:%M %p').lstrip('0')} local time"
+    zone = now.strftime("%Z") or "local time"
+    return f"{now:%A}, {now.day} {now:%B %Y}, {now.strftime('%I:%M %p').lstrip('0')} {zone}"
 
 
 def run_search_worker(question: str) -> WorkerResult:
