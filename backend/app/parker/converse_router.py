@@ -134,10 +134,12 @@ async def companion_power(
     ``on`` claims power for this page: the reply carries the owner token
     and generation every companion socket must present; 409 while another
     screen is actually listening; 503 when the durable write fails (and
-    nothing is on). ``off`` turns Parker off for EVERY screen: the
-    in-memory flip lands first, every wake/realtime socket receives a
-    ``revoked`` frame and closes, then the flag persists — ``saved`` is
-    false when that write failed, so the page can say so and retry.
+    nothing is on). ``off`` turns Parker off for EVERY screen, in this
+    order: the in-memory flip (synchronous — no new socket authorizes
+    from this instant), every wake/realtime socket receives a ``revoked``
+    frame and closes, and only THEN the flag persists — the ack waits for
+    that write so ``saved`` is truthful (false when it failed, so the page
+    can say so and retry), but the lines never wait behind SQLite.
     """
 
     from starlette.concurrency import run_in_threadpool
@@ -160,9 +162,18 @@ async def companion_power(
         for close in granted.pop("displaced"):
             await _revoke(close, "superseded")
         return granted
-    released = await run_in_threadpool(authority.release, persist)
+    released = authority.release()  # memory only: nothing to await, nothing to wait on
     for close in released.pop("revoked"):
         await _revoke(close, "power_off")
+    # Off is off; now the durable record (F1 probe 3b: written under the
+    # lock BEFORE the revoke, a slow write kept his mic streaming upstream).
+    saved = True
+    try:
+        await run_in_threadpool(persist, False)
+    except Exception:  # noqa: BLE001 — the lines are dead regardless; the page retries
+        logger.warning("companion power-off write failed", exc_info=True)
+        saved = False
+    released["saved"] = saved
     return released
 
 

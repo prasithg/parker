@@ -375,3 +375,92 @@ def test_a_wake_hit_racing_a_revoke_is_swallowed_not_raised(db, monkeypatch):
         gate.set()  # the inference finishes after the revoke
         with pytest.raises(WebSocketDisconnect):
             ws.receive_json()
+
+
+# ---------------------------------------------------------------------------
+# Strict power-off (P0.1 F1): the lines die BEFORE the durable write.
+# ---------------------------------------------------------------------------
+
+
+def test_release_without_a_persist_skips_the_write_and_reports_no_save():
+    """The route persists AFTER revoking every line; ``release()`` alone
+    flips memory, hands back the closers, and reports that no write ran."""
+
+    power = CompanionPower()
+    a = power.claim(_persist_ok, client_id="tab-a")
+    log: list = []
+    power.register(token=a["owner"], kind="realtime", close=_closer(log, "line"))
+    released = power.release()
+    assert released["power_on"] is False and released["saved"] is None
+    assert len(released["revoked"]) == 1
+    assert power.authorize(a["owner"], a["gen"]) == "power_off"
+
+
+def _audio_appends(fake) -> list[str]:
+    return [e["audio"] for e in fake.sent if e["type"] == "input_audio_buffer.append"]
+
+
+def test_power_off_revokes_the_line_before_the_durable_write(voice_world, monkeypatch):
+    """F1 probe 3b (2026-09-02): with the settings write slowed, the live
+    line was revoked only AFTER the write landed — his mic audio reached
+    OpenAI a second after the switch was flipped. Off means off: the
+    ``revoked`` frame and the hang-up arrive while the write is still
+    running, a new line is refused meanwhile, only pre-flip audio ever
+    went upstream, and the ack still reports whether the write saved."""
+
+    import threading
+    import time
+
+    from scenario_harness import _wait_until
+
+    world = voice_world
+    world.disable_brain()
+    fake = world.script([])
+    persist: dict = {}
+    real_set = converse_router.set_companion_settings
+
+    def slow_set(db, **fields):
+        persist["start"] = time.monotonic()
+        time.sleep(0.5)
+        try:
+            return real_set(db, **fields)
+        finally:
+            persist["end"] = time.monotonic()
+
+    monkeypatch.setattr(converse_router, "set_companion_settings", slow_set)
+    response: dict = {}
+
+    def flip_off() -> None:
+        response.update(
+            client.post(
+                "/parker/converse/companion/power", json={"on": False, "client_id": "sarah-phone"}
+            ).json()
+        )
+
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        ws.send_json({"type": "audio", "data": "QUJD"})
+        assert _wait_until(lambda: _audio_appends(fake) == ["QUJD"])  # the line is live
+
+        post_start = time.monotonic()
+        poster = threading.Thread(target=flip_off, daemon=True)
+        poster.start()
+        try:
+            assert ws.receive_json() == {"type": "revoked", "reason": "power_off"}
+            revoked_at = time.monotonic()
+            assert "end" not in persist, "the line was revoked only after the durable write"
+            assert revoked_at - post_start < 0.3
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()  # hung up on, still inside the write
+            assert "end" not in persist
+            # Nothing can open while the write runs: off is already off.
+            with client.websocket_connect("/parker/converse/realtime" + world.power_query) as again:
+                assert again.receive_json()["reason"] == "power_off"
+            assert "end" not in persist
+        finally:
+            poster.join(5.0)
+        assert not poster.is_alive()
+        assert response == {"power_on": False, "saved": True}
+        assert persist["end"] > revoked_at
+        assert _audio_appends(fake) == ["QUJD"]  # only what he said before the flip
+    assert _wait_until(lambda: fake.closed)
