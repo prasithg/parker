@@ -33,6 +33,7 @@ function createEnv() {
     streams: [],
     reloads: 0,
     getUserMediaMode: 'grant', // or 'deny'
+    reducedMotion: false, // what matchMedia('(prefers-reduced-motion: reduce)') reports
   };
 
   // ---------------------------------------------------------------- DOM
@@ -297,7 +298,10 @@ function createEnv() {
     TextDecoder,
     btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
     atob: (s) => Buffer.from(s, 'base64').toString('binary'),
-    matchMedia: () => ({ matches: false }),
+    matchMedia: (q) => ({
+      matches: !!env.reducedMotion && /prefers-reduced-motion:\s*reduce/.test(String(q)),
+      media: String(q),
+    }),
   };
   sandbox.window = sandbox;
   sandbox.self = sandbox;
@@ -333,6 +337,29 @@ function createEnv() {
     const pageSource = fs.readFileSync(pageScriptPath, 'utf8');
     vm.runInContext(pageSource, context, { filename: 'converse-page.js' });
     return env.flush(); // let createSession() settle
+  };
+
+  // The page's second inline script (the Reachy scene boot) runs here with
+  // ONLY its reachy.js import literal redirected to `reachyModule` — the vm
+  // context has no loader for URL specifiers — so the page's own
+  // fallback/receipt logic is what executes. Without a module the import
+  // rejects, as a missing file or a WebGL-less browser would. The throw
+  // keeps an import-path refactor from silently testing nothing.
+  const REACHY_IMPORT = "import('/parker/converse/static/converse/reachy.js')";
+  env.bootScene = function bootScene(sceneScriptPath, reachyModule) {
+    const source = fs.readFileSync(sceneScriptPath, 'utf8');
+    if (!source.includes(REACHY_IMPORT)) {
+      throw new Error('scene boot no longer imports reachy.js as expected');
+    }
+    sandbox.__importReachy = () => (
+      reachyModule ? Promise.resolve(reachyModule) : Promise.reject(new Error('no reachy module'))
+    );
+    vm.runInContext(
+      source.replace(REACHY_IMPORT, 'window.__importReachy()'),
+      context,
+      { filename: 'scene-boot.js' }
+    );
+    return env.flush().then(env.flush); // the import, then createReachyScene + the receipt
   };
 
   return env;

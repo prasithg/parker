@@ -60,8 +60,9 @@ def test_reachy_renderer_module_parses_as_esm():
     assert result.returncode == 0, result.stderr
 
 
-def _extract_page_script(html: str) -> str:
-    """The first inline script (the conversation runtime) from a page."""
+def _extract_inline_scripts(html: str) -> list[str]:
+    """Every non-empty inline script of a page, in document order: the
+    conversation runtime first, then the scene boot module."""
 
     import re
 
@@ -71,7 +72,13 @@ def _extract_page_script(html: str) -> str:
         if s.strip()
     ]
     assert scripts, "no inline scripts found in the page"
-    return scripts[0]
+    return scripts
+
+
+def _extract_page_script(html: str) -> str:
+    """The first inline script (the conversation runtime) from a page."""
+
+    return _extract_inline_scripts(html)[0]
 
 
 def test_lab_page_lifecycle_spec_passes(tmp_path):
@@ -94,14 +101,21 @@ def test_companion_page_lifecycle_spec_passes(tmp_path):
     persisted settings, CC, spoken-confirmation cards, and every
     interleaving the independent review proved broken on the live lane
     (guard TTS vs off/close, drain-vs-response truth, stale opens,
-    page-hide teardown, transition receipts)."""
+    page-hide teardown, transition receipts). The scene boot (the second
+    inline script) rides along so the page-to-scene reduced-motion seam
+    and the scene receipt's wait for the session are pinned too."""
 
     from app.parker.companion_ui import COMPANION_PAGE_HTML
 
+    scripts = _extract_inline_scripts(COMPANION_PAGE_HTML)
     page_script = tmp_path / "companion-page.js"
-    page_script.write_text(_extract_page_script(COMPANION_PAGE_HTML))
+    page_script.write_text(scripts[0])
+    scene_script = tmp_path / "companion-scene.js"
+    scene_script.write_text(scripts[1])
     result = _run_node(
-        str(TESTS_DIR / "js" / "companion_page.spec.js"), str(page_script)
+        str(TESTS_DIR / "js" / "companion_page.spec.js"),
+        str(page_script),
+        str(scene_script),
     )
     assert result.returncode == 0, f"\n{result.stdout}\n{result.stderr}"
     assert "FAIL" not in result.stdout
@@ -112,17 +126,11 @@ def test_converse_page_inline_scripts_parse(tmp_path):
     # or syntax slip must fail here, not in the living room. (The module
     # boot scripts use only dynamic import(), which parses in the classic
     # goal too.)
-    import re
-
     from app.parker.companion_ui import COMPANION_PAGE_HTML
     from app.parker.converse_ui import CONVERSE_PAGE_HTML
 
     for page_name, html in (("lab", CONVERSE_PAGE_HTML), ("companion", COMPANION_PAGE_HTML)):
-        scripts = [
-            s
-            for s in re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.S)
-            if s.strip()
-        ]
+        scripts = _extract_inline_scripts(html)
         assert len(scripts) >= 2, f"{page_name}: expected the runtime script and the scene boot"
         for index, source in enumerate(scripts):
             path = tmp_path / f"{page_name}-inline-{index}.js"

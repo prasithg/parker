@@ -18,7 +18,9 @@ Contract (pinned by tests):
   that is listening. Off stays off across restarts. On = DORMANT: the mic
   feeds only the LOCAL wake lane (no cloud audio) and Reachy rests
   lifeless until "Hey Parker" pops it awake into the live full-duplex
-  line; the words after the wake phrase ride the line's first frame; the
+  line; the words after the wake phrase ride the line's first frame, and
+  the lane's final transcript of everything it heard follows as ONE 'tail'
+  frame (the line opens faster than the lane can finish); the
   session's gentle wind-down returns it to dormancy
   (docs/plans/2026-09-01-wake-word.md). A missing local wake model fails
   CLOSED (power off, honest card) — never continuous cloud audio. A
@@ -76,7 +78,6 @@ COMPANION_PAGE_HTML = """<!doctype html>
   body[data-power="starting"] #orb-fallback .dot { background: #ffd166; animation: breathe 1s ease-in-out infinite; }
   body[data-power="error"] #orb-fallback .dot { background: #ff9aa4; }
   @keyframes breathe { 0%, 100% { opacity: .5; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.05); } }
-  @media (prefers-reduced-motion: reduce) { #orb-fallback .dot { animation: none !important; } }
 
   /* Captions: TV-style, bottom third, only when CC is on. */
   #cc {
@@ -143,6 +144,15 @@ COMPANION_PAGE_HTML = """<!doctype html>
   body[data-power="elsewhere"] #power { border-color: #34435c; background: #10161f; color: #b9c6d8; }
   body[data-power="off"] #power { border-color: #34435c; background: #10161f; color: #b9c6d8; }
   #power:focus-visible, #cc-toggle:focus-visible { outline: 4px solid #ffd166; outline-offset: 3px; }
+
+  /* Reduced motion: still every nonessential motion (the breathing lamp and
+     dot, the colour transitions) — state colours still change, instantly.
+     Only animation and transition are nulled, never transform: #cc and the
+     cards centre with translateX. Keep this the last rule, and keep every
+     animation/transition above it free of !important, so it always wins. */
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
 </style>
 </head>
 <body data-power="off">
@@ -310,11 +320,15 @@ const audio = {stream: null, micCtx: null, playCtx: null, proc: null,
                gain: null, source: null, mode: 'idle'};
 
 // Wake lane state: `tail` is what he said right after "Hey Parker" (the
-// wake frame's tail plus any post-wake transcript the lane sends while
-// the line connects); it rides the live socket's first frame.
-const wake = {ws: null, retried: false, head: '', tail: '', tailTimer: null};
+// wake frame's tail plus the lane's latest post-wake transcript); it rides
+// the live socket's first frame. The line usually opens before the lane
+// has finished hearing him, so `pending` means the lane was asked to
+// finish and its final transcript is still owed to the open line.
+const wake = {ws: null, retried: false, head: '', tail: '', tailTimer: null, pending: false};
 
-const live = {ws: null, playCtx: null, nextTime: 0, sources: [], chunkMeta: [],
+// `playing` holds the scheduled AudioBufferSourceNodes a flush must stop —
+// nothing else is ever written there (source citations are captions only).
+const live = {ws: null, playCtx: null, nextTime: 0, playing: [], chunkMeta: [],
               energyTimer: null, wasPlaying: false, closingSeen: false,
               responseOpen: false, guardSpeaking: 0, retries: 0, revoked: false};
 let startingLive = false;
@@ -381,8 +395,8 @@ function playLivePcm(encoded) {
     const at = Math.max(live.playCtx.currentTime + 0.05, live.nextTime);
     src.start(at);
     live.nextTime = at + buffer.duration;
-    live.sources.push(src);
-    src.onended = () => { live.sources = live.sources.filter((s) => s !== src); };
+    live.playing.push(src);
+    src.onended = () => { live.playing = live.playing.filter((s) => s !== src); };
     let sum = 0;
     for (let i = 0; i < floats.length; i++) sum += floats[i] * floats[i];
     live.chunkMeta.push({
@@ -394,9 +408,9 @@ function playLivePcm(encoded) {
 }
 
 function flushLivePlayback() {
-  const hadAudio = live.sources.length > 0;
-  for (const src of live.sources) { try { src.stop(); } catch (err) {} }
-  live.sources = [];
+  const hadAudio = live.playing.length > 0;
+  for (const src of live.playing) { try { src.stop(); } catch (err) {} }
+  live.playing = [];
   live.chunkMeta = [];
   live.nextTime = 0;
   live.wasPlaying = false;
@@ -521,10 +535,25 @@ function endLine() {
 function stopWakeLane() {
   const ws = wake.ws;
   wake.ws = null;
+  wake.pending = false;
   if (ws) {
     try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
     try { ws.close(); } catch (err) {}
   }
+}
+
+// The lane's last words for a line that is already open: forward them ONCE
+// as a 'tail' frame (the bridge holds its first reply for it), then let the
+// lane go. The final frame, the outer bound, and a dropped lane all exit
+// through here, so the line never receives a second tail.
+function forwardTail() {
+  wake.pending = false;
+  if (live.ws && live.ws.readyState === 1) {
+    try { live.ws.send(JSON.stringify({type: 'tail', text: wake.tail || ''})); } catch (err) {}
+  }
+  wake.tail = ''; wake.head = '';
+  clearTimeout(wake.tailTimer);
+  stopWakeLane();
 }
 
 // ---------------------------------------------------------------------------
@@ -584,8 +613,7 @@ function handleLiveEvent(event) {
       hideCard();
     }
   } else if (event.type === 'sources') {
-    live.sources = event.items || [];
-    captionSources(live.sources); // CC on only; CC off keeps zero chrome
+    captionSources(event.items || []); // CC on only; CC off keeps zero chrome
   } else if (event.type === 'revoked') {
     // The engine ended this page's authority (someone turned Parker off, or
     // another screen took over): not a line drop — no retry, honest card.
@@ -768,6 +796,11 @@ async function powerOn(options) {
   startingLive = false;
   if (myGen !== powerGen) { if (granted && !live.ws && !wake.ws) releaseAudio(); return; }
   if (!granted) {
+    // Nothing is held (no mic, no sockets): give the claim back so the
+    // engine and the persisted switch agree with what he sees — off, with
+    // 'Try again' — and activating the switch retries instead of releasing.
+    power.token = null;
+    releasePower(0);
     presence('error');
     setPowerVisual('error');
     showCard('error',
@@ -784,6 +817,7 @@ async function powerOn(options) {
     showCard('notice', 'Turn the switch to wake Parker.', 0);
     return;
   }
+  wake.retried = false; // a fresh activation earns a fresh quiet retry
   startDormant();
 }
 
@@ -793,7 +827,7 @@ function powered() {
 }
 function switchedOn() {
   const state = document.body.dataset.power;
-  return powered() || state === 'error' || state === 'elsewhere';
+  return powered() || state === 'elsewhere'; // 'error' reads as off: activating retries
 }
 
 // ---------------------------------------------------------------------------
@@ -804,6 +838,11 @@ function switchedOn() {
 
 function startDormant() {
   if (!audio.stream) return;
+  // A lane still finishing a tail for a line that is gone has nowhere to
+  // send it: abandon it (and its bound) before re-arming a fresh one.
+  clearTimeout(wake.tailTimer);
+  stopWakeLane();
+  wake.tail = ''; wake.head = '';
   audio.mode = 'wake';
   presence('dormant');
   setPowerVisual('dormant');
@@ -818,11 +857,16 @@ function startDormant() {
     if (event.type === 'wake') onWake(event);
     else if (event.type === 'tail') {
       // More of his same-breath request, transcribed while the line connects.
-      // The engine cleared its window at the wake, so these frames hold only
-      // what came AFTER it: keep the wake frame's own words in front.
+      // The engine cleared its window at the wake and only grows it after,
+      // so each frame is a superset of what came AFTER it: keep the wake
+      // frame's own words in front of the latest.
       if (typeof event.text === 'string' && event.text) {
         wake.tail = ((wake.head ? wake.head + ' ' : '') + event.text).trim().slice(0, 200);
       }
+      // The lane's final transcript (answering the line's tail_end): forward
+      // it to the open line. A final before the line is open simply rides
+      // the hello, as before.
+      if (event.final && wake.pending) forwardTail();
     } else if (event.type === 'revoked') {
       onRevoked(event);
     } else if (event.type === 'unavailable') {
@@ -837,6 +881,9 @@ function startDormant() {
   ws.onclose = () => {
     if (ws !== wake.ws) return;
     wake.ws = null;
+    // The lane went before its final word: the open line gets what it gave
+    // (so the bridge is not left waiting out its deadline), nothing more.
+    if (wake.pending) { forwardTail(); return; }
     if (audio.mode !== 'wake' || !powered()) return;
     if (live.ws || startingLive) return; // a line is opening — not dormancy's business
     if (!wake.retried) {
@@ -862,9 +909,13 @@ function onWake(event) {
   chirp();
   // The wake lane stays open (mic frames keep going to it) so the rest of
   // "Hey Parker, can you help me" is transcribed while the line connects;
-  // the line's open ends it, or this bound does.
+  // the line's open asks it to finish, its final word ends it, or this
+  // outer bound does (forwarding whatever it gave if the line is open).
   clearTimeout(wake.tailTimer);
-  wake.tailTimer = setTimeout(() => { if (wake.ws) stopWakeLane(); }, 3000);
+  wake.tailTimer = setTimeout(() => {
+    if (wake.pending) forwardTail();
+    else if (wake.ws) stopWakeLane();
+  }, 3000);
   startActive();
 }
 
@@ -890,13 +941,23 @@ function startActive() {
 
   ws.onopen = () => {
     if (ws !== live.ws) return; // stale open must not restore live state
-    // The handoff contract: hello (with the tail) is the FIRST frame, then
-    // the wake lane ends and the mic streams to this line.
-    try { ws.send(JSON.stringify({type: 'hello', tail: wake.tail || ''})); } catch (err) {}
-    wake.tail = ''; wake.head = '';
-    clearTimeout(wake.tailTimer);
-    stopWakeLane();
+    // The handoff contract: hello (with the tail so far) is the FIRST frame
+    // and the mic streams to this line from here. The line opens faster
+    // than the lane can finish hearing him, so if the lane is still up it
+    // is asked to finish (tail_end) and `pending` tells the bridge that ONE
+    // final 'tail' frame follows; the lane keeps the head/tail until then.
+    const pending = !!wake.ws;
+    const hello = {type: 'hello', tail: wake.tail || ''};
+    hello.pending = pending;
+    try { ws.send(JSON.stringify(hello)); } catch (err) {}
     audio.mode = 'live';
+    if (pending) {
+      wake.pending = true;
+      try { wake.ws.send(JSON.stringify({type: 'tail_end'})); } catch (err) {}
+    } else {
+      wake.tail = ''; wake.head = '';
+      clearTimeout(wake.tailTimer);
+    }
     presence('connected');
     setPowerVisual('on');
   };
@@ -934,7 +995,10 @@ function lineDropped() {
   if (live.retries >= 1) {
     live.retries = 0;
     showCard('notice', 'The line dropped. Say “Hey Parker” to try again.', 12000);
-    if (powered() && audio.stream) startDormant();
+    // The mic is held for the powered-on lifetime, so it — not the visual
+    // (still 'error' when the retry died before opening) — decides whether
+    // the card's promise can be kept.
+    if (audio.stream) startDormant();
     else { presence('error'); setPowerVisual('error'); }
     return;
   }

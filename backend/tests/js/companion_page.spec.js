@@ -2,14 +2,17 @@
  * Executable lifecycle tests for the REAL companion page script
  * (companion_ui.py — the virtual Reachy embodiment with local wake).
  *
- * Usage: node companion_page.spec.js <path-to-extracted-inline-script>
+ * Usage: node companion_page.spec.js <path-to-extracted-inline-script> [<scene-boot-script>]
  *
  * Pins the take-2 + wake-word contracts against the page's actual code:
  * real power semantics with DORMANCY (power on = local wake lane only,
  * no cloud socket, lifeless scene until "Hey Parker"), the wake pop,
  * return-to-dormancy after the gentle wind-down, spoken-confirmation
  * cards that never ask him to tap, CC, and every interleaving the
- * independent review proved broken on the live lane.
+ * independent review proved broken on the live lane. With the page's
+ * second inline script (the Reachy scene boot) it also pins the
+ * page-to-scene reduced-motion seam and the scene receipt's wait for the
+ * receipts session.
  */
 'use strict';
 
@@ -17,8 +20,9 @@ const assert = require('assert');
 const { createEnv } = require('./converse_page_env');
 
 const pageScript = process.argv[2];
+const sceneScript = process.argv[3]; // optional: the scene boot module script
 if (!pageScript) {
-  process.stderr.write('usage: node companion_page.spec.js <inline-script.js>\n');
+  process.stderr.write('usage: node companion_page.spec.js <inline-script.js> [<scene-boot.js>]\n');
   process.exit(2);
 }
 
@@ -67,6 +71,10 @@ function wakeSockets(env) {
 }
 function liveSockets(env) {
   return env.sockets.filter((s) => s.url.includes('/converse/realtime'));
+}
+function scheduled(env) {
+  // Every AudioBufferSourceNode the page started, across its audio contexts.
+  return env.audioContexts.flatMap((c) => c.startedSources);
 }
 
 async function poweredDormant(env) {
@@ -130,8 +138,11 @@ async function poweredActive(env) {
     assert.ok(live, 'the realtime line opens');
     assert.ok(!wakeWs.closed, 'the wake lane stays open for the request tail until the line is up');
     live.open();
-    assert.ok(wakeWs.closed, 'the wake lane closes once the line is open');
-    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: '' }, 'hello is the first frame');
+    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: '', pending: true }, 'hello is the first frame');
+    assert.ok(!wakeWs.closed, 'the wake lane stays open for its final transcript');
+    assert.ok(wakeWs.sent.some((f) => f.type === 'tail_end'), 'and is asked to finish');
+    wakeWs.message({ type: 'tail', text: '', final: true });
+    assert.ok(wakeWs.closed, 'the wake lane closes once its final tail landed');
     assert.strictEqual(phase(env), 'listening');
     assert.strictEqual(power(env), 'on');
     // The wake transition is in the receipts for session review.
@@ -441,6 +452,130 @@ async function poweredActive(env) {
     assert.ok(/reach its engine/i.test(card(env).text));
   });
 
+  await test('microphone denial: the claim is given back, and ONE activation of "Try again" retries', async () => {
+    const env = await bootedEnv();
+    env.getUserMediaMode = 'deny';
+    await env.context.powerOn();
+    await env.flush();
+    assert.strictEqual(power(env), 'error');
+    assert.strictEqual(env.element('power-label').textContent, 'Try again');
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'false');
+    const c = card(env);
+    assert.ok(c && c.region === 'alert' && /microphone/i.test(c.text), JSON.stringify(c));
+    assert.strictEqual(env.streams.length, 0, 'no microphone');
+    assert.strictEqual(env.sockets.length, 0, 'no sockets');
+    // Engine truth agrees with the switch: nothing is on.
+    assert.strictEqual(env.powerReleases.length, 1, 'the failed claim was released');
+    assert.strictEqual(env.settings.power_on, false, 'persisted power is OFF');
+    // He grants the permission and activates the switch ONCE.
+    env.getUserMediaMode = 'grant';
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(env.powerClaims.length, 2, 'the switch re-claimed (a retry, not an off)');
+    assert.strictEqual(env.streams.length, 1, 'a second getUserMedia happened');
+    assert.strictEqual(env.powerReleases.length, 1, 'no second release — the click did not turn Parker off');
+    const ws = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.ok(ws, 'the wake lane opened');
+    ws.open();
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'true');
+    assert.strictEqual(env.settings.power_on, true, 'the retry claimed power again');
+  });
+
+  await test('a retry that is denied again stays honest: one release per failed attempt, no dangling owner', async () => {
+    const env = await bootedEnv();
+    env.getUserMediaMode = 'deny';
+    await env.context.powerOn();
+    await env.flush();
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(env.powerClaims.length, 2, 'retried');
+    assert.strictEqual(env.powerReleases.length, 2, 'released again');
+    assert.strictEqual(env.settings.power_on, false);
+    assert.strictEqual(power(env), 'error');
+    assert.strictEqual(env.streams.length, 0);
+    assert.strictEqual(env.sockets.length, 0);
+  });
+
+  await test('persisted power with the microphone denied at boot: engine off, "Turn the switch" is true — one flip wakes', async () => {
+    const env = createEnv();
+    env.getUserMediaMode = 'deny';
+    env.settings.power_on = true;
+    await env.boot(pageScript);
+    await env.flush();
+    assert.strictEqual(power(env), 'error');
+    assert.ok(/Turn the switch/i.test(card(env).text), JSON.stringify(card(env)));
+    assert.strictEqual(env.powerReleases.length, 1, 'the boot claim was given back');
+    assert.strictEqual(env.settings.power_on, false, 'engine and switch agree: off');
+    env.getUserMediaMode = 'grant';
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(env.powerClaims.length, 2, 'the flip re-claimed');
+    const ws = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.ok(ws, 'the wake lane opened on the flip');
+    ws.open();
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(env.settings.power_on, true);
+  });
+
+  await test('Escape from the denial card is still the way out', async () => {
+    const env = await bootedEnv();
+    env.getUserMediaMode = 'deny';
+    await env.context.powerOn();
+    await env.flush();
+    env.keydown.forEach((fn) => fn({ key: 'Escape' }));
+    await env.flush();
+    assert.strictEqual(power(env), 'off');
+    assert.strictEqual(env.settings.power_on, false);
+    assert.strictEqual(env.streams.length, 0);
+    assert.strictEqual(env.sockets.length, 0);
+  });
+
+  await test('the switch from the wake-hiccup error retries (re-arms wake on the held mic) instead of turning off', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.dropped();
+    env.advance(1600);
+    const second = wakeSockets(env)[wakeSockets(env).length - 1];
+    second.open();
+    second.dropped();
+    env.advance(1600);
+    assert.strictEqual(power(env), 'error');
+    assert.strictEqual(env.element('power-label').textContent, 'Try again');
+    click(env, 'power');
+    await env.flush();
+    assert.strictEqual(env.powerReleases.length, 0, 'not an off');
+    assert.strictEqual(env.powerClaims.length, 2, 're-claimed');
+    assert.strictEqual(env.streams.length, 1, 'the held microphone is reused — no second prompt');
+    assert.ok(!env.streams[0].track.stopped, 'mic still held');
+    const third = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.notStrictEqual(third, second, 'a new wake lane');
+    third.open();
+    assert.strictEqual(power(env), 'dormant');
+    // …and the fresh activation earned a fresh quiet retry.
+    third.dropped();
+    env.advance(1600);
+    assert.strictEqual(wakeSockets(env).length, 4, 'one quiet retry after the manual retry');
+    assert.notStrictEqual(power(env), 'error');
+  });
+
+  await test('a retry line that dies before opening still re-arms the wake lane the card promises', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.dropped();
+    env.advance(2600);
+    await env.flush();
+    const retry = liveSockets(env)[liveSockets(env).length - 1];
+    assert.notStrictEqual(retry, ws, 'one quiet retry');
+    const wakeBefore = wakeSockets(env).length;
+    retry.dropped(); // never opened: the visual is still 'error' from the first drop
+    await env.flush();
+    assert.ok(card(env) && /hey parker/i.test(card(env).text), 'the honest way back is named');
+    assert.strictEqual(wakeSockets(env).length, wakeBefore + 1, 'and it is true: wake re-armed');
+    assert.strictEqual(power(env), 'dormant');
+    assert.strictEqual(liveSockets(env).length, 2, 'no third line without his wake');
+  });
+
   await test('a power-off write that fails keeps everything dead, retries, then says so', async () => {
     const env = await bootedEnv();
     const wakeWs = await poweredDormant(env);
@@ -494,17 +629,79 @@ async function poweredActive(env) {
     // Mic frames keep going to the WAKE lane while the line connects.
     assert.ok(env.micFrame(0.2));
     assert.ok(wakeWs.sent.some((f) => f.type === 'audio'), 'frames still reach the wake lane');
-    // The engine cleared its window at the wake: tail frames hold only what
-    // came AFTER "can you" — the page keeps the wake frame's words in front.
+    // The engine cleared its window at the wake and only grows it after:
+    // each tail frame is a superset of what came AFTER "can you" — the page
+    // keeps the wake frame's words in front of the latest.
     wakeWs.message({ type: 'tail', text: 'help me with' });
     wakeWs.message({ type: 'tail', text: 'help me with the tv' });
     const live = liveSockets(env)[0];
     assert.strictEqual(live.sent.length, 0, 'nothing to the line before it opens');
     live.open();
-    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: 'can you help me with the tv' });
-    assert.ok(wakeWs.closed);
+    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: 'can you help me with the tv', pending: true });
+    assert.ok(!wakeWs.closed, 'the lane is still finishing');
     env.micFrame(0.2);
     assert.ok(live.sent.some((f) => f.type === 'audio'), 'after open, frames go to the line');
+    assert.strictEqual(wakeWs.sent.filter((f) => f.type === 'audio').length, 1, 'and no longer to the lane');
+    wakeWs.message({ type: 'tail', text: 'help me with the tv please', final: true });
+    assert.deepStrictEqual(live.sent.filter((f) => f.type === 'tail'),
+      [{ type: 'tail', text: 'can you help me with the tv please' }], 'the final transcript follows once');
+    assert.ok(wakeWs.closed);
+  });
+
+  await test('the line opening before the lane\'s last words does not lose them', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker can you', matched: 'hey parker', tail: 'can you' });
+    await env.flush();
+    env.micFrame(0.2); env.micFrame(0.2); // his speech, streamed to the WAKE lane while the line connects
+    const live = liveSockets(env)[0];
+    live.open(); // the line opens FIRST (~8 ms after the wake in production)
+    assert.deepStrictEqual(live.sent[0], { type: 'hello', tail: 'can you', pending: true }, 'hello says a final tail follows');
+    assert.deepStrictEqual(wakeWs.sent.filter((f) => f.type !== 'audio'), [{ type: 'tail_end' }],
+      'the lane is asked to finish over everything it heard');
+    assert.ok(!wakeWs.closed, 'and stays open until it does');
+    const laneAudioAtOpen = wakeWs.sent.filter((f) => f.type === 'audio').length;
+    env.micFrame(0.2);
+    assert.strictEqual(wakeWs.sent.filter((f) => f.type === 'audio').length, laneAudioAtOpen, 'no more audio to the lane');
+    assert.strictEqual(live.sent.filter((f) => f.type === 'audio').length, 1, 'the mic streams to the line from open');
+    assert.strictEqual(live.sent.filter((f) => f.type === 'tail').length, 0, 'nothing forwarded yet');
+    wakeWs.message({ type: 'tail', text: 'help me with the tv', final: true }); // the lane's last inference lands
+    assert.deepStrictEqual(live.sent.filter((f) => f.type === 'tail'), [{ type: 'tail', text: 'can you help me with the tv' }]);
+    assert.ok(wakeWs.closed, 'the lane ends with its final word');
+    wakeWs.message({ type: 'tail', text: 'help me with the tv now', final: true }); // a late duplicate
+    env.advance(5000);
+    assert.strictEqual(live.sent.filter((f) => f.type === 'tail').length, 1, 'forwarded exactly once');
+    assert.strictEqual(power(env), 'on');
+    assert.strictEqual(wakeSockets(env).length, 1, 'no dormancy restart under a live line');
+  });
+
+  await test('the tail bound still holds after open: what the lane gave is forwarded once, then it ends', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker can you', matched: 'hey parker', tail: 'can you' });
+    await env.flush();
+    const live = liveSockets(env)[0];
+    live.open();
+    wakeWs.message({ type: 'tail', text: 'help me' }); // interim only — the final never comes
+    env.advance(3100);
+    assert.deepStrictEqual(live.sent.filter((f) => f.type === 'tail'), [{ type: 'tail', text: 'can you help me' }]);
+    assert.ok(wakeWs.closed, 'bounded: the tail lane cannot outlive its window');
+    assert.strictEqual(power(env), 'on');
+  });
+
+  await test('a lane that drops while finishing forwards what it had, and never restarts dormancy under a live line', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker can you', matched: 'hey parker', tail: 'can you' });
+    await env.flush();
+    const live = liveSockets(env)[0];
+    live.open();
+    wakeWs.dropped();
+    assert.deepStrictEqual(live.sent.filter((f) => f.type === 'tail'), [{ type: 'tail', text: 'can you' }]);
+    env.advance(5000);
+    assert.strictEqual(wakeSockets(env).length, 1, 'no wake-lane retry while the line is up');
+    assert.strictEqual(power(env), 'on');
+    assert.strictEqual(live.sent.filter((f) => f.type === 'tail').length, 1);
   });
 
   await test('a line that never opens still ends the wake lane within its bound', async () => {
@@ -554,6 +751,45 @@ async function poweredActive(env) {
     assert.ok(line.hidden, 'expires on its own');
   });
 
+  await test('source citations never displace scheduled audio: audio -> sources -> clear stops every old node', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.message({ type: 'user_transcript', text: 'who won the open' });
+    ws.message({ type: 'audio', data: env.pcmBase64(24000) });
+    ws.message({ type: 'sources', items: [{ label: 'ESPN', url: 'https://y' }] });
+    ws.message({ type: 'audio', data: env.pcmBase64(24000) });
+    assert.strictEqual(scheduled(env).length, 2);
+    ws.message({ type: 'clear' });
+    assert.ok(scheduled(env).every((s) => s.stopped),
+      'every old node is stopped, not just the ones after the citations');
+    assert.strictEqual(phase(env), 'interrupted', 'real audio was cut: the scene yields');
+  });
+
+  await test('the guard flush also stops audio scheduled before the citations arrived', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.message({ type: 'user_transcript', text: 'should i change my dose' });
+    ws.message({ type: 'audio', data: env.pcmBase64(24000) });
+    ws.message({ type: 'sources', items: [{ label: 'ESPN', url: 'https://y' }] });
+    ws.message({ type: 'guard_redirect', text: 'That one is for your doctor.' });
+    assert.ok(scheduled(env).every((s) => s.stopped), 'old speech never plays under the redirect');
+  });
+
+  await test('citations alone are not buffered audio: clear after drained audio does not yield', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    ws.message({ type: 'user_transcript', text: 'who won' });
+    ws.message({ type: 'audio', data: env.pcmBase64(2400) });
+    ws.message({ type: 'sources', items: [{ label: 'ESPN', url: 'https://y' }] });
+    scheduled(env)[0].onended(); // the node finished; the response is still open
+    env.advance(400);
+    assert.strictEqual(phase(env), 'talking');
+    ws.message({ type: 'clear' });
+    assert.strictEqual(phase(env), 'talking', 'nothing was cut off: no interrupt yield');
+    assert.ok(!ws.sent.some((f) => f.type === 'expression' && f.reason === 'interrupted'),
+      'no interrupted receipt in the journal');
+  });
+
   await test('a sentence ending in Parker\'s real transcript is one phrase beat', async () => {
     const env = await bootedEnv();
     const ws = await poweredActive(env);
@@ -596,6 +832,86 @@ async function poweredActive(env) {
     assert.strictEqual(power(env), 'off');
     assert.ok(env.streams[0].track.stopped);
   });
+
+  // ------------------------------------------------------------------------
+  // The scene boot (the page's second inline script), when it is given.
+  // ------------------------------------------------------------------------
+  if (sceneScript) {
+    const receipts = (env) => env.beacons.filter((b) => b.url.includes('/receipts'));
+
+    for (const reduced of [false, true]) {
+      await test(`scene boot forwards prefers-reduced-motion=${reduced} to createReachyScene`, async () => {
+        const env = await bootedEnv();
+        env.reducedMotion = reduced;
+        const calls = [];
+        const scene = { dispose() {} };
+        await env.bootScene(sceneScript, {
+          createReachyScene: (mount, controller, opts) => {
+            calls.push({ mount: mount.id, sameController: controller === env.context.ParkerPresence.controller, opts });
+            return scene;
+          },
+        });
+        // (opts is born in the page's realm: compare values, not prototypes.)
+        assert.deepStrictEqual(JSON.parse(JSON.stringify(calls)),
+          [{ mount: 'reachy-mount', sameController: true, opts: { reducedMotion: reduced } }]);
+        assert.strictEqual(env.element('orb-fallback').hidden, true, 'the dot yields to the scene');
+        assert.strictEqual(env.context.ParkerPresence.scene, scene, 'the page owns the scene for teardown');
+        assert.deepStrictEqual(receipts(env).map((b) => JSON.parse(b.body)), [{ outcome: 'webgl_ready' }]);
+      });
+    }
+
+    // Boot the page with the receipts-session POST parked on a gate so the
+    // scene boots BEFORE sessionId exists (the packaged-WKWebView order).
+    async function bootWithGatedSession() {
+      const env = createEnv();
+      const realFetch = env.context.fetch;
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      env.context.fetch = (url, opts) => {
+        if (String(url).endsWith('/sessions') && opts && opts.method === 'POST') {
+          return gate.then(() => realFetch(url, opts));
+        }
+        return realFetch(url, opts);
+      };
+      await env.boot(pageScript);
+      await env.flush();
+      await env.bootScene(sceneScript, { createReachyScene: () => null }); // no WebGL: the dot stays
+      return { env, release };
+    }
+
+    await test('scene receipt waits for the receipts session, then sends once', async () => {
+      const { env, release } = await bootWithGatedSession();
+      assert.strictEqual(receipts(env).length, 0, 'nothing sent before the session exists');
+      for (let i = 0; i < 3; i += 1) { env.advance(500); await env.flush(); }
+      assert.strictEqual(receipts(env).length, 0, 'still waiting after 1.5 s of retries');
+      release();
+      await env.flush(); await env.flush();
+      env.advance(500);
+      await env.flush();
+      assert.strictEqual(receipts(env).length, 1, 'one scene receipt once the session exists');
+      assert.ok(receipts(env)[0].url.includes('/sessions/sess-test/receipts'), receipts(env)[0].url);
+      assert.deepStrictEqual(JSON.parse(receipts(env)[0].body), { outcome: 'webgl_fallback' });
+      env.advance(20000);
+      await env.flush();
+      assert.strictEqual(receipts(env).length, 1, 'sent exactly once; no further retries');
+    });
+
+    await test('scene receipt gives up after the retry budget when no session ever opens', async () => {
+      const { env } = await bootWithGatedSession();
+      env.advance(500 * 25);
+      await env.flush();
+      assert.strictEqual(receipts(env).length, 0, 'never sent without a session');
+      assert.ok([...env.timers.values()].every((t) => t.every != null),
+        'no one-shot retry timer left — only the page\'s own interval remains');
+    });
+
+    await test('scene receipt sends immediately when the session already exists', async () => {
+      const env = await bootedEnv();
+      await env.bootScene(sceneScript, { createReachyScene: () => null });
+      assert.deepStrictEqual(receipts(env).map((b) => JSON.parse(b.body)), [{ outcome: 'webgl_fallback' }]);
+      assert.strictEqual(env.element('orb-fallback').hidden, false, 'the dot remains the presence');
+    });
+  }
 
   const failed = results.filter((r) => !r.ok);
   for (const r of results) {
