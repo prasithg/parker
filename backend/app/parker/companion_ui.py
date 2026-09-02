@@ -1056,10 +1056,12 @@ function flushPresenceReceipts() {
 if (expr) {
   prevPresence = expr.getState();
   expr.subscribe((s, cause) => {
-    updateSrStatus();
     // A phrase beat is motion, not a presence transition: it never
-    // reaches the session journal (400-receipt cap, review surface).
-    if (cause !== 'phrase_boundary') recordPresenceTransition(s, cause);
+    // reaches the session journal (400-receipt cap, review surface) and
+    // never rewrites the screen-reader status (no re-announcement).
+    if (cause === 'phrase_boundary') return;
+    updateSrStatus();
+    recordPresenceTransition(s, cause);
   });
 }
 window.ParkerPresence = {controller: expr};
