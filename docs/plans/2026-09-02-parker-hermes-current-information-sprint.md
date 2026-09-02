@@ -352,27 +352,42 @@ matrix.md`, 0 MISSING), production-shaped SQLite contention tests,
 | 6f3e3ed | pure merge tip (main + six PRs) | backend 1254 passed; Rust 16; exact-SHA CI green (run 33671007914) |
 | 89c00be | bridge slice (F1 shutdown, F2 user-role tail, P0.2) | backend 1261 passed; live realtime probe PASS with `--wake-tail "can you help me with the tv" --pending` (first reply answered the tail, tail as a user item, never in a system item, API accepted the payload) |
 | f757fd3 | probe extension | exact-SHA CI green (run 33680754506) |
-| 1038242 | six implementation slices merged + reconciliation | backend 1319 passed; concurrency/power deck 9/9 ×5; Rust 17; Node companion spec 49/49; packaged chain PASS (sidecar → smoke → `cargo tauri build` → probe bound to 1038242: engine + shell report the SHA, sidecar exited 0.5 s after the shell, webgl_ready receipt, no power claim, no wake socket); real-model wake soak shakedown (report in the session scratchpad: recall 48/48, over-TV labelled with achieved SNR, paused positives 16/24, stale quiet 6/6, 1 TV false wake `hey i'm parker` from the single-window grammar, gate FAIL — see below); exact-SHA CI **FAILED** (run 33682939430): anthropic 1.3.0 rejected the httpx client → fixed at ef66a17 |
-| 1038242 | fresh-context review (nine lenses, adversarially verified) | all lenses NEEDS_FIX; 15 blocker/major candidates, 13 confirmed, 2 reframed as coverage gaps (now pinned by tests) |
+| 1038242 | six implementation slices merged + reconciliation | backend 1319 passed; concurrency/power deck 9/9 ×5; Rust 17; Node companion spec 49/49; packaged chain PASS bound to 1038242 (engine + shell report the SHA, sidecar exited 0.5 s after the shell, webgl_ready receipt, no power claim, no wake socket); real-model wake soak shakedown (session scratchpad, superseded by the 7af4fd9 report); exact-SHA CI **FAILED** (run 33682939430): anthropic 1.3.0 (httpx2) rejected the cancellable httpx client and the builder swallowed it — a fresh install would have lost every lookup; fixed at ef66a17 |
+| 1038242 | fresh-context review (nine lenses, adversarially verified) | all nine NEEDS_FIX; every blocker/major finding was verified by two refuters: 14 distinct confirmed (2 blockers: the SDK/CI break; the revoked screen re-claiming power during the write window) and 2 reframed as coverage gaps (now pinned by tests: SDK-over-transport cancel on a real socket, the latch envelope) |
 | ef66a17 | review fix round (bridge/route/power/pin) | backend 1325 passed; concurrency deck 10/10 |
-| aacd751 | fix round merged (page, evidence, My Day, transport/latch tests) | Rust 17; backend suite: __SUITE_AACD751__ |
-| __FINAL_REV__ | final tree | wake soak regenerated: __SOAK__; packaged chain: __PACKAGED__; live probe: __LIVE__; exact-SHA CI: __CI__; fresh final-tree review: __FABLE_FINAL__; cross-family (Hermes) review: __HERMES__ |
+| aacd751 | fix round merged (page, evidence, My Day, transport/latch tests) | backend **1337 passed**; Rust 17; Node companion spec 55/55 (inside the suite) |
+| d3b5d77 | ledger + contribution matrix (docs) | exact-SHA CI **green** (run 33684018 — see PR checks) with the pin in place |
+| d3b5d77 | fresh-context review of the fix round (four lenses, adversarially verified) | page PASS, My Day PASS; bridge/power NEEDS_FIX on one test-integrity major (the negative-space pin passed without the fix — closed at 7ec9eeb); evidence/docs NEEDS_FIX on two majors (the soak narrative misattributed misses — rewritten below; the build chain stamped `-dirty` because untracked files were present — rebuilt on a clean tree, below). All seven bridge findings, all page findings, and all My Day findings judged closed. |
+| 7af4fd9 | wake soak regenerated on the final code (`benchmark/reports/wake_soak_2026-09-02_base.{json,md}`, schema wake_soak_v1) | recall 48/48; over-TV labelled with achieved SNR (+12 dB 4/4, +6 dB 4/4, 0 dB 0/4, −6 dB 0/4); paused greeting 19/24, stale-greeting quiet 6/6; 1 ambient-TV false wake (`hey i'm parker` — the single-window grammar's one-token tolerance, not the latch); **Gate: FAIL** on the paused section and the false wake — see the reading below. Live realtime probe on this code: PASS (`--wake-tail --pending`; probe revision line printed) |
+| 7ec9eeb | negative-space pin seeds the durable flag ON | test can only pass with the authority's `released` override |
+| ea0ef7c | packaged chain on a clean tree | PASS — `make sidecar` → `sidecar_smoke.sh` → `cargo tauri build` → `packaged_companion_probe.sh` (default expectation = HEAD, clean tree): bundled engine and shell both report ea0ef7c; the engine ran as the shell's child and exited 1.5 s after it; WKWebView posted `webgl_ready`; no power claim, no wake socket (the probe states it does not observe TCC/microphone or pixels) |
+| __FINAL_REV__ | final head (docs) | exact-SHA CI: __CI__; cross-family (Hermes / GPT) review: __HERMES__ |
 
-### What the wake soak says (real base model, synthesized voices)
+The docs-only commits necessarily postdate the bound `.app`; the code at the
+built revision is byte-identical to the final head's code.
 
-Recall on isolated phrases 48/48. Over the TV the labels are now the
-achieved SNR after mixing (bed attenuated instead of clipping): +12 and +6
-dB wake 4/4 each, 0 and −6 dB 0/8 — the documented measured limit. The
-paused-greeting section is new evidence: with real silence between "hey"
-and the name, Samantha/Daniel at 175 wpm wake through the latch (latch_s
-2.3–3.8 s); the misses are the local ASR hearing nothing usable for a lone
-slow "Parker" (transcripts `Hey.`, `Okay`, `today.`, ``), not the latch
-logic; a synthesized bare "a" is heard as a greeting by the model in 4/12
-cases (an ASR artefact; the unit pin keeps `a` from arming the latch). The
-one ambient-TV false wake, `Hey, I'm Parker something`, matches the
+### What the wake soak says (real base model, synthesized voices, final tree)
+
+Recall on isolated phrases 48/48. Over the TV the rows are labelled with the
+SNR the mix achieved (the bed is attenuated instead of the voice clipping):
++12 and +6 dB wake 4/4 each, 0 and −6 dB 0/8 — the documented measured
+limit. The paused-greeting section (real silence between "hey" and the
+name) is new evidence for the latch: Samantha and Daniel wake 16/16 across
+both rates (latch_s 1.5–3.8 s); the five misses are all the Fred voice
+(3/8): in three the local ASR never produced a Parker-like token for the
+lone slow name (`Paracure`, `Tarakur`, `Tarko`); in one it never heard the
+greeting (`Oh`, `I'm a`) so nothing armed; in one the greeting armed, then a
+garbage partial decode of the name's onset (`Tarek her. Can you...`, four
+tokens) cleared the latch one hop before the clean `Parker, can you help
+me?` — the reset-on-hallucination interaction is a design question for the
+room test, not a unit-pinnable defect. The bare-"a" rows woke 4/6 because
+the model transcribes the synthesized "a" as `Hey` (an ASR artefact; the
+unit pin keeps a transcribed `a` from arming the latch). The one
+ambient-TV false wake, `Hey, I'm Parker something`, matches the
 pre-existing single-window grammar (one token tolerated between greeting
 and name — the chairman's Dad calibration), not the latch. CPU/latency
-figures from that shakedown ran under load and are not evidence.
+figures in this report ran while review agents shared the machine and are
+not evidence.
 
 ### Untested / open
 

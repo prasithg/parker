@@ -21,7 +21,7 @@ fixes land from main as their own PRs.
 | 4 | Missing local wake ASR fails closed | implemented | `unavailable` → power OFF + alert card; never cloud audio |
 | 5 | Wake: drop bare `a`, split-syllable recall, same-breath tail handoff | implemented | grammar tests; wake→tail→hello→greeting pinned end to end |
 | 6 | Ambient-TV CPU/false-wake soak evidence | evidence produced; adaptive gate shipped **opt-in (off)** (see "Wake soak"); over-TV limit measured and named | `scripts/wake_soak.py` → `benchmark/reports/wake_soak_2026-09-01*.md` |
-| 7 | Packaged Tauri opens the companion; WKWebView lifecycle | implemented + **packaged headless probe PASS** (`scripts/packaged_companion_probe.sh`: real Parker.app, scratch home, companion window opened on boot, page/Three.js fetched, `webgl_ready` receipt from the WKWebView, no power claim / wake socket (mic not observed), clean teardown; 16/16 Rust tests) | power/wake click in the packaged window = human gate |
+| 7 | Packaged Tauri opens the companion; WKWebView lifecycle | implemented + **packaged probe PASS, SHA-bound** (Phase 0 integration, 2026-09-02: `scripts/packaged_companion_probe.sh --expect-sha` at ea0ef7c on a clean tree — bundled engine and shell report that revision, the engine is the shell's child and exited 1.5 s after it, companion window opened on boot, page/Three.js fetched, `webgl_ready` receipt from the WKWebView, no power claim / wake socket; the probe states it does not observe TCC/microphone or pixels; 17/17 Rust tests) | power/wake click in the packaged window = human gate |
 | 8 | Accessible live cards; search/source truth CC-off/CC-on | implemented | two live regions; CC-on "Checked the web · labels"; prompt aligned |
 
 ## Gate status for the foundation commit (`e83fe2c`)
