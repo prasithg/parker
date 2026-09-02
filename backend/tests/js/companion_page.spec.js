@@ -105,6 +105,8 @@ async function poweredActive(env) {
     const wakeWs = await poweredDormant(env);
     assert.strictEqual(power(env), 'dormant');
     assert.strictEqual(phase(env), 'dormant');
+    assert.ok(/Resting/.test(env.element('power-label').textContent),
+      'the switch says RESTING while dormant, never "on" (Pras, session 3)');
     assert.strictEqual(env.streams.length, 1, 'the mic is held locally');
     assert.strictEqual(liveSockets(env).length, 0, 'NO cloud socket while dormant');
     assert.ok(/hey parker/i.test(env.element('sr-status').textContent));

@@ -118,6 +118,59 @@ _WRAPUP_INSTRUCTION = (
     "clear there's no rush and staying quiet is fine too."
 )
 
+# Spoken session end (docs/plans/2026-09-02-spoken-session-end.md): he
+# said he is done — hard ("that's all", "goodbye Parker") or the soft
+# closer (gratitude after a real answer, nothing pending). Parker says one
+# short goodbye, then the line winds down to dormancy.
+_SESSION_END_INSTRUCTION = (
+    "{patient_name} just said he is done for now. Say one short, warm "
+    "goodbye (under ten words, no question), mentioning he can say "
+    "\u201cHey Parker\u201d any time. Do not ask anything else."
+)
+_SOFT_CLOSE_INSTRUCTION = (
+    "{patient_name} thanked you and sounds finished. Say one short, warm "
+    "goodbye (under ten words, no question), mentioning he can say "
+    "\u201cHey Parker\u201d any time. Do not ask anything else."
+)
+
+# Deterministic enders on HIS transcript — never the model's judgment.
+# Bare "stop", "thanks", "bye", "ok" are not enders: they occur mid-
+# conversation or mean "stop talking" (Hermes review, 2026-09-01).
+_HARD_ENDERS = (
+    "goodbye parker", "bye parker", "good night parker", "goodnight parker",
+    "that's all", "that's all parker", "that is all", "that's it for now",
+    "that's it thanks", "that's it thank you", "i'm done", "i am done",
+    "go back to sleep", "go to sleep", "stop listening", "you can rest now",
+    "that's everything", "nothing else thanks", "nothing else thank you",
+)
+_GRATITUDE = (
+    "thanks", "thank you", "ok thanks", "okay thanks", "thanks parker",
+    "thank you parker", "ok thank you", "okay thank you", "great thanks",
+    "that's helpful", "that's helpful thanks", "perfect thanks", "good thanks",
+    "alright thanks", "all right thanks", "thanks a lot", "thank you very much",
+)
+
+
+def spoken_session_end(transcript: str) -> Optional[str]:
+    """``"hard"`` for an explicit ender, ``"gratitude"`` for a thank-you that
+    may be a soft close (the bridge decides with context), else None."""
+
+    import re as _re
+
+    normalized = _re.sub(r"[,.!?]+", " ", (transcript or "").lower())
+    normalized = " ".join(normalized.replace("\u2019", "'").split())
+    if not normalized:
+        return None
+    for phrase in _HARD_ENDERS:
+        # Whole utterance or its ending — never a prefix: "I'm done with the
+        # tennis, what about golf?" is a question, not an exit.
+        if normalized == phrase or normalized.endswith(" " + phrase):
+            return "hard"
+    if normalized in _GRATITUDE:
+        return "gratitude"
+    return None
+
+
 _GOODBYE_INSTRUCTION = (
     "Still quiet — the line closes on its own now. Say one short, warm "
     "goodbye to {patient_name} (no questions, under ten words so it finishes "
@@ -845,6 +898,8 @@ class RealtimeBridge:
         self._wrapup_asked = False
         self._goodbye_requested = False
         self._closing_sent = False
+        self._last_assistant_speech = ""  # the soft closer needs a real answer before it
+        self._session_end_kind = ""  # "hard" | "soft" once he ended it
         # Session journal (the human-testing flywheel): every turn,
         # injection, ack, and proposal lands in realtime_session_events so
         # the review surface can show the finished session back to a human.
@@ -1354,6 +1409,7 @@ class RealtimeBridge:
             if transcript:
                 await self._browser_send({"type": "user_transcript", "text": transcript})
                 await self._maybe_resolve_confirmation(transcript)
+                await self._maybe_end_session(transcript)
         elif etype == "input_audio_buffer.speech_started":
             # Barge-in: he started talking — whatever is queued goes silent.
             self._user_speaking = True
@@ -1362,8 +1418,10 @@ class RealtimeBridge:
                 # His voice stands the wrap-up/goodbye down HERE, not on the
                 # next watchdog tick — the goodbye's response.done otherwise
                 # wins the race and hangs up on him mid-word (verifier find).
+                # A spoken end he interrupts is cancelled the same way.
                 self._wrapup_asked = False
                 self._goodbye_requested = False
+                self._session_end_kind = ""
             await self._browser_send({"type": "clear"})
         elif etype == "input_audio_buffer.speech_stopped":
             self._user_speaking = False
@@ -1413,6 +1471,8 @@ class RealtimeBridge:
         # that double-counts the exchange.
         heard_now = self._user_transcript
         guard_tripped = self._guard_tripped
+        if speech:
+            self._last_assistant_speech = speech
         self._assistant_transcript = ""
         self._guard_tripped = False
         self._user_transcript = ""
@@ -1523,6 +1583,54 @@ class RealtimeBridge:
                 "action_type": str(arguments.get("action_type", "")),
                 "status": str(outcome.get("status", "")),
                 "note": str(outcome.get("detail", ""))[:200],
+            },
+        )
+
+    async def _maybe_end_session(self, transcript: str) -> None:
+        """His words end the session — deterministically for a hard ender,
+        and for gratitude only when the conversation has nothing open:
+        a substantive answer just landed (not a question), no offer is
+        waiting for his yes/no, no lookup is in flight, no wind-down is
+        already underway. Otherwise "thanks" is just conversation."""
+
+        if self._closing_sent or self._session_end_kind:
+            return
+        kind = spoken_session_end(transcript)
+        if kind is None:
+            return
+        if kind == "gratitude":
+            last = self._last_assistant_speech.strip()
+            substantive = len(last.split()) >= 6 and not last.endswith("?")
+            if (
+                not substantive
+                or self._pending_confirm is not None
+                or self._inflight_lookups
+                or self._wrapup_asked
+                or self._goodbye_requested
+            ):
+                return
+            kind = "soft"
+        pending_offer = self._pending_confirm is not None
+        if pending_offer:
+            # Nothing runs after he says he is done: the offer lapses (it
+            # stays staged on the family review surface) before the goodbye.
+            await self._expire_confirmation("he ended the session")
+        self._session_end_kind = kind
+        now = time.monotonic()
+        self._wrapup_asked = True
+        self._goodbye_requested = True
+        self._goodbye_at = now
+        self._escalation_at = now
+        instruction = _SESSION_END_INSTRUCTION if kind == "hard" else _SOFT_CLOSE_INSTRUCTION
+        await self._send_system_item(instruction.format(patient_name=self._patient_name()))
+        await self._request_nudge()
+        await self._journal(
+            "session_end",
+            heard=transcript,
+            detail={
+                "kind": kind,
+                "pending_offer_expired": pending_offer,
+                "lookups_in_flight": len(self._inflight_lookups),
             },
         )
 

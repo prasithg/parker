@@ -621,7 +621,10 @@ function setPowerVisual(state) {
   const label = $('power-label');
   const on = state === 'on' || state === 'starting' || state === 'dormant' || state === 'elsewhere';
   $('power').setAttribute('aria-checked', on ? 'true' : 'false');
-  label.textContent = state === 'on' || state === 'dormant' ? 'Parker is on'
+  // Dormant must read as ASLEEP at a glance, never as "engaged"
+  // (Pras, session 3: powered-on-resting vs listening were confusable).
+  label.textContent = state === 'on' ? 'Parker is on'
+    : state === 'dormant' ? 'Resting — say “Hey Parker”'
     : state === 'starting' ? 'Waking…'
     : state === 'error' ? 'Try again'
     : state === 'elsewhere' ? 'On another screen'
