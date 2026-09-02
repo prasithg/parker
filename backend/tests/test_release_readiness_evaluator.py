@@ -6,8 +6,11 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+import benchmark.evaluate_release_readiness_v0 as release_readiness  # type: ignore[import-not-found] # noqa: E402
 from benchmark.evaluate_release_readiness_v0 import (  # type: ignore[import-not-found] # noqa: E402
     REQUIRED_REPORTS,
     evaluate_release_readiness,
@@ -232,6 +235,49 @@ def test_release_readiness_cli_json_outputs_briefing_fields() -> None:
     payload = json.loads(completed.stdout)
     assert payload["readiness_gate"]["passed"] is True
     assert payload["release_summary"]["primary_decision"] == "Safe to cite as synthetic/local evidence in public release claims (README, launch post); not safe to present as real-world or clinical proof."
+
+
+def test_as_of_cannot_mint_a_current_dated_report(monkeypatch, capsys) -> None:
+    """``--as-of`` is a test-only freshness override; with ``--write-report``
+    it would mint ``release_readiness_eval_<today>.*`` (and overwrite
+    ``latest``) with gate PASS from evidence that fails the gate today
+    (reproduced 2026-09-02 against the 2026-08-31 reports). The CLI must
+    refuse the pair through argparse — exit 2, never a gate verdict —
+    before any evaluation or file write. In-process with spies so a
+    pre-fix run cannot dirty benchmark/reports.
+    """
+
+    writes: list[dict] = []
+    monkeypatch.setattr(
+        release_readiness,
+        "evaluate_release_readiness",
+        lambda **kwargs: pytest.fail("evaluated before refusing the flag pair"),
+    )
+    monkeypatch.setattr(
+        release_readiness,
+        "write_reports",
+        lambda *args, **kwargs: writes.append({"args": args, "kwargs": kwargs}) or {},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_release_readiness_v0.py",
+            "--as-of",
+            _reports_as_of().isoformat(),
+            "--write-report",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        release_readiness.main()
+
+    assert exc.value.code == 2
+    assert writes == []
+    captured = capsys.readouterr()
+    assert "--as-of" in captured.err
+    assert "--write-report" in captured.err
+    assert captured.out == ""
 
 
 def test_makefile_exposes_one_command_release_readiness_rollup() -> None:
