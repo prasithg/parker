@@ -80,7 +80,11 @@ def test_hard_enders_and_gratitude_are_deterministic():
                  "goodbye parker thanks", "that's it thanks parker", "i'm done now",
                  "okay i'm done thanks", "you can go to sleep now", "go to sleep parker",
                  "goodnight", "good night", "goodbye", "we're done", "i'm finished",
-                 "no thanks, I'm done", "see you later parker"):
+                 "no thanks, I'm done", "see you later parker",
+                 # re-review follow-up
+                 "bye bye parker", "okay bye bye", "hey parker go to sleep",
+                 "that's all. goodbye.", "that's it for tonight", "see you tomorrow parker",
+                 "that's all, thanks", "thank you so much parker, that's all"):
         assert spoken_session_end(text) == "hard", text
     for text in ("OK, thanks.", "Thanks!", "thank you Parker", "great, thanks",
                  "thanks so much", "thanks very much", "thank you so much parker",
@@ -94,7 +98,10 @@ def test_hard_enders_and_gratitude_are_deterministic():
                  "I can't go to sleep", "you said that's all", "what do you mean that's all",
                  "he said I'm done", "why did you stop listening", "you can rest now?",
                  "did you go to sleep", "that's it", "nothing else", "talk to you later",
-                 "that's enough for now", "thanks bye"):
+                 "that's enough for now", "thanks bye",
+                 # re-review follow-up: first-person reports and declines are not exits
+                 "I go to sleep", "and I go to sleep", "so I go to sleep", "i stop listening",
+                 "I go to sleep now", "no thanks", "no thank you"):
         assert spoken_session_end(text) is None, text
 
 

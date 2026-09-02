@@ -144,15 +144,19 @@ _HARD_ENDERS = (
     "that's it thank you", "i'm done", "i am done", "we're done", "i'm finished",
     "go back to sleep", "go to sleep", "you can go to sleep", "stop listening",
     "you can rest now", "that's everything", "nothing else thanks",
-    "nothing else thank you", "see you later parker",
+    "nothing else thank you", "see you later parker", "bye bye parker", "bye bye",
+    "that's it for tonight", "that's it for today", "see you tomorrow parker",
 )
 # What may come BEFORE an ender at the end of an utterance ("ok that's
-# all", "no thanks, I'm done") — a bounded whitelist like the
-# confirmation grammar's, never free text: "should I go to sleep",
-# "I can't go to sleep", "you said that's all" are not exits.
-_ENDER_LEAD_WORDS = frozenset(
-    "ok okay no yes yeah yep alright all right well fine great thanks thank you "
-    "i think parker and so um uh".split()
+# all", "no thanks, I'm done", "hey parker go to sleep") — a bounded
+# whitelist of PHRASES like the confirmation grammar's, never free text:
+# "should I go to sleep", "I can't go to sleep", "you said that's all",
+# and a first-person report like "and I go to sleep" are not exits.
+_ENDER_LEADS = frozenset(
+    ["ok", "okay", "no", "yes", "yeah", "yep", "alright", "all right", "right", "well",
+     "fine", "great", "thanks", "thank you", "no thanks", "i think", "parker", "hey",
+     "hey parker", "um", "uh", "so", "and", "ok so", "okay so", "um okay", "um ok",
+     "okay thanks", "ok thanks", "and now", "right then"]
 )
 # What may come AFTER an ender ("that's all, thanks Parker", "I'm done now").
 # Longest first, so "for now" is stripped as a whole, never as "now".
@@ -162,7 +166,7 @@ _ENDER_TRAILERS = tuple(sorted((
 ), key=len, reverse=True))
 _GRATITUDE_RE = __import__("re").compile(
     r"^(?:(?:ok|okay|alright|all right|great|perfect|good|wonderful|lovely|fine|"
-    r"right|no) ?)*(?:that's helpful|that helps|thanks|thank you)"
+    r"right) ?)*(?:that's helpful|that helps|thanks|thank you)"
     r"(?: (?:so much|very much|a lot|a bunch|again))?(?: (?:thanks|thank you))?(?: parker)?$"
 )
 
@@ -208,10 +212,19 @@ def spoken_session_end(transcript: str) -> Optional[str]:
             if core == phrase:
                 return "hard"
             if core.endswith(" " + phrase):
-                lead = core[: -len(phrase)].split()
-                if 0 < len(lead) <= 3 and all(word in _ENDER_LEAD_WORDS for word in lead):
+                lead = core[: -len(phrase)].strip()
+                # A whitelisted lead, a thank-you ("thank you so much Parker,
+                # that's all"), or an ender before an ender ("that's all. goodbye.").
+                if lead in _ENDER_LEADS or _GRATITUDE_RE.match(lead) or _ender_after_ender(lead):
                     return "hard"
     return None
+
+
+def _ender_after_ender(lead: str) -> bool:
+    """"that's all. goodbye." — an ender followed by an ender is an exit."""
+
+    return any(lead == phrase or lead.endswith(" " + phrase) and lead[: -len(phrase)].strip() in _ENDER_LEADS
+               for phrase in _HARD_ENDERS)
 
 
 _GOODBYE_INSTRUCTION = (
