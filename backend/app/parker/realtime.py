@@ -86,6 +86,9 @@ something applies to him go to his doctor or family. When you call
 propose_action and it stages, Parker's reply hands you the exact
 readback: say it back to him in one short sentence and ask him to say
 yes to do it or no to cancel — then ask NOTHING else until he answers.
+For anything about HIS OWN day — his schedule, appointments, reminders,
+or when his medicines are — call my_day (Parker's own notes and
+reminders; there is no calendar) and never look_that_up.
 Never tell him to tap, touch, or press anything; his voice is the whole
 interface. Never say it is done before Parker reports the outcome, and
 if Parker replies that it could not be saved or did not work, say so
@@ -350,6 +353,14 @@ def build_session_update() -> dict[str, Any]:
             "parameters": propose_schema,
         }
     ]
+    tools.append(
+        {
+            "type": "function",
+            "name": realtime_workers.MY_DAY_TOOL["name"],
+            "description": realtime_workers.MY_DAY_TOOL["description"],
+            "parameters": realtime_workers.MY_DAY_TOOL["parameters"],
+        }
+    )
     if search_available:
         tools.append(
             {
@@ -1294,6 +1305,18 @@ class RealtimeBridge:
                 detail={"worker": "context", "worker_ms": worker_ms},
             )
             return
+        if result.kind == "my_day":
+            await self._send_system_item(realtime_workers.render_my_day_item(result))
+            await self._browser_send(
+                {"type": "working", "kind": "my_day", "status": "failed" if result.error else "done"}
+            )
+            await self._request_nudge()
+            await self._journal(
+                "injection",
+                said=result.speech,
+                detail={"worker": "my_day", "worker_ms": worker_ms},
+            )
+            return
         age_seconds = max(0.0, time.time() - result.started_at)
         await self._send_system_item(
             realtime_workers.render_search_item(result, age_seconds=age_seconds)
@@ -1592,6 +1615,8 @@ class RealtimeBridge:
                 await self._handle_propose_action(item, arguments)
             elif name == LOOK_THAT_UP_TOOL["name"]:
                 await self._handle_look_that_up(item, arguments)
+            elif name == realtime_workers.MY_DAY_TOOL["name"]:
+                await self._handle_my_day(item, arguments)
 
         if self._goodbye_requested and not self._closing_sent:
             # The goodbye just finished streaming; hand the browser the
@@ -1810,6 +1835,49 @@ class RealtimeBridge:
                 "note": str(outcome.get("detail", ""))[:200],
                 "decide_ms": int((time.monotonic() - asked) * 1000),
             },
+        )
+
+    async def _handle_my_day(self, item: dict[str, Any], arguments: dict[str, Any]) -> None:
+        """His day from Parker's own records — local, always available."""
+
+        asked = time.monotonic()
+        about = str(arguments.get("about", "")).strip()[:80]
+        if "my_day:" in self._inflight_lookups:
+            ack = {"status": "already_working", "detail": "Still gathering that — keep chatting."}
+        else:
+            self._inflight_lookups.add("my_day:")  # namespaced: never a search question
+            await self._browser_send({"type": "working", "kind": "my_day", "status": "started"})
+            self._spawn_worker(
+                "my_day",
+                lambda: realtime_workers.run_my_day_worker(_make_db),
+                inflight_key="my_day:",
+                question=about,
+            )
+            ack = {
+                "status": "working",
+                "detail": (
+                    "Started — his day arrives shortly as a background note from "
+                    "Parker's own records. Tell him you're checking his notes, in "
+                    "your own words, and keep talking."
+                ),
+            }
+        await self._upstream.send(
+            json.dumps(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": item.get("call_id", ""),
+                        "output": json.dumps(ack),
+                    },
+                }
+            )
+        )
+        await self._request_nudge()
+        await self._journal(
+            "lookup_ack",
+            detail={"question": about, "worker": "my_day", "status": ack["status"],
+                    "ack_ms": int((time.monotonic() - asked) * 1000)},
         )
 
     async def _handle_look_that_up(
