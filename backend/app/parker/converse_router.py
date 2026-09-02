@@ -328,6 +328,8 @@ async def converse_wake(websocket: WebSocket) -> None:
                                 "infer_ms": hit["infer_ms"],
                                 "rms": hit["rms"],
                                 "dormant_s": int(time.monotonic() - opened),
+                                # a paused wake ("Hey" ... "Parker") vs a same-breath one
+                                **({"latch_s": hit["latch_s"]} if "latch_s" in hit else {}),
                             }
                         )
                     except Exception:  # noqa: BLE001 — receipts never break waking

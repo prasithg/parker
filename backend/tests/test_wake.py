@@ -12,9 +12,11 @@ Pinned contracts (docs/plans/2026-09-01-wake-word.md):
 
 from __future__ import annotations
 
+import audioop
 import base64
 import math
 import struct
+import wave
 
 import pytest
 from fastapi.testclient import TestClient
@@ -83,11 +85,11 @@ def _silence(seconds: float) -> bytes:
     return b"\x00\x00" * int(seconds * WAKE_SAMPLE_RATE)
 
 
-def _tone(seconds: float, amplitude: int = 6000) -> bytes:
+def _tone(seconds: float, amplitude: int = 6000, hz: float = 220) -> bytes:
     count = int(seconds * WAKE_SAMPLE_RATE)
     return b"".join(
         struct.pack(
-            "<h", int(amplitude * math.sin(2 * math.pi * 220 * i / WAKE_SAMPLE_RATE))
+            "<h", int(amplitude * math.sin(2 * math.pi * hz * i / WAKE_SAMPLE_RATE))
         )
         for i in range(count)
     )
@@ -281,6 +283,150 @@ def test_a_crashing_transcriber_never_ends_dormancy():
     detector = WakeDetector(transcriber)
     assert detector.feed(_tone(0.8)) is None
     assert detector.feed(_tone(0.8)) is None  # keeps trying, keeps calm
+
+
+# ---------------------------------------------------------------------------
+# Greeting latch: a Parkinsonian pause longer than the window
+# ---------------------------------------------------------------------------
+
+_FRAME = 1365  # samples per browser frame on the wake lane (16 kHz)
+HEY, PARKING, NAME = 220.0, 440.0, 880.0  # utterances stood up as tones
+
+
+def _speech(labels: dict[float, str]):
+    """A stand-in ASR keyed on the WINDOW'S CONTENT: it reads the window
+    WAV and "hears" one phrase per tone present, in order. A tone that
+    slid out of the rolling window is not heard, so the temporal tests
+    below model the detector's memory honestly."""
+
+    def transcriber(path):
+        with wave.open(str(path), "rb") as handle:
+            pcm = handle.readframes(handle.getnframes())
+        step = int(0.1 * WAKE_SAMPLE_RATE) * 2
+        heard: list[str] = []
+        for start in range(0, len(pcm) - step + 1, step):
+            chunk = pcm[start : start + step]
+            if audioop.rms(chunk, 2) < 4000:
+                continue  # an onset/offset slice, not a full tone
+            hz = audioop.cross(chunk, 2) / 2 / 0.1
+            phrase = labels[min(labels, key=lambda f: abs(f - hz))]
+            if phrase not in heard:
+                heard.append(phrase)
+        return [" ".join(heard)] if heard else []
+
+    return transcriber
+
+
+def _stream(detector: WakeDetector, pcm: bytes) -> list[dict]:
+    """Feed browser-sized frames; every hit the detector fired."""
+
+    hits = []
+    for start in range(0, len(pcm), _FRAME * 2):
+        hit = detector.feed(pcm[start : start + _FRAME * 2])
+        if hit:
+            hits.append(hit)
+    return hits
+
+
+def _paused(gap: float) -> bytes:
+    return (
+        _silence(0.5)
+        + _tone(0.8, hz=HEY)
+        + _silence(gap)
+        + _tone(0.8, hz=NAME)
+        + _silence(1.6)
+    )
+
+
+def test_a_greeting_then_a_long_pause_then_his_name_wakes_with_the_tail():
+    """"Hey" ... 3.2 s ... "Parker, can you help me". No 2.4 s window ever
+    holds both words (keyless repro: 8 inferences, the last four hearing a
+    bare "parker"; the real base model missed it for three voices). The
+    greeting is latched across the pause; his name wakes, with the tail."""
+
+    detector = WakeDetector(_speech({HEY: "hey", NAME: "parker can you help me"}))
+    hits = _stream(detector, _paused(3.2))
+    assert len(hits) == 1, hits
+    assert hits[0]["tail"] == "can you help me"
+    assert 0 < hits[0]["latch_s"] <= wake.GREETING_LATCH_SECONDS
+    assert detector.feed(_tone(0.2, hz=NAME)) is None  # one utterance, one wake
+
+
+@pytest.mark.parametrize("name_window", ["um parker", "par ker", "on parker"])
+def test_a_slip_or_filler_before_his_name_after_the_pause_still_wakes(name_window):
+    """The real model heard a synthesized "um parker" as "On Parker". The
+    latched greeting goes through the same single-window grammar, so one
+    filler/slip token before the name is tolerated across the pause
+    exactly as it is within one breath."""
+
+    detector = WakeDetector(_speech({HEY: "hey", NAME: name_window}))
+    hits = _stream(detector, _paused(3.2))
+    assert len(hits) == 1 and "latch_s" in hits[0], hits
+
+
+@pytest.mark.parametrize("drain_window", ["okay", "thank you"])
+def test_a_cut_syllable_hallucination_does_not_cancel_the_greeting(drain_window):
+    """While "hey" drains out of the window the real model hears "Hey",
+    "Hey", then "Okay." / "" on the cut tail (three voices). A word or two
+    on a cut syllable is not him moving on — only a sentence clears the
+    latch. The latch clock is AUDIO time: 4.6 s of audio passed."""
+
+    replies = iter([["hey"], [drain_window], ["parker"]])
+    detector = WakeDetector(lambda path: next(replies))
+    assert detector.feed(_tone(0.8)) is None  # "hey": armed
+    assert detector.feed(_tone(0.8)) is None  # the cut-tail window
+    assert detector.feed(_silence(3.0)) is None  # gated: silence never touches it
+    hit = detector.feed(_tone(0.8))
+    assert hit is not None and hit["matched"] == "hey parker"
+    assert hit["latch_s"] == 4.6
+
+
+def test_a_stale_greeting_never_lets_a_bare_parker_wake():
+    """"Hey" said to someone in the room; ten seconds later the TV says
+    "Parker". The latch is bounded in audio time (this streams in
+    milliseconds of wall time with the default clock)."""
+
+    detector = WakeDetector(_speech({HEY: "hey", NAME: "parker"}))
+    assert _stream(detector, _paused(10.0)) == []
+
+
+def test_intervening_speech_clears_the_greeting_latch():
+    """"Hey" ... "I'm parking the car" ... "Parker": a sentence between the
+    greeting and the name means he moved on. Pins that the latch is not
+    time-only (the tempting simpler design)."""
+
+    detector = WakeDetector(
+        _speech({HEY: "hey", PARKING: "i'm parking the car", NAME: "parker"})
+    )
+    audio = (
+        _silence(0.5)
+        + _tone(0.8, hz=HEY)
+        + _silence(1.0)
+        + _tone(1.2, hz=PARKING)
+        + _silence(2.6)
+        + _tone(0.8, hz=NAME)
+        + _silence(1.6)
+    )
+    assert _stream(detector, audio) == []
+
+
+def test_a_bare_article_never_arms_the_latch():
+    """The review negative ("a parker" is not a greeting) carried across
+    the pause: only greeting tokens arm the latch."""
+
+    detector = WakeDetector(_speech({HEY: "a", NAME: "parker"}))
+    assert _stream(detector, _paused(3.2)) == []
+
+
+def test_the_fake_asr_hears_both_words_when_the_pause_fits_the_window():
+    """Harness self-check: a 1.0 s pause keeps both tones in one 2.4 s
+    window and the unchanged single-window matcher wakes on its own — so
+    the temporal tests above are not tautologies of the fake."""
+
+    detector = WakeDetector(_speech({HEY: "hey", NAME: "parker"}))
+    hits = _stream(detector, _paused(1.0))
+    assert len(hits) == 1 and hits[0]["matched"] == "hey parker", hits
+    assert "latch_s" not in hits[0]
 
 
 # ---------------------------------------------------------------------------
