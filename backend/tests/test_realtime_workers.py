@@ -40,7 +40,9 @@ def test_search_worker_screens_drops_proposals_and_keeps_sources(monkeypatch):
 
     result = realtime_workers.run_search_worker("when does Alcaraz play?")
 
-    assert brain.calls == ["when does Alcaraz play?"]
+    # The brain hears today's local date in front of the question.
+    assert len(brain.calls) == 1 and brain.calls[0].endswith(" when does Alcaraz play?")
+    assert brain.calls[0].startswith("Right now it is ")
     assert result.error == ""
     assert "Alcaraz plays Friday." in result.speech
     assert "Want more detail?" not in result.speech  # the front model steers
@@ -247,3 +249,26 @@ def test_render_search_item_carries_question_age_and_fenced_content():
     assert "Friday night." in text
     assert "ESPN" not in text  # sources are screen evidence, not model input
     assert "espn.com" not in text
+
+
+def test_search_worker_grounds_the_brain_in_todays_local_date(monkeypatch):
+    """Call 41, seq 113: the worker said it had no reliable read on the
+    date. The brain now hears the household's local date/time in front of
+    the question, while the result still cites the ORIGINAL question."""
+
+    brain = FakeBrain(BrainReply(speech="The final is on Sunday afternoon."))
+    monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda: brain)
+    result = realtime_workers.run_search_worker("when is the US Open final?")
+    assert len(brain.calls) == 1
+    sent = brain.calls[0]
+    assert sent.startswith("Right now it is ") and sent.endswith(" when is the US Open final?")
+    assert realtime_workers.local_date_line() in sent
+    assert " local time" in sent
+    assert result.question == "when is the US Open final?"  # dedupe/journal key unchanged
+
+
+def test_local_date_line_names_the_weekday_date_and_time():
+    line = realtime_workers.local_date_line()
+    import re
+
+    assert re.match(r"^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), \d{1,2} [A-Z][a-z]+ \d{4}, \d{1,2}:\d{2} (AM|PM) local time$", line), line

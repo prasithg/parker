@@ -135,8 +135,30 @@ class WorkerResult:
 # ---------------------------------------------------------------------------
 
 
+def local_date_line() -> str:
+    """The household's local date and time, speakably, for grounding.
+
+    The search worker answered "I don't have a reliable read on today's
+    exact date" in Pras's session-3 test (call 41, seq 113): the front
+    session is clock-grounded, the worker was not. Same home timezone as
+    the rollups.
+    """
+
+    from datetime import datetime
+
+    from app.parker.rollup import home_timezone
+
+    now = datetime.now(home_timezone())
+    return f"{now:%A}, {now.day} {now:%B %Y}, {now.strftime('%I:%M %p').lstrip('0')} local time"
+
+
 def run_search_worker(question: str) -> WorkerResult:
     """Answer one self-contained question through the household brain.
+
+    The brain is handed today's local date/time in front of the question
+    ("what's on tonight" needs to know which night). The WorkerResult keeps
+    the ORIGINAL question: dedupe keys, journal rows, and the injected
+    note all cite what the front model actually asked.
 
     Never raises: every failure comes back as an error envelope the front
     model can be honest about.
@@ -174,7 +196,8 @@ def run_search_worker(question: str) -> WorkerResult:
                 started_at=started,
                 finished_at=time.time(),
             )
-        reply = brain.respond([], question, build_brain_context())
+        grounded = f"Right now it is {local_date_line()}. {question}"
+        reply = brain.respond([], grounded, build_brain_context())
         screened = screen_reply(reply, proposable=frozenset())  # workers never propose
         speech = trim_for_speech(screened.reply.speech)
         if speech.endswith(WANT_MORE_SUFFIX):
