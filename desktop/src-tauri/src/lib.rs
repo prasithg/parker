@@ -31,6 +31,10 @@ const HEALTH_POLL_MS: u64 = 500;
 const TRAY_POLL_MS: u64 = 2_000;
 const FIRST_SESSION_WAIT_SECS: u64 = 15;
 const RESTART_BACKOFF_SECS: [u64; 5] = [1, 2, 4, 8, 15]; // MacClaw's curve
+/// Source revision this shell was built from (build.rs; `<sha>[-dirty]`,
+/// or `unknown` without git). Printed once at setup so a packaged probe
+/// can bind the .app it launched to a commit.
+const GIT_SHA: &str = env!("PARKER_GIT_SHA");
 
 const ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
 const ICON_LISTENING: &[u8] = include_bytes!("../icons/tray-listening.png");
@@ -896,6 +900,7 @@ fn on_menu_event(app: &AppHandle, event_id: &str) {
 }
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    println!("parker-desktop {} git={GIT_SHA}", env!("CARGO_PKG_VERSION"));
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -1007,8 +1012,19 @@ mod tests {
 
     use super::{
         active_talk_state, first_session_lease_action, first_session_start_decision,
-        FirstSessionLeaseAction, FirstSessionStartDecision, MicrophoneTransition,
+        FirstSessionLeaseAction, FirstSessionStartDecision, MicrophoneTransition, GIT_SHA,
     };
+
+    #[test]
+    fn build_sha_is_embedded() {
+        // build.rs stamps the source revision into the shell so the packaged
+        // probe can bind a Parker.app to a commit; "unknown" only without git.
+        let bare = GIT_SHA.strip_suffix("-dirty").unwrap_or(GIT_SHA);
+        assert!(
+            bare == "unknown" || (bare.len() >= 7 && bare.chars().all(|c| c.is_ascii_hexdigit())),
+            "PARKER_GIT_SHA = {GIT_SHA:?}"
+        );
+    }
 
     #[test]
     fn companion_blocks_first_session_before_talk_spawn() {

@@ -205,6 +205,10 @@ migrate:
 # sounddevice so the app never needs pip on a family machine.
 sidecar: backend-venv voice-deps
 	$(BACKEND_PIP) install --quiet -r backend/requirements-build.txt
+	# Stamp the source revision into the bundle (app/version.py): git sha,
+	# "-dirty" when the tree has changes, "unknown" without git. Gitignored;
+	# `parker version --json` and /health report it, the packaged probe binds on it.
+	cd backend && ./.venv/bin/python -c 'from pathlib import Path; from app.version import write_build_info; print("build info:", Path(write_build_info(Path("app/_build_info.py"))).read_text().strip().splitlines()[-2])'
 	cd backend && ./.venv/bin/pyinstaller parker.spec --noconfirm
 	@echo "Sidecar built: backend/dist/parker/parker — verify with scripts/sidecar_smoke.sh"
 
