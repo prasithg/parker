@@ -455,9 +455,19 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
     from naive-UTC storage: today's, tomorrow's, then undated ones he set
     in the last two days (the realtime lane stores no due time at all, so
     these are every spoken reminder), then still-open ones whose time has
-    passed — six lines at most. An executed reminder was delivered at his
-    yes: it is his day only while undated-and-recent or its time is still
-    ahead; past-due executed ones are the digest's done list.
+    passed — six lines at most, and a cut is never silent (fix round 2,
+    P03-3): a seventh adds "…and N more reminders" so the front model
+    never denies one Parker holds. An executed reminder was delivered at
+    his yes: it is his day only while undated-and-recent or its time is
+    still ahead; past-due executed ones are the digest's done list.
+
+    Two sources (fix round 2, P03-1): a dated reminder lives on
+    ``CapturedIntent`` (status pending) until the resolve gate
+    (``pipeline.resolve_captured_intents``: ``due_at <= now``) lets it
+    stage, so before its time it exists nowhere else — read it from there,
+    as waiting for his yes, through the same due-time phrasing. An intent
+    that already has a staged action is skipped, so a reminder is one
+    line before and after it resolves.
     """
 
     import json as _json
@@ -465,7 +475,7 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
 
     from sqlalchemy import and_, or_
 
-    from app.db.models import StagedAction
+    from app.db.models import CapturedIntent, ResolutionResult, StagedAction
 
     tz = now_local.tzinfo
     today = _local_day_start(now_local)
@@ -492,10 +502,19 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
         .order_by(StagedAction.execute_after.asc(), StagedAction.created_at.desc())
         .all()
     )
-    today_lines: list[str] = []
-    tomorrow_lines: list[str] = []
-    undated_lines: list[str] = []
-    open_lines: list[str] = []
+    pending = (
+        db.query(CapturedIntent)
+        .filter(CapturedIntent.status == "pending")
+        .filter(CapturedIntent.requested_action.in_(("remind", "reminder")))
+        .filter(CapturedIntent.due_at.isnot(None))
+        .filter(CapturedIntent.due_at < _to_stored(day_after))
+        .filter(~CapturedIntent.resolutions.any(ResolutionResult.staged_actions.any()))
+        .order_by(CapturedIntent.due_at.asc(), CapturedIntent.created_at.desc())
+        .all()
+    )
+    # (stored due or None, head) from both sources; undated rows keep their
+    # most-recently-set-first order, dated ones are merged by due time.
+    entries: list[tuple[Any, str]] = []
     for action in rows:
         try:
             payload = _json.loads(action.action_payload or "{}")
@@ -505,11 +524,19 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
         if not subject:
             continue
         state = "waiting for his yes" if action.status == "staged" else "set"
-        head = f"A reminder ({state}): {subject}"
-        if action.execute_after is None:
-            undated_lines.append(f"{head} — no time on record.")
+        entries.append((action.execute_after, f"A reminder ({state}): {subject}"))
+    for intent in pending:
+        subject = str(intent.subject or intent.intent_text or "").strip()
+        if not subject:
             continue
-        due = _from_stored(action.execute_after, tz)
+        entries.append((intent.due_at, f"A reminder (waiting for his yes): {subject}"))
+    today_lines: list[str] = []
+    tomorrow_lines: list[str] = []
+    undated_lines: list[str] = [f"{head} — no time on record." for stored, head in entries if stored is None]
+    open_lines: list[str] = []
+    dated = sorted((entry for entry in entries if entry[0] is not None), key=lambda entry: entry[0])
+    for stored, head in dated:
+        due = _from_stored(stored, tz)
         at = _speakable_time(due.strftime("%H:%M"))
         if due < now_local:
             if due >= today:
@@ -528,7 +555,13 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
     # Open ones are unbounded in age (the digest's "needs a look"
     # precedent), most recently due first, bounded here by the cap.
     open_lines.reverse()
-    return (today_lines + tomorrow_lines + undated_lines + open_lines)[:6]
+    ordered = today_lines + tomorrow_lines + undated_lines + open_lines
+    if len(ordered) > 6:
+        more = len(ordered) - 6
+        ordered = ordered[:6] + [
+            f"…and {more} more reminders Parker did not list here — never say he has none."
+        ]
+    return ordered
 
 
 def _my_day_note_lines(db: Any, now_local: Any) -> list[str]:

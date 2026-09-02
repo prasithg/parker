@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -423,9 +423,26 @@ def _get_action(db: Session, staged_action_id: int) -> StagedAction:
 
 
 def _coerce_datetime(value: datetime | str | None) -> datetime | None:
+    """An ISO-8601 due time → the naive-UTC form every reader decodes.
+
+    The DateTime columns hold naive UTC (SQLite discards tzinfo), and the
+    readers (`realtime_workers._from_stored`, the rollups) re-attach UTC.
+    A bare `fromisoformat` kept the wall-clock digits of an offset-bearing
+    string, so "16:00-04:00" was read back as 16:00 UTC — a reminder spoken
+    hours early and called overdue (P03-2). Aware → UTC. Naive → his home
+    wall time (a brain talking to a local user emits local time), then
+    UTC. A datetime object is stored as given: the seed and the tests pass
+    UTC-naive datetimes already.
+    """
+
     if value is None or isinstance(value, datetime):
         return value
-    return datetime.fromisoformat(value)
+    from app.parker.rollup import home_timezone  # function-local: tests patch it there
+
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=home_timezone())
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _json_payload(raw: str | None) -> dict[str, Any]:
