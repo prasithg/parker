@@ -329,6 +329,43 @@ def test_the_wake_lane_carries_the_request_tail(db, monkeypatch):
         ws.send_json({"type": "end"})
 
 
+def test_the_tail_lane_finishes_on_tail_end_with_sub_hop_audio(db, monkeypatch):
+    """F2: the live line opens ~10 ms after the wake, long before the
+    lane's first 0.7 s hop, so the words he spoke during the wake
+    inference sat only in the lane and were lost. On `tail_end` the lane
+    transcribes whatever it holds once — 0.4 s here, below the hop —
+    answers with a FINAL tail frame and closes. The loop is sequential:
+    every audio frame the page sent before `tail_end` is in that window."""
+
+    _fake_transcriber(monkeypatch, [["hey parker can you"], ["help me with the tv"]])
+    a = _claim("tab-a").json()
+    with client.websocket_connect(_wake_url(a)) as ws:
+        ws.send_json({"type": "audio", "data": base64.b64encode(_tone(0.8)).decode()})
+        assert ws.receive_json()["tail"] == "can you"
+        ws.send_json({"type": "audio", "data": base64.b64encode(_tone(0.4)).decode()})
+        ws.send_json({"type": "tail_end"})
+        assert ws.receive_json() == {"type": "tail", "text": "help me with the tv", "final": True}
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()  # the lane closed itself: the line has the words
+
+    # Nothing new since the wake: the answer is still a final frame (empty),
+    # so the page never waits on the lane, and no inference is spent.
+    calls: list[str] = []
+
+    def transcriber(path):
+        calls.append("run")
+        return ["hey parker"]
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: transcriber)
+    b = _claim("tab-a").json()
+    with client.websocket_connect(_wake_url(b)) as ws:
+        ws.send_json({"type": "audio", "data": base64.b64encode(_tone(0.8)).decode()})
+        assert ws.receive_json()["type"] == "wake"
+        ws.send_json({"type": "tail_end"})
+        assert ws.receive_json() == {"type": "tail", "text": "", "final": True}
+    assert calls == ["run"]
+
+
 def test_tail_frames_stop_after_the_window(db, monkeypatch):
     """Past the tail window the lane stops spending inference on audio it
     will never forward — the page is about to end it anyway."""

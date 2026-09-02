@@ -43,6 +43,9 @@ WINDOW_SECONDS = 2.4
 HOP_SECONDS = 0.7
 # RMS of int16 samples below this is a quiet room: never run the model.
 ENERGY_GATE_RMS = 260
+# ``finish``: less new audio than this since the last run is not worth an
+# inference (a cut syllable at most).
+MIN_FLUSH_SECONDS = 0.25
 
 _GREETINGS = {"hey", "hay", "hi", "eh", "hei"}
 _PARKER_EXACT = {"parker", "parka", "barker", "packer", "parcker", "parkers"}
@@ -233,6 +236,33 @@ class WakeDetector:
                 self.gated_by_background += 1
                 return None  # steady background (a TV) is not someone speaking up
         self._remember_rms(rms)
+        return self._transcribe(window, rms)
+
+    def begin_tail(self, max_seconds: float) -> None:
+        """After a wake: stop sliding. The window was cleared at the wake,
+        so from here it grows and holds everything he says (up to
+        ``max_seconds``) for the tail lane's lifetime — every tail frame is
+        a superset transcript and the first post-wake words never slide
+        out (F2: a 2.4 s rolling window had erased them by the 5th hop)."""
+
+        self._window_samples = int(max_seconds * WAKE_SAMPLE_RATE)
+
+    def finish(self) -> Optional[dict[str, Any]]:
+        """Transcribe the current window once, regardless of the hop: the
+        lane's last words before the live line takes over. Same return
+        shape as ``hear``; None when less than MIN_FLUSH_SECONDS of audio
+        arrived since the last run or the window is quiet."""
+
+        if self._samples_since_run < int(MIN_FLUSH_SECONDS * WAKE_SAMPLE_RATE):
+            return None
+        self._samples_since_run = 0
+        window = bytes(self._window)
+        rms = audioop.rms(window, 2) if window else 0
+        if rms < ENERGY_GATE_RMS:
+            return None
+        return self._transcribe(window, rms)
+
+    def _transcribe(self, window: bytes, rms: int) -> Optional[dict[str, Any]]:
         started = self._clock()
         self.inferences += 1
         try:

@@ -223,10 +223,16 @@ def converse_static(asset_path: str) -> FileResponse:
     )
 
 
+from app.parker.wake import HOP_SECONDS as WAKE_HOP_SECONDS  # the wake lane's hop
+
 # After a wake fires, the lane keeps transcribing for this long so the
 # rest of a same-breath request ("Hey Parker, can you help me") reaches
 # the live line as text while that line is still connecting.
 WAKE_TAIL_SECONDS = 3.0
+# The post-wake window grows from the cleared wake point and holds
+# everything he says until the line takes over (`tail_end`): the lane's
+# lifetime plus one hop, so nothing he said slides out inside it (F2).
+TAIL_WINDOW_SECONDS = WAKE_TAIL_SECONDS + WAKE_HOP_SECONDS
 
 
 @router.websocket("/converse/wake")
@@ -313,6 +319,7 @@ async def converse_wake(websocket: WebSocket) -> None:
                 hit = await run_in_threadpool(detector.feed, pcm)
                 if hit:
                     woke_at = time.monotonic()
+                    detector.begin_tail(TAIL_WINDOW_SECONDS)
                     logger.info(
                         "wake detected matched=%r infer_ms=%d rms=%d",
                         hit["matched"],
@@ -338,6 +345,20 @@ async def converse_wake(websocket: WebSocket) -> None:
                         await websocket.send_json({"type": "wake", **hit})
                     except RuntimeError:
                         return  # revoked mid-inference: the socket is already closed
+            elif kind == "tail_end":
+                # The line is up. Every audio frame the page sent before this
+                # one has already been fed (the loop is sequential): transcribe
+                # what the lane still holds once — even sub-hop audio — answer
+                # with the FINAL tail (empty is still an answer, so the page
+                # never waits on the lane) and hand over.
+                heard = await run_in_threadpool(detector.finish) if woke_at is not None else None
+                text = str((heard or {}).get("heard", ""))[:200]
+                try:
+                    await websocket.send_json({"type": "tail", "text": text, "final": True})
+                    await websocket.close()  # the lane's job is done: an orderly close
+                except RuntimeError:
+                    pass  # revoked meanwhile: nothing to hand over to
+                return
             elif kind == "end":
                 return
     except WebSocketDisconnect:

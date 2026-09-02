@@ -285,6 +285,57 @@ def test_a_crashing_transcriber_never_ends_dormancy():
     assert detector.feed(_tone(0.8)) is None  # keeps trying, keeps calm
 
 
+def _loudness(labels: dict[int, str]):
+    """A stand-in ASR keyed on loudness: one phrase per amplitude level
+    present in the window WAV, in order — so a test can label hops and
+    see which of them the transcriber was actually handed."""
+
+    def transcriber(path):
+        with wave.open(str(path), "rb") as handle:
+            pcm = handle.readframes(handle.getnframes())
+        step = int(0.1 * WAKE_SAMPLE_RATE) * 2
+        heard: list[str] = []
+        for start in range(0, len(pcm) - step + 1, step):
+            rms = audioop.rms(pcm[start : start + step], 2)
+            if rms < ENERGY_GATE_RMS:
+                continue
+            phrase = labels[min(labels, key=lambda amp: abs(amp / math.sqrt(2) - rms))]
+            if phrase not in heard:
+                heard.append(phrase)
+        return [" ".join(heard)] if heard else []
+
+    return transcriber
+
+
+def test_post_wake_audio_never_slides_out_of_the_tail_window():
+    """F2: after a wake the lane transcribed a 2.4 s ROLLING window per hop
+    — observed per-hop contents A, AB, ABC, ABCD, BCDE: the first words
+    after the wake phrase were erased by the fifth hop, and sub-hop audio
+    never ran at all. After ``begin_tail`` the window grows from the
+    cleared wake point and holds everything he said, so every tail frame
+    is a superset transcript; ``finish`` transcribes the sub-hop
+    remainder exactly once."""
+
+    from app.parker import converse_router
+
+    labels = {7000: "hey parker", 1000: "A", 2000: "B", 3000: "C", 4000: "D", 5000: "E", 6000: "F"}
+    detector = WakeDetector(_loudness(labels))
+    hit = detector.feed(_tone(0.8, amplitude=7000))
+    assert hit is not None and hit["matched"] == "hey parker"
+    assert converse_router.TAIL_WINDOW_SECONDS == converse_router.WAKE_TAIL_SECONDS + wake.HOP_SECONDS
+    detector.begin_tail(converse_router.TAIL_WINDOW_SECONDS)  # what the route does on the hit
+    windows = [
+        detector.hear(_tone(0.7, amplitude=amp))["heard"] for amp in (1000, 2000, 3000, 4000, 5000)
+    ]
+    assert windows == ["A", "A B", "A B C", "A B C D", "A B C D E"]
+    assert detector.hear(_tone(0.4, amplitude=6000)) is None  # sub-hop: no inference by itself
+    finished = detector.finish()
+    assert finished is not None and finished["heard"] == "A B C D E F"
+    assert detector.inferences == 7
+    assert detector.finish() is None  # nothing new: never a second inference
+    assert detector.inferences == 7
+
+
 # ---------------------------------------------------------------------------
 # Greeting latch: a Parkinsonian pause longer than the window
 # ---------------------------------------------------------------------------
