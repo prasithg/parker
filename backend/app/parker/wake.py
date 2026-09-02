@@ -53,9 +53,11 @@ _PARK_WORDS = {"park", "parks", "parked", "parking", "parkway", "parkland", "par
 MAX_TAIL_WORDS = 20
 # The adaptive gate's memory: ~60 s of hops. The "room" is a LOW
 # percentile of that memory, and the gate only engages once the room has
-# been continuously energetic for ~20 s (a TV), so his own seven seconds
-# of talking to someone can never become the background his wake must
-# rise above (fresh review of PR #40, 2026-09-02).
+# been continuously energetic for ~20 s (a TV) — so a few seconds of him
+# talking to someone do not become the background his wake must rise
+# above. It is not perfect: ~24 s of unbroken talk at one level would arm
+# it until a 2.4 s pause drains the window — one reason it ships opt-in
+# (fresh reviews of PR #40, 2026-09-02).
 _BACKGROUND_HOPS = 86
 _BACKGROUND_PERCENTILE = 0.25
 _BACKGROUND_STEADY_HOPS = 28

@@ -211,7 +211,8 @@ Findings so far:
   opt-in, off by default** after the fresh review found the first design
   gated a wake that followed his own speech; the redesigned gate engages
   only after ~20 s of steadily loud room (a TV) against a low-percentile
-  background, so his own talking never becomes the background — but
+  background, so a few seconds of his own talking do not become the
+  background (≈24 s of unbroken talk still would, until a 2.4 s pause) —
   enabling it is a room-calibration decision for the family, not a
   default.
 - **False wake.** One in four minutes: the TV said "…an actor named Parker
@@ -253,6 +254,36 @@ Findings so far:
   ("Hey Parker, can you help me" → window heard "Hey Parker, Ken"); the
   post-wake tail lane is what carries it (recall rows' "tail after wake"
   column), which is why the handoff contract exists.
+
+## Follow-on slices started tonight (stacked, each with its own PR)
+
+- **PR #43** `fable/spoken-session-end` (on PR #40): spoken session end →
+  wind-down → dormant; "Resting — say Hey Parker" label; the room dims to
+  rest ([plan](2026-09-02-spoken-session-end.md)).
+- **PR #44** `fix/search-worker-date-grounding` (from main, per the
+  merge policy): the search worker knows today's date/zone.
+- **PR #45** `fable/my-day-worker` (on PR #43): the local "my day" tool —
+  medicine times by name, reminders he set, family notes, and the honest
+  "no calendar" limit ([plan](2026-09-02-my-day-worker.md)); fix round
+  after its fresh review (limit line unconditional; honest store failure).
+- **PR #46** `fable/reachy-motion-vocabulary` (on PR #45): the beat layer
+  from Hermes's motion reference — staged wake beat, acknowledgment,
+  phrase micro-nods from real transcript punctuation, restrained outcome
+  beats, idle weight shift, `advance()` for numeric verification
+  ([plan](2026-09-02-reachy-motion-vocabulary.md)).
+- `fable/wake-burst-window` (on PR #40, experiment, opt-in
+  `parker_wake_burst_window`): a second look at just the loud burst when
+  the last 1.3 s of the window is ≥1.25× louder than what came before.
+  Measured (base model): bare "hey parker" over TV at +6/+12 dB 0/4 → 2/4
+  (one synthesized voice still reads as TV even in the burst clip); the
+  full sentence 4/4 either way; equal loudness and below still 0/8; no
+  extra false wakes in 4 min of TV; about +20% CPU during TV. A partial,
+  honest gain — the answer over TV speech remains a dedicated wake model.
+
+Each stacked PR had a fresh-context review and a fix round where it
+returned NEEDS_FIX; every fix round added the pin that would have caught
+it. Every head was run on real CI (dispatched manually where the
+`pull_request` event did not fire).
 
 ## Next-slice candidates surfaced tonight (not started)
 
