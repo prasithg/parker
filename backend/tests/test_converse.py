@@ -36,7 +36,7 @@ from app.parker.converse import (
     TimedBrain,
 )
 from app.parker.screen import get_screen_state
-from app.db.models import CapturedIntent, StagedAction
+from app.db.models import CallLog, CapturedIntent, StagedAction
 
 client = TestClient(app)
 
@@ -612,6 +612,11 @@ def test_stop_during_a_silent_window_still_means_stopped(db):
 
 
 def test_concurrent_session_creates_load_the_model_exactly_once(db):
+    """Four simultaneous creates: one model load, four DISTINCT sessions,
+    and every thread's outcome is part of the assertion — a thread that
+    crashed on the database used to leave this test green (independent
+    review, 2026-09-01)."""
+
     loads = []
 
     def loader():
@@ -619,12 +624,32 @@ def test_concurrent_session_creates_load_the_model_exactly_once(db):
         return FakeTranscriber()
 
     store = make_store(db, loader=loader)
-    threads = [threading.Thread(target=store.create_session) for _ in range(4)]
+    outcomes: list[tuple[str, object]] = []
+    lock = threading.Lock()
+
+    def create():
+        try:
+            created = store.create_session()
+        except BaseException as exc:  # noqa: BLE001 — the thread's failure IS the finding
+            with lock:
+                outcomes.append(("error", repr(exc)))
+            return
+        with lock:
+            outcomes.append(("ok", created["session_id"]))
+
+    threads = [threading.Thread(target=create) for _ in range(4)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(timeout=10)
+    assert not [t for t in threads if t.is_alive()], "a create never finished"
+    errors = [detail for kind, detail in outcomes if kind == "error"]
+    assert errors == [], errors
+    ids = [detail for kind, detail in outcomes if kind == "ok"]
+    assert len(ids) == 4 and len(set(ids)) == 4, ids
     assert len(loads) == 1
+    # Each session owns a real call log row — the write landed for all four.
+    assert db.query(CallLog).filter(CallLog.call_type == "converse").count() == 4
 
 
 def test_turn_racing_end_session_gets_a_404_not_a_closed_db(db):

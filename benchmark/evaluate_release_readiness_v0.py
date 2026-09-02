@@ -64,12 +64,18 @@ def evaluate_release_readiness(
     report_paths: dict[str, Path] | None = None,
     claim_map_path: Path = DEFAULT_CLAIM_MAP_PATH,
     construct_matrix_path: Path = DEFAULT_MATRIX_PATH,
+    as_of: date | None = None,
 ) -> ReleaseReadinessEvalResult:
     """Evaluate whether current synthetic/local evidence backs the public claims.
 
     The gate deliberately fails closed on missing or malformed reports. Passing
     means only: the current repo reports support the narrowly caveated public
     claims. It never means real-world, clinical, patient, or private-data proof.
+
+    ``as_of`` is the calendar date the freshness window is judged against
+    (default: today). The release lane leaves it at today so stale evidence
+    fails closed; the unit tests pin it to the checked-in reports' own date so
+    the suite does not go red every second midnight UTC.
     """
 
     paths = dict(REQUIRED_REPORTS if report_paths is None else report_paths)
@@ -117,7 +123,7 @@ def evaluate_release_readiness(
         "repair_quality_rubric": _repair_quality_rubric_metrics(reports.get("repair_quality_rubric")),
     }
 
-    source_report_freshness = _source_report_freshness(reports, paths)
+    source_report_freshness = _source_report_freshness(reports, paths, as_of=as_of)
     if not source_report_freshness["all_current"]:
         stale_names = ", ".join(row["report"] for row in source_report_freshness["stale_reports"])
         blocking_failures.append(
@@ -173,7 +179,9 @@ def _load_json_report(report_name: str, path: Path) -> tuple[dict[str, Any], dic
     return payload, None
 
 
-def _source_report_freshness(reports: dict[str, dict[str, Any]], paths: dict[str, Path]) -> dict[str, Any]:
+def _source_report_freshness(
+    reports: dict[str, dict[str, Any]], paths: dict[str, Path], *, as_of: date | None = None
+) -> dict[str, Any]:
     """Summarize whether required source reports are in the current evidence window.
 
     Reports generated late in a US local day are often verified moments later
@@ -183,7 +191,7 @@ def _source_report_freshness(reports: dict[str, dict[str, Any]], paths: dict[str
     The report payload date—not filesystem mtime—remains authoritative.
     """
 
-    current_date = date.today()
+    current_date = as_of or date.today()
     expected_date = current_date.isoformat()
     accepted_dates = [
         (current_date - timedelta(days=1)).isoformat(),
@@ -672,9 +680,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate Parker release-readiness from current synthetic/local reports.")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     parser.add_argument("--write-report", action="store_true", help="write latest and dated JSON/Markdown reports")
+    parser.add_argument(
+        "--as-of",
+        default=None,
+        help="judge source-report freshness against this YYYY-MM-DD instead of today (tests only)",
+    )
     args = parser.parse_args()
 
-    result = evaluate_release_readiness()
+    as_of = date.fromisoformat(args.as_of) if args.as_of else None
+    result = evaluate_release_readiness(as_of=as_of)
     payload = result.as_dict()
     if args.write_report:
         paths = write_reports(result)
