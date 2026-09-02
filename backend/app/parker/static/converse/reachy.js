@@ -686,7 +686,7 @@ export function createReachyScene(container, controller, options) {
 
   function frame(timeMs) {
     if (disposed) return;
-    const dt = Math.min(0.05, last === null ? 0.016 : (timeMs - last) / 1000);
+    const dt = Math.max(0, Math.min(0.05, last === null ? 0.016 : (timeMs - last) / 1000));
     last = timeMs;
     controller.tick();
     const state = controller.getState();
@@ -766,6 +766,7 @@ export function createReachyScene(container, controller, options) {
     springStep('headYaw', pose.headYaw, dt);
     springStep('headPitch', pose.headPitch, dt);
     springStep('headRoll', pose.headRoll, dt);
+    springStep('headDrop', pose.headDrop, dt); // never stepped before: the live loop never sank the head
     springStep('eyeOpen', pose.eyeOpen, dt);
     springStep('eyeGlow', pose.eyeGlow, dt);
     springStep('antennaL', pose.antennaL, dt);
@@ -857,7 +858,9 @@ export function createReachyScene(container, controller, options) {
     if (state.action !== lastKnownAction) {
       if (state.action === 'executed') startBeat('executed', nowMs);
       else if (state.action === 'failed') startBeat('failed', nowMs);
-      else if (state.action === 'cancelled' || state.action === 'expired') startBeat('cancelled', nowMs);
+      else if (lastKnownAction === 'staged' && state.action === 'none' && !ASLEEP[state.phase]) {
+        startBeat('cancelled', nowMs); // the offer lapsed: his "no", or the window expired
+      }
     }
     if (state.beats !== lastBeats) {
       if (state.phase === 'talking' && state.beats > lastBeats) {
@@ -912,7 +915,9 @@ export function createReachyScene(container, controller, options) {
   if (opts.reducedMotion) {
     // One truthful static pose per semantic change; a slow interval lets
     // TTL/dwell housekeeping settle without a render loop.
-    unsubscribe = controller.subscribe(renderStatic);
+    unsubscribe = controller.subscribe(function (s, cause) {
+      if (cause !== 'phrase_boundary') renderStatic(); // a beat is not a pose change
+    });
     renderStatic();
     reducedTimer = setInterval(function () {
       controller.tick();
@@ -955,7 +960,11 @@ export function createReachyScene(container, controller, options) {
     // loop by a virtual interval (ms) and render — beats become readouts
     // over time instead of eyeballed motion.
     advance: function (ms) {
+      // Verification only: takes over the clock. The live rAF loop is
+      // stopped first so a later real frame can never see a negative dt
+      // (setPaused(false) resumes it with a fresh `last`).
       if (opts.reducedMotion || disposed) return;
+      if (!paused) { paused = true; renderer.setAnimationLoop(null); }
       const step = Math.max(1, Math.min(50, ms || 16));
       let t = (last === null ? 0 : last);
       const end = t + (ms || 16);

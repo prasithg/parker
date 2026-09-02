@@ -75,3 +75,17 @@ reference material and, when it arrives, Pras's physical Reachy Mini.
 - Specs: expression spec pins the event's gating; the companion Node spec
   pins that a sentence-ending transcript delta is exactly one beat. Full
   suite on the branch green.
+
+## Fix round (2026-09-02, after the fresh review of `8f52bb1`)
+
+Four contract gaps closed: a phrase beat no longer produces an expression
+receipt (the subscriber skips `phrase_boundary`, pinned in the companion
+Node spec); the reduced-motion path no longer re-renders per sentence;
+`advance()` stops the live loop first and `dt` is floored at 0, so a real
+frame after a verification step can never see a negative interval; the
+cancelled beat now fires on the real lapse (`staged → none` — his "no" or
+the expiry), verified in the browser. Side finding fixed: the head-drop
+spring was never stepped in the live loop, so the animated scene never
+actually sank the head when dormant (only the reduced-motion static
+render did) — now `headDrop` reaches 0.99 dormant and 0.05 awake in the
+live loop (browser readouts via `advance()`).

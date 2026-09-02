@@ -567,6 +567,9 @@ async function poweredActive(env) {
     assert.strictEqual(c.getState().beats, 1, 'the full stop is the beat');
     ws.message({ type: 'assistant_transcript_delta', text: ' Anything else?' });
     assert.strictEqual(c.getState().beats, 2);
+    // …and none of that reached the journal: no expression receipt per sentence.
+    assert.ok(!ws.sent.some((f) => f.type === 'expression' && f.reason === 'phrase_boundary'),
+      'a phrase beat is motion, not a presence transition');
   });
 
   await test('page hide releases microphone, audio, sockets, TTS, timers, and the scene', async () => {
