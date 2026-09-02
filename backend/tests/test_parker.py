@@ -25,7 +25,13 @@ def _call(db):
     return call
 
 
-def test_capture_intent_tool_persists_pending_intent(db):
+def test_capture_intent_tool_persists_pending_intent(db, monkeypatch):
+    # A naive due string is HOME wall time and is stored as naive UTC
+    # (P0.3 fix round, 2026-09-02); anchor the home zone to UTC so the
+    # stored value equals the digits the brain emitted.
+    from datetime import timezone
+
+    monkeypatch.setattr("app.parker.rollup.home_timezone", lambda: timezone.utc)
     call = _call(db)
 
     result = execute_tool(
