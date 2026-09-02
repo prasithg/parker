@@ -312,7 +312,7 @@ NEEDS_FIX became a fix commit with the pin that would have caught it.
 | #40 | `fable/reachy-companion-take2` (#37) | head `cb277c6` (code `a454b27`), CI green | NEEDS_FIX → fixed → narrow NEEDS_FIX → fixed; **Hermes owed** (two same-family cycles used) | real mic, evening false-wake watch, power/wake click in the packaged window |
 | #43 | `fable/spoken-session-end` (#40) | head `3f9bc4b` (grammar follow-up `2bf9bf5`), CI green | NEEDS_FIX → fixed → **PASS** | "OK, thanks" ends a real session; mid-conversation thanks does not |
 | #45 | `fable/my-day-worker` (#43) | head `6ae0743` (`b157781` follow-up), CI green | NEEDS_FIX → fixed → **PASS** | "what do I have today" in a real session |
-| #46 | `fable/reachy-motion-vocabulary` (#45) | head `11e10d4`, CI green | NEEDS_FIX → fixed → re-review pending at hand-off | clips judged against the reference / the physical Reachy |
+| #46 | `fable/reachy-motion-vocabulary` (#45) | head `11e10d4` + sr-status nit, CI green | NEEDS_FIX → fixed → **PASS** (note: the live off/dormant pose now visibly sinks — the head-drop spring had never been stepped) | clips judged against the reference / the physical Reachy |
 | #47 | `fable/wake-burst-window` (#40) | **closed** — recorded negative result | NEEDS_FIX (valid) | — |
 
 Merged to main tonight: #42, #44. Everything touching power, wake,
