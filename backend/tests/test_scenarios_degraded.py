@@ -203,7 +203,7 @@ def test_garbage_from_the_family_agent_is_simply_not_context(voice_world, monkey
     error_page = _mock_gateway(html_502)
 
     # -- phase 1: a string where the list belongs ------------------------
-    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: babbling)
+    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda **_: babbling)
     result = realtime_workers.run_context_worker(factory)
     assert result.kind == "context"
     assert result.error == ""
@@ -211,7 +211,7 @@ def test_garbage_from_the_family_agent_is_simply_not_context(voice_world, monkey
     assert "old Hindi songs" in result.speech  # one broken source never kills the card
 
     # -- phase 2: a non-JSON 502 body ------------------------------------
-    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: error_page)
+    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda **_: error_page)
     result = realtime_workers.run_context_worker(factory)
     assert result.kind == "context"
     assert result.error == ""
@@ -219,7 +219,7 @@ def test_garbage_from_the_family_agent_is_simply_not_context(voice_world, monkey
     assert "502" not in result.speech and "Bad Gateway" not in result.speech
 
     # -- phase 3: the same babbling gateway, through the live bridge -----
-    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: babbling)
+    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda **_: babbling)
     fake = world.script([])
     with world.connect() as ws:
         fake.feed(done())

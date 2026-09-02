@@ -346,9 +346,12 @@ async def converse_wake(websocket: WebSocket) -> None:
                     if time.monotonic() - woke_at > WAKE_TAIL_SECONDS:
                         continue
                     heard = await run_in_threadpool(detector.hear, pcm)
-                    if detector.failures >= WAKE_FATAL_FAILURES:
-                        await _give_up()
-                        return
+                    # No give-up here: the tail lane may outlive the live
+                    # line's open, and a failing tail must never power off a
+                    # conversation that does not need the local model (the
+                    # page powers off on `unavailable`). A tail that cannot
+                    # be heard is simply empty; the dormant path below is
+                    # where a dead model ends dormancy.
                     if heard and heard["heard"]:
                         try:
                             await websocket.send_json(

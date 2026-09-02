@@ -117,9 +117,10 @@ def _revoked(ws, reason: str) -> None:
 def _page_hangs_up(ws, fake) -> None:
     """What the fenced page does on ``revoked``: close its socket.
 
-    The old bridge then finalizes on its own; its upstream closing is the
-    per-line observable that its shutdown ran to the end (the upstream is
-    closed last, after the finalize write).
+    The old bridge then shuts down on its own; its upstream closing is the
+    per-line observable that its shutdown began (the upstream is closed
+    FIRST, before the finalize write, since the P0.1 reorder — callers
+    that read DB state afterwards wait on the finalize observables).
     """
 
     ws.close()
@@ -844,3 +845,54 @@ def test_a_medical_trip_on_the_old_line_does_not_carry_into_the_new_one(voice_wo
     assert _wait_until(lambda: realtime._active_bridges == 0)
     assert len(_cancels(fakes[0])) == 1
     assert _cancels(fakes[1]) == []
+
+
+# ---------------------------------------------------------------------------
+# C08 — power off stops a provider-blocked lookup AT THE PROVIDER BOUNDARY
+# ---------------------------------------------------------------------------
+
+
+def test_power_off_stops_a_provider_blocked_lookup_at_the_boundary(voice_world):
+    """He asks something, the research assistant is mid-call with the
+    provider, and someone turns Parker off. Off means off (PR #40 review
+    blocker 1): the bridge's cancel token reaches the provider client the
+    REAL search worker built, the blocked call unwinds, the worker thread
+    returns, and nothing is injected — not merely "the result is dropped
+    later". Pinned through the real ``run_search_worker`` with the
+    provider transport faked at ``provider_http_client``, the seam the
+    socket-shutdown transport hangs off (its own mechanism is pinned in
+    test_brain_transport).
+    """
+
+    from test_realtime_workers import _FakeProviders
+
+    from app.config import settings
+    from app.parker import realtime_workers
+
+    world = voice_world
+    providers = _FakeProviders()  # holds the provider call until the token fires
+    world.mp.setattr(realtime_workers, "provider_http_client", providers)
+    world.mp.setattr(settings, "anthropic_api_key", "test-anthropic-key")
+    import anthropic  # noqa: F401 — pay the SDK import before the clock starts
+
+    fake = world.script([])
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        fake.feed(done(look_call("who plays tonight?")))
+        assert ws.receive_json() == {"type": "working", "kind": "search", "status": "started"}
+        assert providers.started.wait(5.0), "the lookup never reached the provider"
+        assert not providers.aborted.is_set()
+        off = _power_off("sarah-phone")
+        assert off.status_code == 200 and off.json()["power_on"] is False
+        _revoked(ws, "power_off")
+    # The cancel reached the provider boundary and the thread came home.
+    assert providers.aborted.wait(3.0), "power off never reached the provider call"
+    assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
+    assert _wait_until(lambda: realtime._inflight_db_threads == 0, timeout=5.0), (
+        "the blocked provider thread never returned after off"
+    )
+    assert fake.closed
+    assert providers.clients and all(c.is_closed for c in providers.clients)
+    assert not any("LOOKUP RESULT" in text for text in _system_items(fake))
+    # And the record is honest: no late "done" frame reached the page.
+    assert converse_router.authority.snapshot()["power_on"] is False

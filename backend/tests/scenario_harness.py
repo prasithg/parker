@@ -285,7 +285,7 @@ class ScenarioWorld:
         gw = OpenClawGateway(
             "http://gw.test", client=httpx.Client(transport=httpx.MockTransport(handler))
         )
-        self.mp.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: gw)
+        self.mp.setattr("app.brain.openclaw.build_openclaw_gateway", lambda **_: gw)  # the bridge passes client=
         return gw
 
     def enable_hands(self, gw=None):

@@ -292,7 +292,7 @@ def test_a_pharmacy_answer_that_tries_to_dose_him(voice_world, monkeypatch):
     # The REAL search worker, with only the brain faked: this asserts the
     # bridge-level consequences of the worker's own screening.
     monkeypatch.setattr(settings, "anthropic_api_key", "test-anthropic-key")
-    monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda: FakeBrain())
+    monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda **_: FakeBrain())
 
     fake = world.script([])
     with world.connect() as ws:

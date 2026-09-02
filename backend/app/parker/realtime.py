@@ -1389,13 +1389,11 @@ class RealtimeBridge:
             # provider call registers its socket abort on it, so power off
             # reaches the provider boundary instead of only dropping the
             # result (PR #40 review blocker 1).
-            current = getattr(realtime_workers, "CURRENT_CANCEL", None)
-            token = current.set(cancel) if current is not None else None
+            token = realtime_workers.CURRENT_CANCEL.set(cancel)
             try:
                 return work()
             finally:
-                if current is not None:
-                    current.reset(token)
+                realtime_workers.CURRENT_CANCEL.reset(token)
 
         async def runner() -> None:
             requested = time.monotonic()
