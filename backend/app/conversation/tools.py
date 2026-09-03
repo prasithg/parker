@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timezone
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
@@ -180,7 +181,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "due_at": {
                         "type": "string",
-                        "description": "Optional ISO-8601 timestamp for when the intent should resurface.",
+                        "description": (
+                            "Optional ISO-8601 timestamp with UTC offset, in his local time, for "
+                            "when the intent should resurface (e.g. 2026-09-02T16:00:00-04:00); "
+                            "a timestamp without an offset is read as his local wall time."
+                        ),
                     },
                     "subject": {
                         "type": "string",
@@ -257,7 +262,13 @@ def handle_capture_intent(
         "status": "captured",
         "captured_intent_id": captured.id,
         "requested_action": captured.requested_action,
-        "due_at": captured.due_at.isoformat() if captured.due_at else None,
+        "due_at": (
+            captured.due_at.replace(tzinfo=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+            if captured.due_at
+            else None
+        ),
     }
 
 

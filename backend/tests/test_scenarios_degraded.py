@@ -61,6 +61,14 @@ def test_timed_out_lookup_is_honest_and_the_second_ask_really_retries(
             # the deferred note nudge fires at the next safe point
             fake.feed(done())
             assert _wait_until(lambda: _response_creates(fake) == 3)
+            fake.feed(model_said("That lookup took too long, but I can try again."))
+            first_delta = browser_frame(
+                ws,
+                "assistant_transcript_delta",
+                working=[("search", "started"), ("search", "failed")],
+            )
+            assert "try again" in first_delta["text"]
+            fake.feed(done())  # the result was actually spoken; retry is now fresh
 
             # --- he asks again: a real retry, not "already_working" --------
             fake.feed(done(look_call("is Alcaraz playing tonight?", call_id="look-2")))
@@ -88,12 +96,19 @@ def test_timed_out_lookup_is_honest_and_the_second_ask_really_retries(
             time.sleep(0.3)  # assert something did NOT happen
             assert len(lookup_notes(fake)) == note_count  # no late success note
 
-            # nothing reached the browser: no sources chips, no hiccup notice
-            fake.feed(model_said("Still with you."))
-            assert ws.receive_json() == {
-                "type": "assistant_transcript_delta",
-                "text": "Still with you.",
-            }
+            # nothing but the honest presence pairs reached the browser:
+            # no sources chips, no hiccup notice — each timed-out ask is
+            # started then FAILED, never silently pending.
+            fake.feed(model_said("That lookup timed out again; I can try later."))
+            delta = browser_frame(
+                ws,
+                "assistant_transcript_delta",
+                working=[
+                    ("search", "started"), ("search", "failed"),
+                ],
+            )
+            assert "timed out again" in delta["text"]
+            fake.feed(done())
             ws.send_json({"type": "end"})
     finally:
         gate.set()
@@ -136,13 +151,15 @@ def test_both_workers_crash_and_only_the_asked_for_one_speaks(voice_world, monke
         assert "could not finish" in note
         assert "it hit a problem partway" in note  # honest, class names stay in logs
 
-        # the call survived both crashes
+        # the call survived both crashes; the presence pair owns the crash
+        # honestly (started -> failed) and nothing else reached the browser
         fake.feed(model_said("Let me tell you what I can."))
-        delta = ws.receive_json()
-        assert delta == {
-            "type": "assistant_transcript_delta",
-            "text": "Let me tell you what I can.",
-        }
+        delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "failed")],
+        )
+        assert delta["text"] == "Let me tell you what I can."
         time.sleep(0.3)  # give a wrong card every chance to arrive
         assert context_cards(fake) == []  # not an empty card, not an error card
         ws.send_json({"type": "end"})
@@ -194,7 +211,7 @@ def test_garbage_from_the_family_agent_is_simply_not_context(voice_world, monkey
     error_page = _mock_gateway(html_502)
 
     # -- phase 1: a string where the list belongs ------------------------
-    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: babbling)
+    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda **_: babbling)
     result = realtime_workers.run_context_worker(factory)
     assert result.kind == "context"
     assert result.error == ""
@@ -202,7 +219,7 @@ def test_garbage_from_the_family_agent_is_simply_not_context(voice_world, monkey
     assert "old Hindi songs" in result.speech  # one broken source never kills the card
 
     # -- phase 2: a non-JSON 502 body ------------------------------------
-    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: error_page)
+    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda **_: error_page)
     result = realtime_workers.run_context_worker(factory)
     assert result.kind == "context"
     assert result.error == ""
@@ -210,7 +227,7 @@ def test_garbage_from_the_family_agent_is_simply_not_context(voice_world, monkey
     assert "502" not in result.speech and "Bad Gateway" not in result.speech
 
     # -- phase 3: the same babbling gateway, through the live bridge -----
-    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: babbling)
+    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", lambda **_: babbling)
     fake = world.script([])
     with world.connect() as ws:
         fake.feed(done())
@@ -276,7 +293,9 @@ def test_error_storm_never_double_fires_and_the_answer_still_lands(voice_world):
             fake.feed(upstream_error("", code="conversation_already_has_active_response"))
             # ...and a genuinely malformed error right behind it
             fake.feed({"type": "error", "error": "the upstream just sent a bare string"})
-            first_notice = ws.receive_json()
+            first_notice = browser_frame(
+                ws, "notice", working=[("search", "started")]
+            )
 
             fake.feed(upstream_error("no active response to cancel"))
             fake.feed(
@@ -288,7 +307,7 @@ def test_error_storm_never_double_fires_and_the_answer_still_lands(voice_world):
 
             gate.set()
             assert _wait_until(lambda: lookup_notes(fake))
-            chips = ws.receive_json()
+            chips = browser_frame(ws, "sources", working=[("search", "done")])
 
             # the note's nudge waits behind the phantom-active response
             assert _response_creates(fake) == 2
@@ -646,31 +665,26 @@ def test_a_dead_store_never_stutters_the_call_and_never_claims_a_reminder(
 # ---------------------------------------------------------------------------
 
 
-def test_two_live_rooms_stay_isolated_and_the_third_tap_is_refused(
-    voice_world, monkeypatch
-):
-    """Sunday afternoon: Ravi in the recliner, Sarah on the kitchen tablet.
+def test_a_second_room_is_refused_honestly_while_his_line_is_live(voice_world):
+    """Sunday afternoon: Ravi in the recliner; Sarah opens Parker on the
+    kitchen tablet, then Anil from the spare room.
 
-    Two lines is the whole house's budget; when Anil taps Live from the
-    spare room he gets an honest "already running", not a broken socket.
-    Neither live conversation leaks into the other's transcript, log, or
-    memory.
+    Power is single-owner (server-authoritative since 2026-09-01): while
+    Ravi's screen is actually listening, another screen's switch is
+    refused with an honest "already on and listening on another screen"
+    (409), never a broken socket — and nothing from the refused screens
+    leaks into his transcript, his log, or his memory. Sarah can still
+    turn Parker OFF from her tablet (that is a safety control, tested in
+    test_scenarios_concurrency.py); she cannot silently take the line.
     """
 
     world = voice_world
     world.seed_ravi()
     world.disable_brain()
-    fakes = [FakeUpstream([]), FakeUpstream([])]
-    seq = iter(fakes)
-
-    async def connect():
-        return next(seq)
-
-    monkeypatch.setattr(realtime, "connect_openai", connect)
+    fake = world.script([])
 
     from app.db.models import CallLog
-    from app.memory.models import ConversationMemory
-    from app.parker.screen import ScreenState, get_screen_state
+    from app.parker.screen import get_screen_state
 
     def mirrored(text):
         def check():
@@ -680,87 +694,42 @@ def test_two_live_rooms_stay_isolated_and_the_third_tap_is_refused(
 
         return check
 
-    def finalized(count):
-        def check():
-            world.db.expire_all()
-            return (
-                world.db.query(CallLog)
-                .filter(CallLog.call_sid.like("REALTIME-%"), CallLog.ended_at.isnot(None))
-                .count()
-                == count
-            )
-
-        return check
-
     with world.connect() as ws_a:
-        assert _wait_until(lambda: len(fakes[0].sent) >= 3)
-        with world.connect() as ws_b:
-            assert _wait_until(lambda: len(fakes[1].sent) >= 3)
-            fakes[0].feed(done())
-            fakes[1].feed(done())
-            # both cards' DB reads done: the mirror writes below must not
-            # race either context worker on the one shared connection
-            assert _wait_until(lambda: context_cards(fakes[0]))
-            assert _wait_until(lambda: context_cards(fakes[1]))
+        world.settle_open(fake)
+        fake.feed(user_said("is it too hot for my walk?"))
+        assert ws_a.receive_json() == {
+            "type": "user_transcript",
+            "text": "is it too hot for my walk?",
+        }
+        fake.feed(done())
+        assert _wait_until(mirrored("is it too hot for my walk?"))
 
-            # serialize the two rooms' writes: one shared in-memory store
-            fakes[0].feed(user_said("is it too hot for my walk?"))
-            assert ws_a.receive_json() == {
-                "type": "user_transcript",
-                "text": "is it too hot for my walk?",
-            }
-            fakes[0].feed(done())
-            assert _wait_until(mirrored("is it too hot for my walk?"))
+        # Sarah's tablet, then Anil's spare room: each switch is refused
+        # while Ravi's line is live — with a reason, not a dead socket.
+        for screen in ("sarah-tablet", "anil-spare-room"):
+            refused = client.post(
+                "/parker/converse/companion/power", json={"on": True, "client_id": screen}
+            )
+            assert refused.status_code == 409, screen
+            assert refused.json()["detail"]["reason"] == "elsewhere"
+            assert "another screen" in refused.json()["detail"]["text"]
 
-            fakes[1].feed(user_said("when is his next appointment?"))
-            assert ws_b.receive_json() == {
-                "type": "user_transcript",
-                "text": "when is his next appointment?",
-            }
-            fakes[1].feed(done())
-            assert _wait_until(mirrored("when is his next appointment?"))
+        # A socket that never held the owner's credentials is refused too.
+        with client.websocket_connect("/parker/converse/realtime?owner=guess&gen=1") as ws_c:
+            frame = ws_c.receive_json()
+        assert frame["type"] == "revoked" and frame["reason"] == "not_owner"
 
-            # Anil taps Live from the spare room
-            with world.connect() as ws_c:
-                refused = ws_c.receive_json()
-            assert refused["type"] == "unavailable"
-            assert "already running" in refused["text"]
+        # Ravi's line never noticed: it keeps talking on the same socket.
+        fake.feed(user_said("and tomorrow?"))
+        assert ws_a.receive_json() == {"type": "user_transcript", "text": "and tomorrow?"}
+        fake.feed(done())
+        assert _wait_until(mirrored("and tomorrow?"))
+        ws_a.send_json({"type": "end"})
+    assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
 
-            ws_a.send_json({"type": "end"})
-            assert _wait_until(finalized(1))
-            ws_b.send_json({"type": "end"})
-            assert _wait_until(finalized(2))
-
-    assert _wait_until(lambda: realtime._active_bridges == 0)
-    assert fakes[0].closed is True and fakes[1].closed is True
-
-    # isolation upstream: neither room heard the other's question (the shared
-    # persona prompt mentions appointments, so match his words verbatim)
-    assert "when is his next appointment?" not in json.dumps(fakes[0].sent)
-    assert "is it too hot for my walk?" not in json.dumps(fakes[1].sent)
-
+    # One conversation, one record: the refused screens left nothing behind.
     world.db.expire_all()
-    calls = world.db.query(CallLog).filter(CallLog.call_sid.like("REALTIME-%")).all()
-    assert len(calls) == 2
-    assert len({call.call_sid for call in calls}) == 2
-    assert {call.call_type for call in calls} == {"realtime"}
-    summaries = sorted(call.summary or "" for call in calls)
-    assert len([s for s in summaries if "too hot for my walk" in s]) == 1
-    assert len([s for s in summaries if "next appointment" in s]) == 1
-    for summary in summaries:  # each summary mentions only its own question
-        assert ("too hot for my walk" in summary) != ("next appointment" in summary)
-
-    memories = (
-        world.db.query(ConversationMemory)
-        .filter(
-            ConversationMemory.memory_type == "topic",
-            ConversationMemory.source == "realtime",
-        )
-        .all()
-    )
-    assert len(memories) == 2
-    assert len({memory.call_log_id for memory in memories}) == 2
-
-    # one overwritten mirror row — concurrency does not multiply Dad screens
-    assert world.db.query(ScreenState).count() == 1
-    assert get_screen_state(world.db) is not None
+    logs = world.db.query(CallLog).filter(CallLog.call_sid.like("REALTIME-%")).all()
+    assert len(logs) == 1 and logs[0].ended_at is not None
+    assert "too hot for my walk" in (logs[0].summary or "")
+    assert fake.sent  # the one upstream saw both turns; no second upstream ever opened

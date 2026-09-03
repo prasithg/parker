@@ -1,9 +1,12 @@
-"""Single-file Patient Curiosity Loop page — GET /parker/converse.
+"""The conversation lab — GET /parker/converse/lab.
 
-The first-user surface from the 2026-08-29 strategy doc: tap Start, take
-your time (pauses never cut you off — only your own Done ends the turn),
-see what Parker heard, get a brief current answer with its source named on
-screen, ask a follow-up, and Stop instantly.
+The developer/accessibility harness (chairman direction 2026-09-01: the
+person-facing /parker/converse is the companion embodiment; this page is
+where family/developers use Start/Done, typing, and timing details): tap
+Start, take your time (pauses never cut you off — only your own Done ends
+the turn), see what Parker heard, get a brief current answer with its
+source named on screen, ask a follow-up, and Stop instantly. The live
+full-duplex lane lives on the companion page only.
 
 Design contract (pinned by tests):
 
@@ -12,8 +15,12 @@ Design contract (pinned by tests):
   disables the controls for 400 ms so a tremor double-tap cannot hit the
   button that just swapped into the same footprint.
 - Truthful, *present* states: idle / preparing / listening / thinking /
-  speaking / stopped, carried by a large breathing orb + banner + soft
-  earcons — never a silent dead wait. Answers stream sentence-by-sentence
+  speaking / stopped, carried by the 3D Reachy Mini presence scene (or
+  the breathing orb wherever WebGL is unavailable) + banner + soft
+  earcons — never a silent dead wait. The scene is driven by the
+  semantic expression state (static/converse/expression.js) fed only by
+  real signals; the orb + full text experience remain the complete
+  fallback. Answers stream sentence-by-sentence
   (the ndjson turn endpoint) so speech starts after the first sentence;
   if nothing has arrived within ~1.2 s Parker says a short truthful cue
   ("Let me check.") instead of leaving dead air.
@@ -61,6 +68,25 @@ CONVERSE_PAGE_HTML = """<!doctype html>
     text-transform: uppercase;
     color: #7d8ca1;
   }
+  /* The Reachy Mini presence scene. Presentation only: every essential
+     meaning also lives in the status text and controls. When WebGL is
+     unavailable the mount stays empty and hidden, and the orb carries
+     presence exactly as before. */
+  #presence {
+    flex: none;
+    height: clamp(160px, 30vh, 320px);
+    display: none;
+    justify-content: center;
+  }
+  body.scene-active #presence { display: flex; }
+  #reachy-mount {
+    width: min(100%, 540px);
+    height: 100%;
+    background: radial-gradient(ellipse 60% 55% at 50% 62%, #0d1622 0%, rgba(5,8,13,0) 70%);
+  }
+  #reachy-mount canvas { width: 100% !important; height: 100% !important; display: block; }
+  body.scene-active #orb { display: none; }
+  @media (max-height: 640px) { #presence { height: clamp(120px, 24vh, 200px); } }
   #status-banner {
     font-size: clamp(1.6rem, 3.2vw, 2.6rem);
     font-weight: 650;
@@ -147,8 +173,6 @@ CONVERSE_PAGE_HTML = """<!doctype html>
   }
   .big:disabled { opacity: .75; }
   #btn-start { background: #133c1f; color: #7fe3a1; border-color: #2e6b2e; }
-  #btn-live  { background: #0c1b2a; color: #9fd8ff; border-color: #1f3a55; }
-  body[data-state="live"] #orb { background: #6db3ff; box-shadow: 0 0 44px 6px rgba(109,179,255,.4); animation: breathe 2s ease-in-out infinite; }
   #btn-done  { background: #4a3a08; color: #ffd166; border-color: #8a6d1a; }
   #btn-stop  { background: #431a1f; color: #ff9aa4; border-color: #a33; }
   #btn-again { background: #1a2432; color: #b9c6d8; border-color: #34435c; }
@@ -185,8 +209,9 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 </head>
 <body data-state="starting">
 <main>
-  <div id="status-banner"><span id="orb"></span><span id="status-text">Getting Parker ready…</span></div>
-  <div id="notice"></div>
+  <div id="presence"><div id="reachy-mount"></div></div>
+  <div id="status-banner"><span id="orb"></span><span id="status-text" aria-live="polite">Getting Parker ready…</span></div>
+  <div id="notice" aria-live="polite"></div>
   <div id="heard-block" hidden>
     <div class="label">Parker heard</div>
     <div id="heard"></div>
@@ -205,7 +230,6 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 
 <div id="controls">
   <button class="big" id="btn-start">Start listening</button>
-  <button class="big" id="btn-live" hidden>Live conversation</button>
   <button class="big" id="btn-done" hidden>Done talking</button>
   <button class="big" id="btn-stop" hidden>Stop Parker</button>
   <button class="big" id="btn-again" hidden>Try again</button>
@@ -227,6 +251,7 @@ CONVERSE_PAGE_HTML = """<!doctype html>
   <p><a href="/parker/sessions/ui">Review finished live sessions</a> — what Parker heard, said, injected, and staged, with latencies.</p>
 </details>
 
+<script src="/parker/converse/static/converse/expression.js"></script>
 <script>
 'use strict';
 
@@ -235,7 +260,41 @@ CONVERSE_PAGE_HTML = """<!doctype html>
 // speaking -> idle, with stopped reachable from anywhere. clientGen guards
 // against stale results: Stop bumps it, and anything finishing under an old
 // generation is dropped, never rendered, never spoken.
+//
+// Presence rides beside it: the semantic expression controller
+// (ParkerExpression) receives the SAME real signals and drives the Reachy
+// scene. It never invents state — the Start/Done lane forwards its own
+// control states, and mic/output energy comes from the actual audio
+// graph. (The live full-duplex lane lives on the companion page.)
 // ---------------------------------------------------------------------------
+
+const expr = window.ParkerExpression ? ParkerExpression.createController() : null;
+
+// The page owns the truth heartbeat, not the renderer: overlay TTLs and
+// the interrupt dwell must expire even when WebGL is unavailable and the
+// orb is the whole presence (review find, 2026-09-01). tick() is
+// idempotent, so the renderer's own frame loop calling it too is fine.
+let tickTimer = expr ? setInterval(() => { try { expr.tick(); } catch (err) {} }, 500) : null;
+
+function presence(name, data) {
+  if (expr) { try { expr.handleEvent(name, data); } catch (err) {} }
+}
+
+function presenceEnergy(levels) {
+  if (expr) { try { expr.setEnergy(levels); } catch (err) {} }
+}
+
+// The Start/Done lane's control machine already runs on real signals; map
+// its states onto the semantic phases so the two can never disagree.
+const TURNS_PRESENCE = {
+  idle: 'ready',
+  preparing: 'connect',
+  listening: 'connected',
+  thinking: 'user_transcript',
+  speaking: 'assistant_audio',
+  stopped: 'stopped',
+  error: 'error',
+};
 
 let sessionId = null;
 let clientGen = 0;
@@ -246,7 +305,6 @@ let startingCapture = false;
 let lastTimings = null;
 let pendingAwaiting = '';
 let cueTimer = null;
-let realtimeAvailable = false;
 
 const $ = (id) => document.getElementById(id);
 const statusText = $('status-text');
@@ -261,7 +319,6 @@ const STATE_TEXT = {
   speaking: 'Parker is talking. Stop any time.',
   stopped: 'Stopped. Nothing else will happen until you start again.',
   error: 'Parker hit a snag on this laptop. Tap Start listening to try again.',
-  live: 'Live — just talk, and talk over Parker any time. Stop ends it.',
 };
 
 // Controls swap identity in the same screen footprint on state change; a
@@ -279,11 +336,17 @@ function setState(state, text) {
   statusText.textContent = text || STATE_TEXT[state] || '';
   const resting = state === 'idle' || state === 'stopped' || state === 'error';
   $('btn-start').hidden = !resting;
-  $('btn-live').hidden = !(resting && realtimeAvailable);
   $('btn-done').hidden = state !== 'listening';
-  $('btn-stop').hidden = !(state === 'preparing' || state === 'listening' || state === 'thinking' || state === 'speaking' || state === 'live');
+  $('btn-stop').hidden = !(state === 'preparing' || state === 'listening' || state === 'thinking' || state === 'speaking');
   $('btn-again').hidden = !(state === 'stopped' || state === 'error');
   if (previous !== state) guardButtons();
+  // Presence for the Start/Done lane: its control machine runs on real
+  // signals, mapped onto the semantic phases.
+  if (previous !== state) {
+    const event = TURNS_PRESENCE[state];
+    if (event === 'connect') presence('connect', {mode: 'turns'});
+    else if (event) presence(event);
+  }
 }
 
 function setNotice(text) { notice.textContent = text || ''; }
@@ -379,6 +442,15 @@ function renderResult(data) {
   wrap.hidden = !showChoices;
   $('yes-no').hidden = pendingAwaiting !== 'yes_no';
 
+  // What is Parker waiting on? Choices on screen are the asking/repair
+  // posture; a yes/no result is an authoritative confirmation offer (the
+  // staged/waiting state, not repair); neither resolves the wait. These
+  // overlays are DURABLE — they survive playback draining to idle, until
+  // resolved, replaced, stopped, or expired (independent review, 2026-09-01).
+  if (pendingAwaiting === 'choices') presence('choices_offered');
+  else if (pendingAwaiting === 'yes_no') presence('yes_no_offered');
+  else presence('attention_resolved');
+
   lastTimings = data.timings_ms || null;
   renderDev(data);
 }
@@ -397,6 +469,9 @@ function clearResult() {
   $('speech').textContent = '';
   $('heard').textContent = '';
   setNotice('');
+  // The waiting cards just left the screen: whatever they awaited is
+  // dismissed/replaced by the new interaction.
+  presence('attention_resolved');
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +484,6 @@ async function createSession() {
     if (!res.ok) throw new Error('session create failed: ' + res.status);
     const data = await res.json();
     sessionId = data.session_id;
-    realtimeAvailable = !!data.realtime_available;
     if (!data.asr_ready) {
       setNotice('Voice recognition is not ready on this laptop — typing still works.');
       showTypeRow(true);
@@ -439,6 +513,15 @@ function postReceipt(marks) {
 const TARGET_RATE = 16000;
 const MAX_CAPTURE_SECONDS = 180;
 
+// RMS of a float PCM block, scaled to a 0..1 presence energy. Real level
+// in, nothing invented: quiet rooms sit near 0, speech lands well above
+// the expression controller's hearing threshold.
+function micEnergy(data) {
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+  return Math.min(1, Math.sqrt(sum / data.length) * 6);
+}
+
 async function startListening() {
   if (startingCapture || capture) return; // one microphone, one opening at a time
   startingCapture = true;
@@ -456,7 +539,9 @@ async function startListening() {
     startingCapture = false;
     setNotice('Parker can\\u2019t use the microphone (permission needed). You can type instead.');
     showTypeRow(true);
-    setState('idle');
+    // Mic denial is a real problem to fix, not a quiet return to rest
+    // (brief signal mapping); typing stays fully available meanwhile.
+    setState('error', 'The microphone isn\\u2019t allowed yet \\u2014 typing still works.');
     return;
   }
   if (!startingCapture) { // Stop was tapped while the mic was opening
@@ -475,6 +560,7 @@ async function startListening() {
     const data = event.inputBuffer.getChannelData(0);
     chunks.push(new Float32Array(data));
     samples += data.length;
+    presenceEnergy({user: micEnergy(data)}); // real mic level -> hearing
     if (samples / ctx.sampleRate >= MAX_CAPTURE_SECONDS) {
       setNotice('That was a long one, so I sent what I heard so far.');
       doneTalking();
@@ -568,10 +654,15 @@ async function doneTalking() {
 // Speaking: per-sentence TTS queue over speechSynthesis
 // ---------------------------------------------------------------------------
 
-const tts = {gen: -1, outstanding: 0, started: false, finished: false, receipt: null, doneAt: 0};
+const tts = {gen: -1, serial: 0, outstanding: 0, started: false, finished: false, receipt: null, doneAt: 0};
 
 function beginSpeechTurn(gen, doneAt, receipt) {
   tts.gen = gen;
+  // The serial fences settle callbacks: utterances cancelled by the
+  // divergence path (speechSynthesis.cancel + fresh beginSpeechTurn under
+  // the SAME clientGen) still fire onend/onerror asynchronously, and must
+  // not drain the new turn's outstanding count (review find, 2026-09-01).
+  tts.serial += 1;
   tts.outstanding = 0;
   tts.started = false;
   tts.finished = false;
@@ -596,11 +687,12 @@ function finishSpeechTurn() {
 function speakText(text) {
   if (!text || !window.speechSynthesis) return false;
   const gen = tts.gen;
+  const serial = tts.serial;
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = 0.95;
   tts.outstanding += 1;
   utterance.onstart = () => {
-    if (gen !== clientGen) { speechSynthesis.cancel(); return; }
+    if (gen !== clientGen || serial !== tts.serial) { speechSynthesis.cancel(); return; }
     if (!tts.started) {
       tts.started = true;
       if (tts.receipt) {
@@ -614,10 +706,25 @@ function speakText(text) {
     const orb = $('orb');
     orb.classList.add('pulse');
     setTimeout(() => orb.classList.remove('pulse'), 90);
+    // Word boundaries are the real output signal this lane has.
+    presenceEnergy({parker: 0.85});
+    setTimeout(() => presenceEnergy({parker: 0.2}), 160);
   };
   const settle = () => {
+    if (serial !== tts.serial) return; // a cancelled turn's utterance
     tts.outstanding -= 1;
-    if (tts.outstanding <= 0 && tts.turnComplete) finishSpeechTurn();
+    presenceEnergy({parker: 0});
+    if (tts.outstanding <= 0 && tts.turnComplete) {
+      finishSpeechTurn();
+    } else if (
+      tts.outstanding <= 0 && !tts.turnComplete
+      && gen === clientGen && document.body.dataset.state === 'speaking'
+    ) {
+      // The thinking cue (or a streamed sentence) finished before the
+      // rest of the answer arrived: Parker is genuinely thinking again,
+      // not talking — the banner and pose must not claim speech.
+      setState('thinking');
+    }
   };
   utterance.onend = settle;
   utterance.onerror = settle;
@@ -780,178 +887,10 @@ function sendText(text) {
 }
 
 // ---------------------------------------------------------------------------
-// Live conversation: full-duplex over the server relay (gpt-realtime).
-// Parker's server stays the policy boundary; this side is mic in, audio out,
-// live captions, and one big way out.
-// ---------------------------------------------------------------------------
-
-const LIVE_RATE = 24000;
-const live = {ws: null, micCtx: null, micStream: null, proc: null, gain: null,
-              playCtx: null, nextTime: 0, sources: []};
-let startingLive = false;
-
-function liveActive() { return !!live.ws; }
-
-async function startLive() {
-  if (liveActive() || startingLive || capture || startingCapture) return;
-  startingLive = true; // one live line, one opening at a time
-  window.speechSynthesis && speechSynthesis.cancel();
-  clearResult();
-  setState('preparing');
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
-    });
-  } catch (err) {
-    startingLive = false;
-    setNotice('Parker can\\u2019t use the microphone (permission needed).');
-    setState('idle');
-    return;
-  }
-  if (!startingLive) { // Stop was tapped while the mic was opening
-    try { stream.getTracks().forEach((track) => track.stop()); } catch (err) {}
-    return;
-  }
-  const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const ws = new WebSocket(scheme + location.host + '/parker/converse/realtime');
-  live.ws = ws;
-  live.micStream = stream;
-  live.playCtx = new (window.AudioContext || window.webkitAudioContext)();
-  live.micCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const source = live.micCtx.createMediaStreamSource(stream);
-  live.proc = live.micCtx.createScriptProcessor(4096, 1, 1);
-  live.gain = live.micCtx.createGain();
-  live.gain.gain.value = 0;
-  live.proc.onaudioprocess = (event) => {
-    if (!live.ws || live.ws.readyState !== 1) return;
-    const pcm = resamplePCM16(event.inputBuffer.getChannelData(0), live.micCtx.sampleRate, LIVE_RATE);
-    live.ws.send(JSON.stringify({type: 'audio', data: bufferToBase64(pcm.buffer)}));
-  };
-  source.connect(live.proc);
-  live.proc.connect(live.gain);
-  live.gain.connect(live.micCtx.destination);
-
-  startingLive = false;
-  ws.onopen = () => { earcon('listen'); setState('live'); };
-  ws.onmessage = (message) => {
-    let event;
-    try { event = JSON.parse(message.data); } catch (err) { return; }
-    if (!event || typeof event !== 'object') return;
-    handleLiveEvent(event);
-  };
-  ws.onclose = () => { if (liveActive()) endLive('The live line closed.'); };
-  ws.onerror = () => { if (liveActive()) endLive('The live line dropped.'); };
-}
-
-function handleLiveEvent(event) {
-  if (event.type === 'audio') {
-    playLivePcm(event.data);
-  } else if (event.type === 'user_transcript') {
-    renderHeard(event.text);
-    $('speech').textContent = '';
-    $('answer-block').hidden = true;
-    $('sources').hidden = true; // last turn's evidence must not linger
-  } else if (event.type === 'sources') {
-    renderSources(event.items);
-  } else if (event.type === 'closing') {
-    // Parker said goodbye; let the scheduled audio finish before hanging up.
-    const remaining = live.playCtx
-      ? Math.max(0, (live.nextTime - live.playCtx.currentTime) * 1000)
-      : 0;
-    setTimeout(() => { if (liveActive()) endLive('The call wrapped up.'); }, remaining + 300);
-  } else if (event.type === 'assistant_transcript_delta') {
-    appendSpeechText(event.text);
-  } else if (event.type === 'clear') {
-    flushLivePlayback();
-  } else if (event.type === 'guard_redirect') {
-    flushLivePlayback();
-    $('speech').textContent = event.text;
-    $('answer-block').hidden = false;
-    // The model's audio was cancelled server-side; the redirect must be
-    // HEARD, not just shown — speakNow bypasses the turn-generation queue
-    // (found by the adversarial verifier: speakText's stale-gen check
-    // silently cancelled it on a fresh page).
-    speakNow(event.text);
-  } else if (event.type === 'proposal_staged') {
-    setNotice('On the screen to confirm: ' + (event.label || 'a suggested action'));
-  } else if (event.type === 'notice' || event.type === 'unavailable') {
-    setNotice(event.text || '');
-    if (event.type === 'unavailable') endLive('');
-  }
-}
-
-function playLivePcm(encoded) {
-  try {
-    if (!live.playCtx) return;
-    const raw = atob(encoded);
-    const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-    const usable = bytes.length - (bytes.length % 2);
-    if (!usable) return;
-    const pcm = new Int16Array(bytes.buffer, 0, usable / 2);
-    const floats = new Float32Array(pcm.length);
-    for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
-    const buffer = live.playCtx.createBuffer(1, floats.length, LIVE_RATE);
-    buffer.getChannelData(0).set(floats);
-    const src = live.playCtx.createBufferSource();
-    src.buffer = buffer;
-    src.connect(live.playCtx.destination);
-    const at = Math.max(live.playCtx.currentTime + 0.05, live.nextTime);
-    src.start(at);
-    live.nextTime = at + buffer.duration;
-    live.sources.push(src);
-    src.onended = () => { live.sources = live.sources.filter((s) => s !== src); };
-    const orb = $('orb');
-    orb.classList.add('pulse');
-    setTimeout(() => orb.classList.remove('pulse'), 90);
-  } catch (err) { /* one bad chunk must not end the call */ }
-}
-
-function flushLivePlayback() {
-  for (const src of live.sources) { try { src.stop(); } catch (err) {} }
-  live.sources = [];
-  live.nextTime = 0;
-}
-
-function speakNow(text) {
-  // Immediate speech outside the turn lifecycle (live-lane guard redirect).
-  if (!text || !window.speechSynthesis) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 0.95;
-  speechSynthesis.speak(utterance);
-}
-
-function endLive(noticeText) {
-  startingLive = false;
-  const ws = live.ws;
-  live.ws = null;
-  flushLivePlayback();
-  if (ws) {
-    try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
-    try { ws.close(); } catch (err) {}
-  }
-  try { live.proc && live.proc.disconnect(); live.gain && live.gain.disconnect(); } catch (err) {}
-  try { live.micStream && live.micStream.getTracks().forEach((track) => track.stop()); } catch (err) {}
-  try { live.micCtx && live.micCtx.close(); } catch (err) {}
-  try { live.playCtx && live.playCtx.close(); } catch (err) {}
-  live.micCtx = null; live.micStream = null; live.proc = null; live.gain = null; live.playCtx = null;
-  if (noticeText) setNotice(noticeText);
-  setState('stopped');
-}
-
-// ---------------------------------------------------------------------------
 // Stop: cancel speech, abort the request, invalidate both generations.
 // ---------------------------------------------------------------------------
 
 function stopParker() {
-  if (liveActive() || startingLive) {
-    // In live mode there is one big way out: silence now, line closed —
-    // including a microphone that is still opening.
-    earcon('stop');
-    endLive('');
-    return;
-  }
   const tapped = performance.now();
   clientGen++;
   startingCapture = false; // discard a microphone that is still opening
@@ -971,6 +910,7 @@ function stopParker() {
   $('yes-no').hidden = true;
   setNotice('');
   setState('stopped');
+  flushPresenceReceipts();
 }
 
 function tryAgain() { clearResult(); startListening(); }
@@ -982,7 +922,6 @@ function tryAgain() { clearResult(); startListening(); }
 function showTypeRow(show) { $('type-row').hidden = !show; if (show) $('type-input').focus(); }
 
 $('btn-start').addEventListener('click', startListening);
-$('btn-live').addEventListener('click', startLive);
 $('btn-done').addEventListener('click', doneTalking);
 $('btn-stop').addEventListener('click', stopParker);
 $('btn-again').addEventListener('click', tryAgain);
@@ -996,14 +935,120 @@ $('type-row').addEventListener('submit', (event) => {
   $('type-input').value = '';
 });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') stopParker(); });
+
+// Page-level teardown: leaving the page must release EVERYTHING the page
+// holds — microphone tracks, audio contexts, browser TTS, timers, the GL
+// scene — not just send an end beacon (independent review, 2026-09-01).
+// Idempotent: safe to call from pagehide and unload both.
+let pageReleased = false;
+function releasePage() {
+  if (pageReleased) return;
+  pageReleased = true;
+  clientGen++; // anything still in flight lands stale and silent
+  startingCapture = false;
+  clearTimeout(cueTimer);
+  try { abortCtl && abortCtl.abort(); } catch (err) {}
+  teardownCapture();
+  try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
+  if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+  try { earcuCtx && earcuCtx.close(); } catch (err) {}
+  earcuCtx = null;
+  const scene = window.ParkerPresence && window.ParkerPresence.scene;
+  if (scene) {
+    try { scene.dispose(); } catch (err) {} // GL resources + its observers
+    window.ParkerPresence.scene = null;
+  }
+}
 window.addEventListener('pagehide', () => {
-  if (!sessionId) return;
-  try {
-    navigator.sendBeacon('/parker/converse/sessions/' + sessionId + '/end', new Blob(['{}'], {type: 'application/json'}));
-  } catch (err) {}
+  const hadSession = !!sessionId;
+  flushPresenceReceipts();
+  releasePage();
+  if (hadSession) {
+    try {
+      navigator.sendBeacon('/parker/converse/sessions/' + sessionId + '/end', new Blob(['{}'], {type: 'application/json'}));
+    } catch (err) {}
+  }
+});
+window.addEventListener('pageshow', (event) => {
+  // A BFCache restore would resurrect a page whose scene, timers, and
+  // audio graph were just torn down; reload for a clean boot instead of
+  // a half-dead page.
+  if (event.persisted && pageReleased) location.reload();
 });
 
+// ---------------------------------------------------------------------------
+// Semantic transition receipts: session review must be able to answer
+// "what did Reachy show when he spoke / waited / interrupted / stopped?"
+// (independent review, 2026-09-01). Transitions only — never animation
+// frames or raw audio energy. Live sessions stream each transition to the
+// bridge journal over the socket; every session also accumulates a bounded
+// local list flushed through the receipts beacon at stop/end/page-hide.
+// ---------------------------------------------------------------------------
+
+const PRESENCE_RECEIPT_CAP = 300;
+const presenceReceipts = [];
+let presenceDropped = 0;
+let prevPresence = null;
+
+function recordPresenceTransition(next, cause) {
+  const entry = {
+    at_ms: Math.round(performance.now()),
+    gen: clientGen,
+    from: prevPresence ? prevPresence.phase : '',
+    to: next.phase,
+    work: next.work.join(','),
+    action: next.action,
+    guard: next.guard,
+    attention: next.attention,
+    reason: cause || '',
+  };
+  prevPresence = next;
+  if (presenceReceipts.length >= PRESENCE_RECEIPT_CAP) presenceDropped += 1;
+  else presenceReceipts.push(entry);
+}
+
+function flushPresenceReceipts() {
+  if (!presenceReceipts.length || !sessionId) return;
+  postReceipt({
+    expression: presenceReceipts.slice(),
+    expression_dropped: presenceDropped,
+  });
+  presenceReceipts.length = 0;
+  presenceDropped = 0;
+}
+
+// Exposed on window for the renderer module (and for driving the real
+// controller with synthetic fixtures during testing). The Start/Done
+// lane keeps its own longer coaching lines for the status banner.
+if (expr) {
+  prevPresence = expr.getState();
+  expr.subscribe((s, cause) => {
+    recordPresenceTransition(s, cause);
+  });
+}
+window.ParkerPresence = {controller: expr};
+
 createSession();
+</script>
+<script type="module">
+// The Reachy Mini scene boots independently of the conversation script:
+// a slow import or a WebGL failure never delays the microphone, and on
+// failure the page simply keeps the orb + full text experience.
+(async () => {
+  const mount = document.getElementById('reachy-mount');
+  const controller = window.ParkerPresence && window.ParkerPresence.controller;
+  if (!mount || !controller) return;
+  const reduced = window.matchMedia
+    && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  try {
+    const mod = await import('/parker/converse/static/converse/reachy.js');
+    const scene = mod.createReachyScene(mount, controller, {reducedMotion: !!reduced});
+    if (scene) {
+      document.body.classList.add('scene-active');
+      window.ParkerPresence.scene = scene;
+    }
+  } catch (err) { /* no WebGL / no module: the orb remains the presence */ }
+})();
 </script>
 </body>
 </html>

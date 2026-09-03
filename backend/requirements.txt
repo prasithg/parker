@@ -4,9 +4,13 @@ pydantic-settings>=2.7.0
 sqlalchemy>=2.0.36
 twilio>=9.4.0
 openai>=1.60.0
-anthropic>=0.50.0
+# 1.x moved the SDK to the httpx2 package and rejects an httpx.Client as http_client;
+# app/brain/transport.py (the cancellable provider client, P0.1 F1) is httpx-based —
+# lift the pin only together with an httpx2 port of that transport.
+anthropic>=0.50.0,<1
 httpx>=0.28.0
 apscheduler>=3.10.4
+tzlocal>=5.0
 python-dotenv>=1.0.1
 websockets>=14.0
 pytest>=8.3.0

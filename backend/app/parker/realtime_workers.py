@@ -35,8 +35,10 @@ from __future__ import annotations
 import logging
 import re
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Iterator, Optional
 
 from app.brain.adapter import Source
 from app.brain.guard import (
@@ -46,10 +48,34 @@ from app.brain.guard import (
     speech_violates_medical_boundary,
     trim_for_speech,
 )
+from app.brain.transport import CancelToken, provider_http_client
 
 logger = logging.getLogger("parker.realtime")
 
 MAX_QUESTION_LENGTH = 300
+
+# Strict power-off (P0.1 F1): the bridge's per-session CancelToken. The
+# bridge sets it inside its worker thread (anyio copies the context into
+# the threadpool) and fires it first thing in shutdown; workers read it
+# here — one source of truth, so the (question)/(make_db) signatures the
+# test fakes implement never change. An explicit ``cancel=`` wins and
+# becomes the contextvar for nested helpers (the gateway probe).
+CURRENT_CANCEL: ContextVar[Optional[CancelToken]] = ContextVar(
+    "parker_worker_cancel", default=None
+)
+LOOKUP_STOPPED = "the lookup was stopped"
+
+
+@contextmanager
+def _cancel_scope(cancel: Optional[CancelToken]) -> Iterator[Optional[CancelToken]]:
+    if cancel is None:
+        yield CURRENT_CANCEL.get()
+        return
+    reset = CURRENT_CANCEL.set(cancel)
+    try:
+        yield cancel
+    finally:
+        CURRENT_CANCEL.reset(reset)
 
 LOOK_THAT_UP_TOOL: dict[str, Any] = {
     "name": "look_that_up",
@@ -135,25 +161,27 @@ class WorkerResult:
 # ---------------------------------------------------------------------------
 
 
-def local_date_line() -> str:
+def local_date_line(now: Any = None) -> str:
     """The household's local date and time, speakably, for grounding.
 
     The search worker answered "I don't have a reliable read on today's
     exact date" in Pras's session-3 test (call 41, seq 113): the front
     session is clock-grounded, the worker was not. Same home timezone as
-    the rollups.
+    the rollups. ``now`` (an aware instant) lets the my_day worker speak
+    the same injected clock its reminder window is cut on.
     """
 
     from datetime import datetime
 
     from app.parker.rollup import home_timezone
 
-    now = datetime.now(home_timezone())
+    tz = home_timezone()
+    now = now.astimezone(tz) if now is not None else datetime.now(tz)
     zone = now.strftime("%Z") or "local time"
     return f"{now:%A}, {now.day} {now:%B %Y}, {now.strftime('%I:%M %p').lstrip('0')} {zone}"
 
 
-def run_search_worker(question: str) -> WorkerResult:
+def run_search_worker(question: str, *, cancel: Optional[CancelToken] = None) -> WorkerResult:
     """Answer one self-contained question through the household brain.
 
     The brain is handed today's local date/time in front of the question
@@ -161,10 +189,29 @@ def run_search_worker(question: str) -> WorkerResult:
     the ORIGINAL question: dedupe keys, journal rows, and the injected
     note all cite what the front model actually asked.
 
+    ``cancel`` (or the bridge's ``CURRENT_CANCEL``) stops the provider call
+    at the socket; a stopped lookup returns the honest ``LOOKUP_STOPPED``
+    envelope, never speech. Without a token: today's path, unchanged.
+
     Never raises: every failure comes back as an error envelope the front
     model can be honest about.
     """
 
+    with _cancel_scope(cancel) as token:
+        return _run_search(question, token)
+
+
+def _stopped(question: str, started: float) -> WorkerResult:
+    return WorkerResult(
+        kind="search",
+        question=question,
+        error=LOOKUP_STOPPED,
+        started_at=started,
+        finished_at=time.time(),
+    )
+
+
+def _run_search(question: str, token: Optional[CancelToken]) -> WorkerResult:
     started = time.time()
     question = str(question or "").strip()[:MAX_QUESTION_LENGTH]
     if not question:
@@ -184,11 +231,20 @@ def run_search_worker(question: str) -> WorkerResult:
             started_at=started,
             finished_at=time.time(),
         )
+    client = None
     try:
         from app.brain.build import build_brain_adapter
         from app.brain.claude import build_brain_context
 
-        brain = build_brain_adapter()
+        if token is None:
+            brain = build_brain_adapter()
+        elif token.cancelled():
+            return _stopped(question, started)
+        else:
+            # The provider call rides a client the bridge can abort at the
+            # socket (app/brain/transport.py); closed below on every path.
+            client = provider_http_client(token)
+            brain = build_brain_adapter(http_client=client)
         if brain is None:
             return WorkerResult(
                 kind="search",
@@ -199,6 +255,8 @@ def run_search_worker(question: str) -> WorkerResult:
             )
         grounded = f"Right now it is {local_date_line()}. {question}"
         reply = brain.respond([], grounded, build_brain_context())
+        if token is not None and token.cancelled():
+            return _stopped(question, started)  # the line is gone; never speech
         screened = screen_reply(reply, proposable=frozenset())  # workers never propose
         speech = trim_for_speech(screened.reply.speech)
         if speech.endswith(WANT_MORE_SUFFIX):
@@ -223,6 +281,9 @@ def run_search_worker(question: str) -> WorkerResult:
             finished_at=time.time(),
         )
     except Exception:  # noqa: BLE001 — a worker must never take the call down
+        if token is not None and token.cancelled():
+            # A shut-down socket surfaces as a connection error: stopped, not broken.
+            return _stopped(question, started)
         # Exception class names live in the log only — the model must never
         # be handed "RuntimeError" to say aloud (UX-audit find).
         logger.warning("search worker failed", exc_info=True)
@@ -233,6 +294,12 @@ def run_search_worker(question: str) -> WorkerResult:
             started_at=started,
             finished_at=time.time(),
         )
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -250,29 +317,45 @@ def _memory_lines(db: Any) -> list[str]:
 
 
 def _medication_lines(db: Any) -> list[str]:
-    """Due-soon medicines by name and time only — never a dose."""
+    """Due-soon medicines by name and home-local wall time, never a dose."""
+
+    from datetime import datetime
 
     from app.meds.tracker import get_due_medications
+    from app.parker.rollup import home_timezone
 
+    now_local = datetime.now(home_timezone()).replace(tzinfo=None)
     return [
         f"His {medication.name} is due around {scheduled_time}."
-        for medication, scheduled_time in get_due_medications(db)
+        for medication, scheduled_time in get_due_medications(db, now=now_local)
     ]
 
 
 def _gateway_lines(db: Any) -> list[str]:
-    """Ambient context from the family's agent harness, when one is configured."""
+    """Ambient context from the family's agent harness, when one is configured.
+
+    Under a bridge token the probe rides a cancellable client (power off
+    shuts its socket); otherwise the gateway's own client, as before.
+    """
 
     from app.brain.openclaw import GatewayError, build_openclaw_gateway
 
-    gateway = build_openclaw_gateway()
-    if gateway is None:
-        return []
+    token = CURRENT_CANCEL.get()
+    client = provider_http_client(token) if token is not None else None
     try:
-        return gateway.current_context()[:6]
-    except GatewayError as exc:
-        logger.debug("gateway context probe skipped: %s", exc)
-        return []
+        gateway = (
+            build_openclaw_gateway(client=client) if client is not None else build_openclaw_gateway()
+        )
+        if gateway is None:
+            return []
+        try:
+            return gateway.current_context()[:6]
+        except GatewayError as exc:
+            logger.debug("gateway context probe skipped: %s", exc)
+            return []
+    finally:
+        if client is not None:
+            client.close()
 
 
 CONTEXT_SOURCES: tuple[tuple[str, Callable[[Any], list[str]]], ...] = (
@@ -282,23 +365,432 @@ CONTEXT_SOURCES: tuple[tuple[str, Callable[[Any], list[str]]], ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# The "my day" worker: what Parker actually has on record for him, locally.
+# Call 41 (Pras's session-3 test): "what do I have today" went to the web
+# search worker, which honestly said it had no calendar. Parker HAS local
+# reminders, medicine times, and family notes — this worker reads them
+# and names its limit: notes and reminders, never a calendar.
+# ---------------------------------------------------------------------------
+
+MY_DAY_TOOL: dict[str, Any] = {
+    "name": "my_day",
+    "description": (
+        "What Parker has on record for HIM today and tomorrow: his medicine "
+        "times by name, reminders he has set, and notes the family left. Use "
+        "it for any question about his own day, schedule, appointments, "
+        "reminders, or when his medicines are — never look_that_up for those. "
+        "It reads Parker's own local notes only; there is no calendar. It "
+        "works in the background — keep talking, the answer arrives as a note."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "about": {
+                "type": "string",
+                "description": "What he asked, in a few words (today, tomorrow, my pills, my reminders).",
+            }
+        },
+        "required": [],
+    },
+}
+
+MY_DAY_LIMIT_LINE = (
+    "Parker keeps no calendar — only the reminders and notes written down here."
+)
+_CountedLine = tuple[str, int]
+
+
+def _my_day_medication_lines(db: Any, now_local: Any = None) -> list[_CountedLine]:
+    """Every active medicine's scheduled times — names and times only, never a dose.
+
+    ``now_local`` is the shared source signature; schedules are daily, so it
+    is unused here."""
+
+    from app.meds.tracker import _parse_schedule_times, get_active_medications
+
+    lines: list[_CountedLine] = []
+    for medication in get_active_medications(db):
+        times = _parse_schedule_times(medication.schedule_times)
+        if not times:
+            continue
+        spoken = [_speakable_time(t) for t in times]
+        joined = ", ".join(spoken[:-1]) + f" and {spoken[-1]}" if len(spoken) > 1 else spoken[0]
+        lines.append((f"His {medication.name} is scheduled at {joined}.", 1))
+    return lines
+
+
+def _speakable_time(hhmm: str) -> str:
+    try:
+        hour, minute = (int(part) for part in str(hhmm).split(":")[:2])
+    except ValueError:
+        return str(hhmm)
+    suffix = "AM" if hour < 12 else "PM"
+    hour12 = hour % 12 or 12
+    return f"{hour12}:{minute:02d} {suffix}" if minute else f"{hour12} {suffix}"
+
+
+def _to_stored(moment: Any) -> Any:
+    """Aware instant → the naive-UTC form the DateTime columns hold
+    (the rollups' storage convention; ``rollup._local_date`` in reverse)."""
+
+    from datetime import timezone
+
+    return moment.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _from_stored(stored: Any, tz: Any) -> Any:
+    """Stored naive-UTC timestamp → aware home-local instant."""
+
+    from datetime import timezone
+
+    return stored.replace(tzinfo=timezone.utc).astimezone(tz)
+
+
+def _local_day_start(now_local: Any) -> Any:
+    return now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _my_day_reminder_lines(db: Any, now_local: Any) -> list[_CountedLine]:
+    """Reminders by when they are DUE on his local day, not when he set them.
+
+    Fresh review of the my_day slice (P0.3): selecting on ``created_at``
+    dropped a reminder set ten days ago for this afternoon and spoke one
+    set today for next month. The window is the home-local day, decoded
+    from naive-UTC storage: today's, tomorrow's, then undated ones he set
+    in the last two days (the realtime lane stores no due time at all, so
+    these are every spoken reminder), then still-open ones whose time has
+    passed — six lines at most, and a cut is never silent (fix round 2,
+    P03-3): a seventh adds "…and N more reminders" so the front model
+    never denies one Parker holds. An executed reminder was delivered at
+    his yes: it is his day only while undated-and-recent or its time is
+    still ahead; past-due executed ones are the digest's done list.
+
+    Two sources (fix round 2, P03-1): a dated reminder lives on
+    ``CapturedIntent`` (status pending) until the resolve gate
+    (``pipeline.resolve_captured_intents``: ``due_at <= now``) lets it
+    stage, so before its time it exists nowhere else — read it from there
+    as recorded but not set, through the same due-time phrasing. An intent
+    that already has a staged action is skipped, so a reminder is one
+    line before and after it resolves.
+    """
+
+    import json as _json
+    from datetime import timedelta
+
+    from sqlalchemy import and_, or_
+
+    from app.db.models import CapturedIntent, ResolutionResult, StagedAction
+
+    tz = now_local.tzinfo
+    today = _local_day_start(now_local)
+    tomorrow = today + timedelta(days=1)
+    day_after = today + timedelta(days=2)
+    now_utc = _to_stored(now_local)
+    rows = (
+        db.query(StagedAction)
+        .filter(StagedAction.action_type == "reminder")
+        .filter(StagedAction.status.in_(("staged", "confirmed", "executed")))
+        .filter(
+            or_(
+                and_(
+                    StagedAction.execute_after.is_(None),
+                    StagedAction.created_at >= now_utc - timedelta(days=2),
+                ),
+                and_(
+                    StagedAction.execute_after.isnot(None),
+                    StagedAction.execute_after < _to_stored(day_after),
+                    or_(StagedAction.status != "executed", StagedAction.execute_after >= now_utc),
+                ),
+            )
+        )
+        .order_by(StagedAction.execute_after.asc(), StagedAction.created_at.desc())
+        .all()
+    )
+    pending = (
+        db.query(CapturedIntent)
+        .filter(CapturedIntent.status == "pending")
+        .filter(CapturedIntent.requested_action.in_(("remind", "reminder")))
+        .filter(
+            or_(
+                and_(
+                    CapturedIntent.due_at.is_(None),
+                    CapturedIntent.created_at >= now_utc - timedelta(days=2),
+                ),
+                and_(
+                    CapturedIntent.due_at.isnot(None),
+                    CapturedIntent.due_at < _to_stored(day_after),
+                ),
+            )
+        )
+        .filter(~CapturedIntent.resolutions.any(ResolutionResult.staged_actions.any()))
+        .order_by(CapturedIntent.due_at.asc(), CapturedIntent.created_at.desc())
+        .all()
+    )
+    # (stored due or None, head) from both sources; undated rows keep their
+    # most-recently-set-first order, dated ones are merged by due time.
+    entries: list[tuple[Any, str]] = []
+    for action in rows:
+        try:
+            payload = _json.loads(action.action_payload or "{}")
+        except ValueError:
+            payload = {}
+        subject = str(payload.get("subject") or payload.get("intent_text") or "").strip()
+        if not subject:
+            continue
+        state = "waiting for his yes" if action.status == "staged" else "set"
+        entries.append((action.execute_after, f"A reminder ({state}): {subject}"))
+    for intent in pending:
+        subject = str(intent.subject or intent.intent_text or "").strip()
+        if not subject:
+            continue
+        entries.append((intent.due_at, f"A reminder (recorded; not set yet): {subject}"))
+    today_lines: list[str] = []
+    tomorrow_lines: list[str] = []
+    undated_lines: list[str] = [f"{head} — no time on record." for stored, head in entries if stored is None]
+    open_lines: list[str] = []
+    dated = sorted((entry for entry in entries if entry[0] is not None), key=lambda entry: entry[0])
+    for stored, head in dated:
+        due = _from_stored(stored, tz)
+        at = _speakable_time(due.strftime("%H:%M"))
+        if due < now_local:
+            if due >= today:
+                when = f"earlier today at {at}"
+            elif due >= today - timedelta(days=1):
+                when = f"yesterday at {at}"
+            else:
+                when = f"on {due.day} {due:%B} at {at}"
+            open_lines.append(f"{head} — still open, was due {when}.")
+        elif due < tomorrow:
+            today_lines.append(f"{head} — today at {at}.")
+        else:
+            tomorrow_lines.append(f"{head} — tomorrow at {at}.")
+    # Undated before open on purpose: the realtime lane produces only
+    # undated rows, and they must not be starved by stale overdue ones.
+    # Open ones are unbounded in age (the digest's "needs a look"
+    # precedent), most recently due first, bounded here by the cap.
+    open_lines.reverse()
+    ordered = today_lines + tomorrow_lines + undated_lines + open_lines
+    if len(ordered) > 6:
+        more = len(ordered) - 6
+        return [(line, 1) for line in ordered[:6]] + [
+            (
+                f"…and {more} more reminders Parker did not list here — never say he has none.",
+                more,
+            )
+        ]
+    return [(line, 1) for line in ordered]
+
+
+def _my_day_note_lines(db: Any, now_local: Any) -> list[_CountedLine]:
+    """Family notes that read like plans, dated by the day they were written.
+
+    Read straight from the memory table — the context-card bullets carry
+    no date, and a 20-day-old "appointment tomorrow" was being narrated as
+    a present-tense family plan (P0.3). Family, seed and call notes only:
+    Parker's own realtime session summaries are never "a note the family
+    left". Seven days back, at most four. "tomorrow" in a note counts from
+    the day it was written, so a note not written today says when it was
+    and that the date is uncertain; older notes are left to the context
+    card (``_memory_lines`` is untouched).
+    """
+
+    import re as _re
+    from datetime import timedelta
+
+    from app.memory.models import ConversationMemory
+
+    keywords = ("appointment", "visit", "tomorrow", "today", "tonight", "friday",
+                "monday", "tuesday", "wednesday", "thursday", "saturday", "sunday",
+                "o'clock", " at ", "coming", "bring")
+    tz = now_local.tzinfo
+    today = _local_day_start(now_local)
+    rows = (
+        db.query(ConversationMemory)
+        .filter(ConversationMemory.source != "realtime")
+        .filter(ConversationMemory.created_at >= _to_stored(today - timedelta(days=6)))
+        .order_by(ConversationMemory.created_at.desc(), ConversationMemory.id.desc())
+        .all()
+    )
+    lines: list[str] = []
+    for row in rows:
+        text = str(row.content or "").strip()
+        lowered = text.lower()
+        if row.created_at is None or not any(key in lowered for key in keywords):
+            continue
+        written = _from_stored(row.created_at, tz)
+        if written >= today:
+            when = "today"
+        elif written >= today - timedelta(days=1):
+            when = "yesterday"
+        else:
+            when = f"on {written:%A}"  # unambiguous inside a week
+        line = f"A note the family left {when}: {text}"
+        relative = _re.search(r"\b(today|tomorrow|tonight)\b", lowered)
+        if when != "today" and relative:
+            line += (
+                f" — written {when}, so its “{relative.group(1)}” counts from then; "
+                "the date is uncertain."
+            )
+        elif not (when == "today" and relative):
+            line += " — its plan date is not explicit, so the date is uncertain."
+        lines.append(line)
+    if len(lines) > 4:
+        omitted = len(lines) - 4
+        return [(line, 1) for line in lines[:4]] + [
+            (
+                f"…and {omitted} more plan-like notes Parker did not list here — "
+                "never say he has none.",
+                omitted,
+            )
+        ]
+    return [(line, 1) for line in lines]
+
+
+def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerResult:
+    """His day from Parker's own records. Never raises; never a dose.
+
+    ``now`` is the clock seam (an aware instant; tests inject it): the date
+    line and the reminder and note windows all read one home-local moment.
+    Production passes nothing (``run_my_day_worker(_make_db)``).
+    """
+
+    from datetime import datetime
+
+    from app.parker.rollup import home_timezone
+
+    started = time.time()
+    tz = home_timezone()
+    now_local = (now if now is not None else datetime.now(tz)).astimezone(tz)
+    lines: list[_CountedLine] = [
+        (f"Right now it is {local_date_line(now_local)}.", 0)
+    ]
+    db = None
+    failed_sources: list[str] = []
+    try:
+        db = make_db()
+        for name, source in (
+            ("medications", _my_day_medication_lines),
+            ("reminders", _my_day_reminder_lines),
+            ("notes", _my_day_note_lines),
+        ):
+            try:
+                for item in source(db, now_local):
+                    if isinstance(item, tuple):
+                        text, represented = item
+                    else:  # test/custom source compatibility
+                        text, represented = str(item), 1
+                    lines.append((text, max(0, int(represented))))
+            except Exception:  # noqa: BLE001 — one failing source never kills the answer
+                logger.debug("my_day source %s failed", name, exc_info=True)
+                failed_sources.append(name)
+    except Exception:  # noqa: BLE001 — the store itself: an honest error, never "nothing on record"
+        logger.warning("my_day worker could not open the store", exc_info=True)
+        return WorkerResult(
+            kind="my_day",
+            error="could not read his notes",
+            started_at=started,
+            finished_at=time.time(),
+        )
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:  # noqa: BLE001
+                pass
+    safe: list[_CountedLine] = []
+    blocked_records = 0
+    for item in lines:
+        if speech_violates_medical_boundary(item[0]):
+            blocked_records += item[1]
+        else:
+            safe.append(item)
+    if blocked_records:
+        noun = "record" if blocked_records == 1 else "records"
+        safe.append(
+            (
+                f"Parker has {blocked_records} {noun} on file that it cannot safely read aloud.",
+                blocked_records,
+            )
+        )
+    # Cap data before adding source-health truth; a busy day must never hide
+    # that one source failed and invite the model to deny records it could not read.
+    if len(safe) > 11:
+        dropped = sum(represented for _line, represented in safe[10:])
+        safe = safe[:10] + [
+            (
+                f"…and {dropped} more Parker did not list here — never say he has none.",
+                dropped,
+            )
+        ]
+    if failed_sources:
+        safe.append(
+            (
+                "Parker could not read his " + " and ".join(failed_sources)
+                + " just now — never say he has none; say you couldn't check those.",
+                0,
+            )
+        )
+    elif len(safe) == 1:
+        safe.append(("Nothing is on record for him today — no reminders and no notes.", 0))
+    safe.append((MY_DAY_LIMIT_LINE, 0))
+    speech = "\n".join(line for line, _represented in safe)
+    if speech_violates_medical_boundary(speech):
+        speech = f"Right now it is {local_date_line(now_local)}.\n{MY_DAY_LIMIT_LINE}"
+    return WorkerResult(kind="my_day", speech=speech, started_at=started, finished_at=time.time())
+
+
+def render_my_day_item(result: WorkerResult) -> str:
+    """The system item narrating his day back to the front model."""
+
+    if result.error:
+        return (
+            "Parker could not read his notes just now.\n"
+            f"Internal reason, never to be said aloud: {result.error}.\n"
+            "Tell him honestly that you couldn't check his notes and offer to "
+            "try again in a moment. Never say nothing is on record."
+        )
+    return (
+        "Here is what Parker has on record for him — from Parker's own local "
+        "notes, never a calendar. Tell him plainly in one or two short "
+        "sentences; if something is missing, say Parker has nothing written "
+        "down for it and offer to set a reminder.\n"
+        f"{_RESULT_OPEN}\n{_strip_markers(result.speech)}\n{_RESULT_CLOSE}"
+    )
+
+
 def run_context_worker(
     make_db: Callable[[], Any],
     sources: tuple[tuple[str, Callable[[Any], list[str]]], ...] = CONTEXT_SOURCES,
+    *,
+    cancel: Optional[CancelToken] = None,
 ) -> WorkerResult:
     """Build the session context card. One failing source never kills it.
 
     ``sources`` lets a read-side caller (the session-review card preview)
     reuse the exact assembly while skipping the live gateway probe — a
     review page request must never block on the family agent's network.
+    ``cancel`` (or the bridge's ``CURRENT_CANCEL``) stops the assembly
+    between sources — an empty card beats a probe that outlives power off.
     """
 
+    with _cancel_scope(cancel) as token:
+        return _run_context(make_db, sources, token)
+
+
+def _run_context(
+    make_db: Callable[[], Any],
+    sources: tuple[tuple[str, Callable[[Any], list[str]]], ...],
+    token: Optional[CancelToken],
+) -> WorkerResult:
     started = time.time()
     lines: list[str] = []
     db = None
     try:
         db = make_db()
         for name, source in sources:
+            if token is not None and token.cancelled():
+                break  # power off: stop here, keep what we have
             try:
                 lines.extend(source(db))
             except Exception:  # noqa: BLE001 — card sources are best-effort
@@ -400,9 +892,10 @@ def render_search_item(result: WorkerResult, *, age_seconds: float) -> str:
         "If the conversation has clearly moved past it, mention it only "
         "briefly or let it go — never force it in.\n"
         f"{_RESULT_OPEN}\n{_strip_markers(result.speech)}\n{_RESULT_CLOSE}\n"
-        "Where this came from is shown on his screen — if he asks, say the "
-        "sources are on the screen; never invent a source name and never "
-        "read web addresses aloud."
+        "If he asks where this came from, name the source in plain words "
+        "(the tournament site, the news) — sources appear on his screen only "
+        "when captions are on; never invent a source name and never read web "
+        "addresses aloud."
     )
 
 

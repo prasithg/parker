@@ -9,18 +9,27 @@ capture → resolve → stage → confirm pipeline as every other entry point.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import queue
 import threading
+import time
 from typing import Any, Literal, Optional
 
 import logging
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pathlib import Path
 
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
 from app.parker import realtime as realtime_lane
+from app.parker.companion_power import PowerRefused, authority
+from app.parker.companion_state import get_companion_settings, set_companion_settings
+from app.parker.companion_ui import COMPANION_PAGE_HTML
 from app.parker.converse import ConverseError, ConverseStore
 from app.parker.converse_ui import CONVERSE_PAGE_HTML
 
@@ -31,6 +40,8 @@ router = APIRouter()
 # One store per server process; tests swap it for one built on the test DB
 # (same pattern as setup_api.first_session_manager).
 converse_store = ConverseStore()
+_power_persist_threads: set[threading.Thread] = set()
+_power_persist_lock = threading.Lock()
 
 
 class TurnRequest(BaseModel):
@@ -52,13 +63,444 @@ class ClientReceiptRequest(BaseModel):
     stop_to_silence_ms: float | None = Field(default=None, ge=0, le=600_000)
     capture_seconds: float | None = Field(default=None, ge=0, le=600)
     outcome: str | None = Field(default=None, max_length=32)
+    # Bounded semantic presence transitions from the page (what Reachy
+    # showed, when, why). The store allowlists/truncates every entry; this
+    # model only has to let the list through — its absence silently
+    # dropped the whole beacon lane (escape found 2026-09-01).
+    expression: list[dict[str, Any]] | None = Field(default=None, max_length=300)
+    expression_dropped: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
 @router.get("/converse", response_class=HTMLResponse, include_in_schema=False)
 def converse_page() -> str:
-    """The Patient Curiosity Loop page: Start, take your time, Done, Stop."""
+    """The companion: the virtual Reachy embodiment — power, CC, nothing else.
+
+    Chairman direction 2026-09-01 (docs/plans/2026-09-01-companion-take2.md):
+    this is a simulation of the Reachy Mini in the living room. The
+    button/typing harness lives at /parker/converse/lab.
+    """
+
+    return COMPANION_PAGE_HTML
+
+
+@router.get("/converse/lab", response_class=HTMLResponse, include_in_schema=False)
+def converse_lab_page() -> str:
+    """The developer/accessibility harness: Start, Done, Stop, typing."""
 
     return CONVERSE_PAGE_HTML
+
+
+class CompanionSettingsRequest(BaseModel):
+    power_on: bool | None = None  # refused here — power goes through /power
+    cc_on: bool | None = None
+
+
+class CompanionPowerRequest(BaseModel):
+    on: bool
+    client_id: str = Field(default="", max_length=64)
+
+
+@router.get("/converse/companion/settings")
+def companion_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Persisted power/CC state (off must survive restarts) plus the live
+    authority snapshot: who owns power right now and how many companion
+    audio sockets are actually open."""
+
+    settings = get_companion_settings(db)
+    live = authority.snapshot()
+    if live["released"] or live["power_on"]:
+        # A live transition outranks a durable read that raced it. A revoked
+        # page must see OFF while that write is landing; a successful claim
+        # already persisted ON and must read ON.
+        settings["power_on"] = live["power_on"]
+    settings["power_save_state"] = live["save_state"]
+    settings["gen"] = live["gen"]
+    settings["owner_client"] = live["owner_client"]
+    settings["live"] = live["live"]
+    return settings
+
+
+@router.post("/converse/companion/settings")
+def update_companion_settings(
+    payload: CompanionSettingsRequest, db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    if payload.power_on is not None:
+        # Power is not a setting a page may write behind the authority's
+        # back — that is exactly how a stale tab kept listening.
+        raise HTTPException(
+            status_code=400, detail="Power goes through /converse/companion/power."
+        )
+    return set_companion_settings(db, cc_on=payload.cc_on)
+
+
+@router.post("/converse/companion/power")
+async def companion_power(
+    payload: CompanionPowerRequest, db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """The one way power changes (docs/plans/2026-09-01-foundation-closure-overnight.md).
+
+    ``on`` claims power for this page: the reply carries the owner token
+    and generation every companion socket must present; 409 while another
+    screen is actually listening; 503 when the durable write fails (and
+    nothing is on). ``off`` turns Parker off for EVERY screen, in this
+    order: the in-memory flip (synchronous — no new socket authorizes
+    from this instant), every wake/realtime socket receives a ``revoked``
+    frame and closes, and only THEN the flag starts persisting. The ack is
+    not held behind SQLite: it reports ``save_state=pending`` and the page
+    polls settings until that state becomes ``saved`` or ``failed``.
+    """
+
+    from starlette.concurrency import run_in_threadpool
+
+    def persist(on: bool) -> None:
+        set_companion_settings(db, power_on=on)
+
+    if payload.on:
+        try:
+            # The durable write is serialized by the authority's persistence
+            # lock, while its state lock stays available to an immediate OFF.
+            # Keep the I/O off the event loop so SQLite never stalls a pump.
+            granted = await run_in_threadpool(
+                authority.claim, persist, client_id=payload.client_id
+            )
+        except PowerRefused as refused:
+            raise HTTPException(
+                status_code=refused.status_code,
+                detail={"reason": refused.reason, "text": refused.detail},
+            )
+        await _revoke_all(granted.pop("displaced"), "superseded")
+        return granted
+
+    # Flip memory first so no new socket authorizes, then revoke every line
+    # and wait for its provider work to finish. SQLite persistence starts only
+    # after that privacy boundary and never holds the HTTP acknowledgement.
+    released = await run_in_threadpool(authority.release)
+    generation = released.pop("generation")
+    await _revoke_all(released.pop("revoked"), "power_off")
+    if not authority.is_current_release(generation):
+        released["saved"] = True
+        released["save_state"] = "superseded"
+        return released
+
+    from sqlalchemy.orm import sessionmaker
+
+    power = authority
+    session_factory = sessionmaker(bind=db.get_bind())
+
+    def persist_off(_on: bool) -> None:
+        session = session_factory()
+        try:
+            set_companion_settings(session, power_on=False)
+        finally:
+            session.close()
+
+    def finish_persist() -> None:
+        outcome = "failed"
+        try:
+            outcome = power.persist_release(generation, persist_off)
+        finally:
+            with _power_persist_lock:
+                _power_persist_threads.discard(threading.current_thread())
+        if outcome == "failed":
+            logger.warning("companion power-off remains non-durable; page will retry")
+
+    thread = threading.Thread(
+        target=finish_persist,
+        name=f"parker-power-off-{generation}",
+        daemon=True,
+    )
+    with _power_persist_lock:
+        _power_persist_threads.add(thread)
+    thread.start()
+    released["saved"] = None
+    released["save_state"] = "pending"
+    return released
+
+
+async def _close_registration(registration, reason: str) -> None:
+    try:
+        await asyncio.wait_for(registration.close(reason), timeout=2.0)
+    except Exception:  # noqa: BLE001 — a wedged socket must not block the switch
+        logger.debug("revoking a companion socket failed", exc_info=True)
+
+
+async def _wait_registration(registration) -> None:
+    if registration.quiesce is None:
+        return
+    try:
+        await registration.quiesce()
+    except Exception:  # noqa: BLE001 — bridge failure is surfaced on its own lane
+        logger.debug("waiting for companion provider quiescence failed", exc_info=True)
+
+
+async def _revoke_all(registrations, reason: str) -> None:
+    registrations = list(registrations)
+    # Fire every synchronous provider cancel before one wedged WebSocket can
+    # delay another. Socket closes are independently bounded. Only a real
+    # power-off waits for provider quiescence: a same-owner reconnect may
+    # overlap the superseded bridge long enough for its abandoned thread to
+    # unwind, and the closed bridge already drops that stale result.
+    for registration in registrations:
+        if registration.revoke is not None:
+            registration.revoke()
+    operations = [
+        _close_registration(registration, reason) for registration in registrations
+    ]
+    if reason == "power_off":
+        operations.extend(
+            _wait_registration(registration) for registration in registrations
+        )
+    await asyncio.gather(*operations)
+
+
+def _socket_credentials(websocket: WebSocket) -> tuple[str, str]:
+    params = websocket.query_params
+    return str(params.get("owner", ""))[:80], str(params.get("gen", ""))[:12]
+
+
+async def _refuse(websocket: WebSocket, reason: str) -> None:
+    text = (
+        "Parker is off. Nothing is listening."
+        if reason == "power_off"
+        else "Parker is on another screen now."
+    )
+    await websocket.send_json({"type": "revoked", "reason": reason, "text": text})
+    await websocket.close()
+
+
+def _closer(websocket: WebSocket):
+    async def close(reason: str) -> None:
+        try:
+            await websocket.send_json({"type": "revoked", "reason": reason})
+        except Exception:  # noqa: BLE001 — already gone is fine
+            pass
+        try:
+            await websocket.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return close
+
+
+# Presence assets for the Converse page: the expression state module, the
+# Reachy renderer, and vendored Three.js. Same-origin only — the patient
+# surface never fetches runtime code from a CDN. Works identically from
+# the repo and the PyInstaller sidecar (the spec ships this directory as
+# package data next to the frozen module).
+_STATIC_ROOT = (Path(__file__).parent / "static").resolve()
+_STATIC_MEDIA_TYPES = {".js": "text/javascript", ".md": "text/markdown", "": "text/plain"}
+
+
+@router.get("/converse/static/{asset_path:path}", include_in_schema=False)
+def converse_static(asset_path: str) -> FileResponse:
+    candidate = (_STATIC_ROOT / asset_path).resolve()
+    if not candidate.is_relative_to(_STATIC_ROOT) or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="No such asset.")
+    return FileResponse(
+        candidate,
+        media_type=_STATIC_MEDIA_TYPES.get(candidate.suffix, "application/octet-stream"),
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+from app.parker.wake import HOP_SECONDS as WAKE_HOP_SECONDS  # the wake lane's hop
+
+# After a wake fires, the lane keeps transcribing for this long so the
+# rest of a same-breath request ("Hey Parker, can you help me") reaches
+# the live line as text while that line is still connecting.
+WAKE_TAIL_SECONDS = 3.0
+# The post-wake window grows from the cleared wake point and holds
+# everything he says until the line takes over (`tail_end`): the lane's
+# lifetime plus one hop, so nothing he said slides out inside it (F2).
+TAIL_WINDOW_SECONDS = WAKE_TAIL_SECONDS + WAKE_HOP_SECONDS
+# Consecutive failing inferences (the warmed model died under the lane:
+# model.bin gone, temp dir unwritable) before the lane says so and closes
+# — ~2.1 s of energetic hops at HOP_SECONDS. A single bad window still
+# never ends dormancy, and a quiet room never counts (F5).
+WAKE_FATAL_FAILURES = 3
+
+
+@router.websocket("/converse/wake")
+async def converse_wake(websocket: WebSocket) -> None:
+    """Local dormant wake listening: mic PCM in, one wake frame out.
+
+    Localhost-only audio — the transcriber is the same warmed local model
+    the push-button lane uses; nothing here touches the network. The page
+    streams 16 kHz mono s16le frames while dormant; after a wake it keeps
+    the lane open briefly for ``tail`` frames (the words after the wake
+    phrase) and closes it once the live line is up
+    (docs/plans/2026-09-01-wake-word.md).
+
+    Power is checked here, not trusted from the page: the socket must
+    present the owner token and generation the power claim issued, or it
+    is answered with ``revoked`` and closed before any audio is read.
+    """
+
+    import base64
+    import binascii
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.parker import wake as wake_module
+    from app.parker.converse import write_receipt
+
+    await websocket.accept()
+    owner, gen = _socket_credentials(websocket)
+    refusal = authority.authorize(owner, gen)
+    if refusal is not None:
+        await _refuse(websocket, refusal)
+        return
+    # Register before warm-up: OFF from any screen must close this browser
+    # and release its microphone even while the first model load is blocked.
+    sid, _superseded = authority.register(
+        token=owner, kind="wake", close=_closer(websocket)
+    )
+    if sid is None:
+        await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
+        return
+
+    # The warm-up loads the model (and, with weights missing, may try the
+    # hub) — never on the event loop, where it would stall every other
+    # socket and the power switch. The store serialises the load.
+    try:
+        transcriber = await run_in_threadpool(converse_store.transcriber)
+    except BaseException:
+        authority.unregister(sid)
+        raise
+    if authority.authorize(owner, gen) is not None:
+        # The registered closer already sent the authoritative revoke.
+        authority.unregister(sid)
+        return
+    if transcriber is None:
+        await websocket.send_json(
+            {
+                "type": "unavailable",
+                "text": (
+                    "Wake listening needs the local voice model "
+                    "(make voice-deps)."
+                ),
+            }
+        )
+        await websocket.close()
+        authority.unregister(sid)
+        return
+    from app.config import settings as app_settings
+
+    try:
+        detector = wake_module.WakeDetector(
+            transcriber, relative_gate=app_settings.parker_wake_relative_gate
+        )
+    except BaseException:
+        authority.unregister(sid)
+        raise
+    opened = time.monotonic()
+    woke_at: float | None = None
+
+    async def _give_up() -> None:
+        # The warmed model keeps failing under the lane. Say so and close
+        # (the page powers off, honestly) instead of listening to nothing
+        # forever. The store keeps its loaded model: a transient disk error
+        # must not throw it away; the next power-on starts a fresh counter.
+        logger.warning("wake lane giving up after %d failed inferences", detector.failures)
+        try:
+            await websocket.send_json(
+                {
+                    "type": "unavailable",
+                    "text": (
+                        "Wake listening keeps failing on this computer, so Parker "
+                        "turned off. Ask the family to check the local voice model "
+                        "(make voice-deps)."
+                    ),
+                }
+            )
+            await websocket.close()
+        except RuntimeError:
+            pass  # revoked already: nothing to tell
+
+    try:
+        while True:
+            message = await websocket.receive_json()
+            if not isinstance(message, dict):
+                continue
+            kind = message.get("type")
+            if kind == "audio":
+                try:
+                    pcm = base64.b64decode(
+                        str(message.get("data", "")).encode("ascii"), validate=True
+                    )
+                except (ValueError, binascii.Error, UnicodeEncodeError):
+                    continue  # junk frames never end dormancy
+                if woke_at is not None:
+                    # The tail lane: what he says right after the wake.
+                    if time.monotonic() - woke_at > WAKE_TAIL_SECONDS:
+                        continue
+                    heard = await run_in_threadpool(detector.hear, pcm)
+                    # No give-up here: the tail lane may outlive the live
+                    # line's open, and a failing tail must never power off a
+                    # conversation that does not need the local model (the
+                    # page powers off on `unavailable`). A tail that cannot
+                    # be heard is simply empty; the dormant path below is
+                    # where a dead model ends dormancy.
+                    if heard and heard["heard"]:
+                        try:
+                            await websocket.send_json(
+                                {"type": "tail", "text": heard["heard"][:200]}
+                            )
+                        except RuntimeError:
+                            return  # revoked mid-tail
+                    continue
+                hit = await run_in_threadpool(detector.feed, pcm)
+                if detector.failures >= WAKE_FATAL_FAILURES:
+                    await _give_up()
+                    return
+                if hit:
+                    woke_at = time.monotonic()
+                    detector.begin_tail(TAIL_WINDOW_SECONDS)
+                    logger.info(
+                        "wake detected matched=%r infer_ms=%d rms=%d",
+                        hit["matched"],
+                        hit["infer_ms"],
+                        hit["rms"],
+                    )
+                    try:
+                        write_receipt(
+                            {
+                                "recorded_by": "server",
+                                "kind": "wake",
+                                "matched": hit["matched"],
+                                "infer_ms": hit["infer_ms"],
+                                "rms": hit["rms"],
+                                "dormant_s": int(time.monotonic() - opened),
+                                # a paused wake ("Hey" ... "Parker") vs a same-breath one
+                                **({"latch_s": hit["latch_s"]} if "latch_s" in hit else {}),
+                            }
+                        )
+                    except Exception:  # noqa: BLE001 — receipts never break waking
+                        pass
+                    try:
+                        await websocket.send_json({"type": "wake", **hit})
+                    except RuntimeError:
+                        return  # revoked mid-inference: the socket is already closed
+            elif kind == "tail_end":
+                # The line is up. Every audio frame the page sent before this
+                # one has already been fed (the loop is sequential): transcribe
+                # what the lane still holds once — even sub-hop audio — answer
+                # with the FINAL tail (empty is still an answer, so the page
+                # never waits on the lane) and hand over.
+                heard = await run_in_threadpool(detector.finish) if woke_at is not None else None
+                text = str((heard or {}).get("heard", ""))[:200]
+                try:
+                    await websocket.send_json({"type": "tail", "text": text, "final": True})
+                    await websocket.close()  # the lane's job is done: an orderly close
+                except RuntimeError:
+                    pass  # revoked meanwhile: nothing to hand over to
+                return
+            elif kind == "end":
+                return
+    except WebSocketDisconnect:
+        pass
+    finally:
+        authority.unregister(sid)
 
 
 @router.post("/converse/sessions")
@@ -75,10 +517,17 @@ async def converse_realtime(websocket: WebSocket) -> None:
     """The live full-duplex lane: browser <-> Parker policy <-> gpt-realtime.
 
     Parker stays the boundary in the middle — guards, the action pipeline,
-    and the screen mirror run server-side (app/parker/realtime.py).
+    and the screen mirror run server-side (app/parker/realtime.py). Power
+    is enforced here too: only the page that owns the current power
+    generation may open the line, and power-off revokes it mid-call.
     """
 
     await websocket.accept()
+    owner, gen = _socket_credentials(websocket)
+    refusal = authority.authorize(owner, gen)
+    if refusal is not None:
+        await _refuse(websocket, refusal)
+        return
     if not realtime_lane.realtime_available():
         await websocket.send_json(
             {
@@ -98,21 +547,50 @@ async def converse_realtime(websocket: WebSocket) -> None:
         )
         await websocket.close()
         return
+    # The authority owns both the immediate cancel hook and the quiescence
+    # receipt. OFF fans out every cancel before awaiting socket close, then
+    # proves no provider work remains without waiting on session persistence.
     bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
+    sid, superseded = authority.register(
+        token=owner,
+        kind="realtime",
+        close=_closer(websocket),
+        revoke=bridge.revoke,
+        quiesce=bridge.wait_quiesced,
+    )
+    if sid is None:
+        realtime_lane.release_bridge_slot()
+        await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
+        return
+    bridge_task = asyncio.create_task(bridge.run())
     try:
-        await bridge.run()
+        # One owner, one line: a reconnect replaces its old bridge.
+        await _revoke_all(superseded, "superseded")
+        await bridge_task
+    except asyncio.CancelledError:
+        # revoke() cancels the bridge supervisor, not this WebSocket handler.
+        # Its shutdown has already closed transport and is awaited below.
+        if not bridge.revoked:
+            raise
     except WebSocketDisconnect:
         pass
     except Exception:  # noqa: BLE001 — never leak internals to the patient page
         logger.exception("realtime bridge failed")
         try:
             await websocket.send_json(
-                {"type": "notice", "text": "The live line dropped — tap Live conversation to reconnect."}
+                {"type": "notice", "text": "The live line dropped — say \u201cHey Parker\u201d to try again."}
             )
             await websocket.close()
         except Exception:  # noqa: BLE001
             pass
     finally:
+        # A superseded line may finish its socket shutdown before a cancelled
+        # provider thread has unwound. Keep its retired registration visible
+        # to a later OFF until true provider quiescence, even under handler
+        # cancellation.
+        quiescing = asyncio.ensure_future(bridge.wait_quiesced())
+        await realtime_lane._await_despite_cancel(quiescing)
+        authority.unregister(sid)
         realtime_lane.release_bridge_slot()
 
 

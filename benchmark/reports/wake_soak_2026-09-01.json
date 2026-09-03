@@ -1,0 +1,548 @@
+{
+  "confusables": {
+    "extra_wakes": 10,
+    "policy": "reported, not gated \u2014 chairman decision 2026-09-01 (calibrate for Dad's recall)",
+    "rows": [
+      {
+        "heard": "Hey Darker",
+        "text": "hey darker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey darker",
+        "text": "hey darker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Marker",
+        "text": "hey marker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Marker",
+        "text": "hey marker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Barker",
+        "text": "hey barker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Barker",
+        "text": "hey barker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Packer",
+        "text": "hey packer",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Packer!",
+        "text": "hey packer",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parked",
+        "text": "hey parked",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parked.",
+        "text": "hey parked",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "text": "a parker",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "a parker",
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "hey partner",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "hey partner",
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "hey, the parking lot is full",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "hey, the parking lot is full",
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "peter parker was here",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "peter parker was here",
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "the parker brothers game",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "the parker brothers game",
+        "voice": "Daniel",
+        "woke": false
+      }
+    ]
+  },
+  "date": "2026-09-01",
+  "eval": "wake_soak_v0",
+  "gate": {
+    "false_wakes": 1,
+    "misses": 2,
+    "passed": false
+  },
+  "provenance": {
+    "audio": "macOS say synthesized speech only; no private audio",
+    "model": "local faster-whisper"
+  },
+  "recall": {
+    "positives": 48,
+    "recall": 0.958,
+    "rows": [
+      {
+        "heard": "Hey Parker!",
+        "rate": 175,
+        "tail": "",
+        "text": "hey parker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "hey parker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "hey parker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker!",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "hey, parker.",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey, parker.",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 175,
+        "tail": "",
+        "text": "hey, parker.",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 120,
+        "tail": "",
+        "text": "hey, parker.",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "text": "hey, parker.",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey, parker.",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "hey... parker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey... parker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 175,
+        "tail": "",
+        "text": "hey... parker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 120,
+        "tail": "",
+        "text": "hey... parker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "text": "hey... parker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey... parker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "text": "hey parka",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parka",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parka",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "hey parka",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parka",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "rate": 175,
+        "tail": "",
+        "text": "hey parka",
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parka",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker!",
+        "rate": 175,
+        "tail": "",
+        "text": "hey par ker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey par ker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker!",
+        "rate": 175,
+        "tail": "",
+        "text": "hey par ker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey par ker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "hey par ker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey par ker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker!",
+        "rate": 175,
+        "tail": "",
+        "text": "hi parker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hi parker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "hi parker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hi parker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker!",
+        "rate": 175,
+        "tail": "",
+        "text": "hi parker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hi, Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hi parker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker, Ken",
+        "rate": 175,
+        "tail": "ken",
+        "text": "hey parker, can you help me",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parker, can you help me",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "hey parker, can you help me",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker!",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parker, can you help me",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "text": "hey parker, can you help me",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 120,
+        "tail": "",
+        "text": "hey parker, can you help me",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "rate": 175,
+        "tail": "",
+        "text": "um, hey parker",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "Um, Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "um, hey parker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Um, Hey Parker.",
+        "rate": 175,
+        "tail": "",
+        "text": "um, hey parker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Um, hay parker",
+        "rate": 120,
+        "tail": "",
+        "text": "um, hey parker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Um, Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "text": "um, hey parker",
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Um, Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "text": "um, hey parker",
+        "voice": "Fred",
+        "woke": true
+      }
+    ],
+    "woke": 46
+  },
+  "soak": {
+    "audio_minutes": 4.0,
+    "cpu_fraction_of_realtime": 2.652,
+    "cpu_seconds_per_audio_minute": 159.1,
+    "false_wakes": [
+      {
+        "heard": "Hey, I'm Parker something. Hey.",
+        "matched": "hey i'm parker",
+        "tail": "something hey"
+      }
+    ],
+    "infer_ms_max": 3835.1,
+    "infer_ms_p50": 464.2,
+    "infer_ms_p95": 750.8,
+    "inferences": 312,
+    "inferences_per_audio_minute": 78.0,
+    "wall_seconds": 162.6
+  }
+}

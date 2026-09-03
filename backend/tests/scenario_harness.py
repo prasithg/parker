@@ -33,11 +33,13 @@ House rules for scenario files (match test_realtime.py):
 from __future__ import annotations
 
 import threading  # noqa: F401 — scenario files gate workers with threading.Event
+import time
 
 import httpx
 import pytest
 from sqlalchemy.orm import sessionmaker
 
+from app.parker import realtime
 from app.parker.realtime_workers import WorkerResult
 from test_realtime import (  # noqa: F401 — re-exported for scenario files
     FakeUpstream,
@@ -46,6 +48,7 @@ from test_realtime import (  # noqa: F401 — re-exported for scenario files
     _response_creates,
     _system_items,
     _wait_until,
+    browser_frame,
     client,
 )
 
@@ -58,7 +61,9 @@ __all__ = [
     "_response_creates",
     "_system_items",
     "_wait_until",
+    "assert_staged",
     "audio_delta",
+    "browser_frame",
     "client",
     "context_cards",
     "done",
@@ -89,6 +94,18 @@ def user_said(text: str) -> dict:
 
 def model_said(text: str) -> dict:
     return {"type": "response.output_audio_transcript.delta", "delta": text}
+
+
+def assert_staged(frame: dict, label: str) -> None:
+    """Exact proposal_staged pin. The frame also carries `readback` (the
+    spoken-confirmation line, companion take 2 2026-09-01) whose CONTENT
+    is pinned by _action_readback's own unit tests — here it only has to
+    exist; any OTHER new field still fails loudly."""
+
+    frame = dict(frame)
+    readback = frame.pop("readback", None)
+    assert isinstance(readback, str) and readback, frame
+    assert frame == {"type": "proposal_staged", "label": label}, frame
 
 
 def audio_delta(data: str = "UENN") -> dict:
@@ -194,9 +211,10 @@ class ScenarioWorld:
         return fake
 
     def connect(self):
-        """Open the real websocket endpoint against the scripted upstream."""
+        """Open the real websocket endpoint against the scripted upstream,
+        as the page that owns power (server-authoritative since 2026-09-01)."""
 
-        return client.websocket_connect("/parker/converse/realtime")
+        return client.websocket_connect("/parker/converse/realtime" + self.power_query)
 
     def settle_open(self, fake, *, expect_card: bool = True) -> None:
         """Settle the session open: greeting done + context worker finished.
@@ -210,8 +228,20 @@ class ScenarioWorld:
         """
 
         fake.feed(done())
+        # The line is "open" only once the greeting nudge went upstream: the
+        # test client cancels the handler the moment a `with` block exits,
+        # and the bridge now waits briefly for the page's hello frame before
+        # greeting — a session that hangs up 1 ms after connecting has no
+        # greeting to assert on.
+        assert _wait_until(lambda: _response_creates(fake) >= 1), "the greeting never went out"
         if expect_card:
             assert _wait_until(lambda: context_cards(fake)), "context card never arrived"
+        else:
+            # No card expected: wait for the context worker to have finished
+            # anyway, so a memory the family writes next is provably AFTER
+            # the card that never came, not racing it.
+            time.sleep(0.02)  # the worker task's thread starts on the next loop tick
+            assert _wait_until(lambda: realtime._inflight_db_threads == 0), "context worker still running"
 
     # -- his world -----------------------------------------------------
 
@@ -255,7 +285,7 @@ class ScenarioWorld:
         gw = OpenClawGateway(
             "http://gw.test", client=httpx.Client(transport=httpx.MockTransport(handler))
         )
-        self.mp.setattr("app.brain.openclaw.build_openclaw_gateway", lambda: gw)
+        self.mp.setattr("app.brain.openclaw.build_openclaw_gateway", lambda **_: gw)  # the bridge passes client=
         return gw
 
     def enable_hands(self, gw=None):
@@ -340,8 +370,16 @@ def voice_world(db, monkeypatch):
     monkeypatch.setattr(settings, "parker_realtime_enabled", True)
     factory = sessionmaker(bind=db.get_bind())
     monkeypatch.setattr(realtime, "_db_session_factory", factory)
+    # The page's hello frame arrives within a millisecond of open; tests
+    # that send none should not pay the production-length wait.
+    monkeypatch.setattr(realtime, "HELLO_WAIT_SECONDS", 0.05)
+    from app.parker.companion_power import authority
+
+    granted = authority.claim(lambda on: None, client_id="scenario-page")
     world = ScenarioWorld(db, monkeypatch)
+    world.power_query = f"?owner={granted['owner']}&gen={granted['gen']}"
     yield world
+    authority.release(lambda on: None)
     # Quiescence, not just the slot: threadpool DB threads can outlive a
     # cancelled worker task, and the next test must not inherit one.
     _wait_until(

@@ -1,0 +1,2305 @@
+{
+  "config": {
+    "hop": 0.7,
+    "minutes": 4.0,
+    "model": "base",
+    "overlay_snrs": "12,6,0,-6",
+    "relative_gate": 0.0,
+    "threads": 0
+  },
+  "confusables": {
+    "extra_wakes": 10,
+    "policy": "reported, not gated \u2014 chairman decision 2026-09-01 (calibrate for Dad's recall)",
+    "rows": [
+      {
+        "heard": "Hey Darker",
+        "text": "hey darker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey darker",
+        "text": "hey darker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Marker",
+        "text": "hey marker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Marker",
+        "text": "hey marker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Barker",
+        "text": "hey barker",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Barker",
+        "text": "hey barker",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Packer",
+        "text": "hey packer",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Packer!",
+        "text": "hey packer",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parked",
+        "text": "hey parked",
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parked.",
+        "text": "hey parked",
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "text": "a parker",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "a parker",
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "hey partner",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "hey partner",
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "hey, the parking lot is full",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "hey, the parking lot is full",
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "peter parker was here",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "peter parker was here",
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "the parker brothers game",
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "text": "the parker brothers game",
+        "voice": "Daniel",
+        "woke": false
+      }
+    ],
+    "status": "ran",
+    "total": 20
+  },
+  "date": "2026-09-02",
+  "eval": "wake_soak_v1",
+  "gate": {
+    "counts": {
+      "paused.misses": 5,
+      "paused.stale_wakes": 0,
+      "recall.misses": 0,
+      "soak.false_wakes": 1
+    },
+    "gated": [
+      "soak.false_wakes",
+      "recall.misses",
+      "paused.misses",
+      "paused.stale_wakes"
+    ],
+    "not_run": [],
+    "passed": false,
+    "reported_only": {
+      "confusables": "10/20 extra wakes",
+      "over_tv": "8/16 at achieved SNRs +12.0, +6.0, -0.0, -0.1, -6.0 dB",
+      "paused_negatives": "4/12 extra wakes"
+    },
+    "status": "fail"
+  },
+  "over_tv": {
+    "by_achieved_snr": {
+      "+12.0": "4/4",
+      "+6.0": "4/4",
+      "-0.0": "0/3",
+      "-0.1": "0/1",
+      "-6.0": "0/4"
+    },
+    "duplicates": 0,
+    "policy": "reported, not gated \u2014 labelled with the achieved SNR; duplicate mixes excluded",
+    "rows": [
+      {
+        "audio_sha1": "69790242f68bdddf5ff004a5d8d83b3106d14193",
+        "heard": "Hey Parker",
+        "mix": {
+          "bed_attenuation_db": 11.86,
+          "bed_rms": 1378,
+          "clipped_fraction": 0.0,
+          "gain": 1.243,
+          "gain_capped": true,
+          "snr_achieved_db": 12.01,
+          "snr_after_gain_db": 12.01,
+          "snr_requested_db": 12.0,
+          "voice_rms_after_mix": 5490
+        },
+        "rate": 175,
+        "snr_achieved_db": 12.01,
+        "snr_requested_db": 12.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down here.",
+          "Hey Parker",
+          "repairs on Monday."
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "audio_sha1": "e8f63f5cde041a7fde5227f9c63514c318f298dc",
+        "heard": "Hey Parker",
+        "mix": {
+          "bed_attenuation_db": 14.36,
+          "bed_rms": 1030,
+          "clipped_fraction": 0.0,
+          "gain": 1.337,
+          "gain_capped": true,
+          "snr_achieved_db": 12.01,
+          "snr_after_gain_db": 12.01,
+          "snr_requested_db": 12.0,
+          "voice_rms_after_mix": 4104
+        },
+        "rate": 175,
+        "snr_achieved_db": 12.01,
+        "snr_requested_db": 12.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking gar-",
+          "Good evening, the parking garage down there.",
+          "Hey Parker",
+          "repairs on Monday."
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "audio_sha1": "48a2ebb730e4497a0f9d4efaa3974cc0a922fec3",
+        "heard": "The parking garage down here. Hey Parker.",
+        "mix": {
+          "bed_attenuation_db": 10.5,
+          "bed_rms": 1605,
+          "clipped_fraction": 0.0,
+          "gain": 1.234,
+          "gain_capped": true,
+          "snr_achieved_db": 12.0,
+          "snr_after_gain_db": 12.0,
+          "snr_requested_db": 12.0,
+          "voice_rms_after_mix": 6391
+        },
+        "rate": 175,
+        "snr_achieved_db": 12.0,
+        "snr_requested_db": 12.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down here.",
+          "The parking garage down here. Hey Parker.",
+          "and you help me.",
+          "Can you help me? One day."
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "audio_sha1": "aceb91af8a0079ab2b94ad6b25ac7f3230c87a55",
+        "heard": "Hey Parker, can you help me?",
+        "mix": {
+          "bed_attenuation_db": 14.88,
+          "bed_rms": 975,
+          "clipped_fraction": 0.0,
+          "gain": 1.303,
+          "gain_capped": true,
+          "snr_achieved_db": 12.01,
+          "snr_after_gain_db": 12.01,
+          "snr_requested_db": 12.0,
+          "voice_rms_after_mix": 3886
+        },
+        "rate": 175,
+        "snr_achieved_db": 12.01,
+        "snr_requested_db": 12.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down there.",
+          "The parking garage down on the house.",
+          "Hey Parker, can you help me?",
+          ""
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "audio_sha1": "2700c547acfab0ca27d91d45c0370d9e3d550b42",
+        "heard": "The parking garage down here. Hey Parker.",
+        "mix": {
+          "bed_attenuation_db": 5.86,
+          "bed_rms": 2751,
+          "clipped_fraction": 0.0005,
+          "gain": 1.243,
+          "gain_capped": true,
+          "snr_achieved_db": 5.99,
+          "snr_after_gain_db": 6.0,
+          "snr_requested_db": 6.0,
+          "voice_rms_after_mix": 5485
+        },
+        "rate": 175,
+        "snr_achieved_db": 5.99,
+        "snr_requested_db": 6.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down here.",
+          "The parking garage down here. Hey Parker.",
+          "repairs on money."
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "audio_sha1": "bfa7eca1a8237d924bfbfea87dc2328fc595809c",
+        "heard": "Hey, Parker. Hey, Parker.",
+        "mix": {
+          "bed_attenuation_db": 8.36,
+          "bed_rms": 2056,
+          "clipped_fraction": 0.0,
+          "gain": 1.337,
+          "gain_capped": true,
+          "snr_achieved_db": 6.0,
+          "snr_after_gain_db": 6.0,
+          "snr_requested_db": 6.0,
+          "voice_rms_after_mix": 4104
+        },
+        "rate": 175,
+        "snr_achieved_db": 6.0,
+        "snr_requested_db": 6.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down top.",
+          "the parking garage down there",
+          "Hey, Parker. Hey, Parker."
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "audio_sha1": "22bd601eefe95b596307b69e0b9500ef12c11616",
+        "heard": "The parking garage down there. Hey, Parker.",
+        "mix": {
+          "bed_attenuation_db": 4.5,
+          "bed_rms": 3203,
+          "clipped_fraction": 0.0004,
+          "gain": 1.234,
+          "gain_capped": true,
+          "snr_achieved_db": 6.0,
+          "snr_after_gain_db": 6.0,
+          "snr_requested_db": 6.0,
+          "voice_rms_after_mix": 6388
+        },
+        "rate": 175,
+        "snr_achieved_db": 6.0,
+        "snr_requested_db": 6.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down here.",
+          "The parking garage down there. Hey, Parker.",
+          "You help me.",
+          "You held me on day and drunk."
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "audio_sha1": "c171d7a0bcfc9c7baf2d2b07dfdeaa7322d179a4",
+        "heard": "Hey Parker, can you help me?",
+        "mix": {
+          "bed_attenuation_db": 8.88,
+          "bed_rms": 1947,
+          "clipped_fraction": 0.0001,
+          "gain": 1.303,
+          "gain_capped": true,
+          "snr_achieved_db": 6.0,
+          "snr_after_gain_db": 6.0,
+          "snr_requested_db": 6.0,
+          "voice_rms_after_mix": 3885
+        },
+        "rate": 175,
+        "snr_achieved_db": 6.0,
+        "snr_requested_db": 6.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down top.",
+          "The parking garage down down goes for...",
+          "Hey Parker, can you help me?",
+          "And draw"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "audio_sha1": "f51751bf8580c1f6d75288f2f64d3c9255840af4",
+        "heard": "",
+        "mix": {
+          "bed_attenuation_db": 0.0,
+          "bed_rms": 5400,
+          "clipped_fraction": 0.002,
+          "gain": 1.223,
+          "gain_capped": false,
+          "snr_achieved_db": -0.05,
+          "snr_after_gain_db": 0.0,
+          "snr_requested_db": 0.0,
+          "voice_rms_after_mix": 5369
+        },
+        "rate": 175,
+        "snr_achieved_db": -0.05,
+        "snr_requested_db": 0.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage downtown.",
+          "The parking garage downtown parking closed for-",
+          "Rochdown Town Hall closed for repairs on Monday."
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "audio_sha1": "afeec2723188de4d1e0160fc06291ac9e308b905",
+        "heard": "",
+        "mix": {
+          "bed_attenuation_db": 2.36,
+          "bed_rms": 4104,
+          "clipped_fraction": 0.0003,
+          "gain": 1.337,
+          "gain_capped": true,
+          "snr_achieved_db": -0.01,
+          "snr_after_gain_db": 0.0,
+          "snr_requested_db": 0.0,
+          "voice_rms_after_mix": 4099
+        },
+        "rate": 175,
+        "snr_achieved_db": -0.01,
+        "snr_requested_db": 0.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down down.",
+          "The parking garage down below close for-",
+          "The rush down down the coast for repairs on Monday."
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "audio_sha1": "32e5ff3c08ba4dbec6b18ebdb1425cda166a69dc",
+        "heard": "",
+        "mix": {
+          "bed_attenuation_db": 0.0,
+          "bed_rms": 5380,
+          "clipped_fraction": 0.0009,
+          "gain": 1.039,
+          "gain_capped": false,
+          "snr_achieved_db": -0.01,
+          "snr_after_gain_db": 0.0,
+          "snr_requested_db": 0.0,
+          "voice_rms_after_mix": 5374
+        },
+        "rate": 175,
+        "snr_achieved_db": -0.01,
+        "snr_requested_db": 0.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage downtown",
+          "The parking garage down to our close friend.",
+          "The rush down town will close for repairs on Monday.",
+          "Marcos for repairs on Monday and dry."
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "audio_sha1": "905a5e8d8e66c4eaca93bb19f7d28a9264c67bde",
+        "heard": "",
+        "mix": {
+          "bed_attenuation_db": 2.88,
+          "bed_rms": 3885,
+          "clipped_fraction": 0.0002,
+          "gain": 1.303,
+          "gain_capped": true,
+          "snr_achieved_db": -0.01,
+          "snr_after_gain_db": 0.0,
+          "snr_requested_db": 0.0,
+          "voice_rms_after_mix": 3880
+        },
+        "rate": 175,
+        "snr_achieved_db": -0.01,
+        "snr_requested_db": 0.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down top.",
+          "The parking garage down down low close for",
+          "Can you help me?",
+          "Can you help me?"
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "audio_sha1": "05ba8b1e6937f1092b56e09a439b482730efdf7b",
+        "heard": "",
+        "mix": {
+          "bed_attenuation_db": 0.0,
+          "bed_rms": 5400,
+          "clipped_fraction": 0.0,
+          "gain": 0.613,
+          "gain_capped": false,
+          "snr_achieved_db": -6.0,
+          "snr_after_gain_db": -6.0,
+          "snr_requested_db": -6.0,
+          "voice_rms_after_mix": 2706
+        },
+        "rate": 175,
+        "snr_achieved_db": -6.0,
+        "snr_requested_db": -6.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage downtown",
+          "The parking garage downtown will close for-",
+          "Rochdown Town will close for repairs on Monday."
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "audio_sha1": "21becf4c0811b37fe43ff6ada94ee14ae3ceae2e",
+        "heard": "",
+        "mix": {
+          "bed_attenuation_db": 0.0,
+          "bed_rms": 5382,
+          "clipped_fraction": 0.0,
+          "gain": 0.879,
+          "gain_capped": false,
+          "snr_achieved_db": -6.0,
+          "snr_after_gain_db": -6.0,
+          "snr_requested_db": -6.0,
+          "voice_rms_after_mix": 2698
+        },
+        "rate": 175,
+        "snr_achieved_db": -6.0,
+        "snr_requested_db": -6.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage downtown",
+          "The parking garage down town will close for-",
+          "Rochdown Town will close for repairs on Monday."
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "audio_sha1": "cfd1594d9d34f4e167fdedc361b3ec7df9713513",
+        "heard": "",
+        "mix": {
+          "bed_attenuation_db": 0.0,
+          "bed_rms": 5380,
+          "clipped_fraction": 0.0,
+          "gain": 0.521,
+          "gain_capped": false,
+          "snr_achieved_db": -6.0,
+          "snr_after_gain_db": -6.0,
+          "snr_requested_db": -6.0,
+          "voice_rms_after_mix": 2696
+        },
+        "rate": 175,
+        "snr_achieved_db": -6.0,
+        "snr_requested_db": -6.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage downtown",
+          "The parking garage downtown will close for-",
+          "The rush down town will close for repairs on Monday.",
+          "will close for repairs on Monday and dry."
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "audio_sha1": "86f1ef7e54c03d10f0c8a021bdab00f18e04019a",
+        "heard": "",
+        "mix": {
+          "bed_attenuation_db": 0.0,
+          "bed_rms": 5415,
+          "clipped_fraction": 0.0001,
+          "gain": 0.91,
+          "gain_capped": false,
+          "snr_achieved_db": -6.01,
+          "snr_after_gain_db": -6.0,
+          "snr_requested_db": -6.0,
+          "voice_rms_after_mix": 2712
+        },
+        "rate": 175,
+        "snr_achieved_db": -6.01,
+        "snr_requested_db": -6.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage downtown",
+          "The parking garage downtown we'll close for",
+          "The rush down town will close for repairs on Monday.",
+          "or close for repairs on Monday, and dry."
+        ],
+        "voice": "Daniel",
+        "woke": false
+      }
+    ],
+    "status": "ran",
+    "summary": "8/16 at achieved SNRs +12.0, +6.0, -0.0, -0.1, -6.0 dB",
+    "total": 16,
+    "woke": 8
+  },
+  "paused": {
+    "misses": 5,
+    "policy": "positives and the 10 s stale greeting are gated; the other negatives are reported",
+    "positives": 24,
+    "positives_woke": 19,
+    "reported": 12,
+    "reported_wakes": 4,
+    "rows": [
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hey \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey!",
+          "Hey!",
+          "Hey",
+          "Okay.",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 1.5,
+        "parts": [
+          "hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hey \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey!",
+          "Hey",
+          "Hey",
+          "Hey.",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Parker Parker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hey \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey.",
+          "Hey",
+          "Hey",
+          "Okay.",
+          "Parker Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 3.1,
+        "parts": [
+          "hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hey \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "today.",
+          "Huh? Huh?",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 3.1,
+        "parts": [
+          "hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hey \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "",
+          "Tariqo",
+          "Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "kind": "positive",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hey \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "Hey.",
+          "Tariqa Tariqa",
+          "Paracure",
+          "Tarakur"
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 3.1,
+        "parts": [
+          "hey",
+          4.0,
+          "parker, can you help me"
+        ],
+        "phrase": "hey \u20264.0 s\u2026 parker, can you help me",
+        "rate": 175,
+        "transcripts": [
+          "Hey!",
+          "Hey!",
+          "Hey",
+          "Okay.",
+          "Parker",
+          "Can you help?",
+          "Can you help me?",
+          "Can you help me?"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "hey",
+          4.0,
+          "parker, can you help me"
+        ],
+        "phrase": "hey \u20264.0 s\u2026 parker, can you help me",
+        "rate": 120,
+        "transcripts": [
+          "Hey!",
+          "Hey",
+          "Hey",
+          "Hey.",
+          "Parker",
+          "Can you have-",
+          "Can you help me?",
+          "Can you help me?"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Parker, can you hear me?",
+        "kind": "positive",
+        "latch_s": 3.8,
+        "parts": [
+          "hey",
+          4.0,
+          "parker, can you help me"
+        ],
+        "phrase": "hey \u20264.0 s\u2026 parker, can you help me",
+        "rate": 175,
+        "transcripts": [
+          "Hey.",
+          "Hey",
+          "Hey",
+          "Okay.",
+          "You",
+          "Parker, can you hear me?",
+          "Help me!",
+          "Help me!"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Parker, can you...",
+        "kind": "positive",
+        "latch_s": 3.8,
+        "parts": [
+          "hey",
+          4.0,
+          "parker, can you help me"
+        ],
+        "phrase": "hey \u20264.0 s\u2026 parker, can you help me",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "today.",
+          "",
+          "Parker, can you...",
+          "to help me.",
+          "to help me."
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "kind": "positive",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          4.0,
+          "parker, can you help me"
+        ],
+        "phrase": "hey \u20264.0 s\u2026 parker, can you help me",
+        "rate": 175,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "",
+          "Haruka",
+          "Tarek her. Can you...",
+          "Parker, can you help me?",
+          "New Help Me"
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "Tarker",
+        "kind": "positive",
+        "latch_s": 3.1,
+        "parts": [
+          "hey",
+          4.0,
+          "parker, can you help me"
+        ],
+        "phrase": "hey \u20264.0 s\u2026 parker, can you help me",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "Hey.",
+          "Tariq.",
+          "Tarker",
+          "You help me.",
+          "Help me"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "hi",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hi \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Huh?",
+          "Hi",
+          "Hi",
+          "Bye.",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "hi",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hi \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Huh?",
+          "Hi",
+          "Hi",
+          "Bye.",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "hi",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hi \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Huh?",
+          "Hi.",
+          "Hi.",
+          "Bye.",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 3.1,
+        "parts": [
+          "hi",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hi \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Huh?",
+          "Hi",
+          "Hi.",
+          "Bye.",
+          "Ha! Ha!",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 3.1,
+        "parts": [
+          "hi",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hi \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Huh?",
+          "Hi",
+          "Hi",
+          "Bye.",
+          "Tariqa.",
+          "Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "kind": "positive",
+        "latch_s": null,
+        "parts": [
+          "hi",
+          3.2,
+          "parker"
+        ],
+        "phrase": "hi \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Huh?",
+          "Hi",
+          "Hi",
+          "Bye.",
+          "turret",
+          "Paracure",
+          "Tarakur"
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "um, hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "um, hey \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Um",
+          "Um, hey.",
+          "Um, Hey",
+          "Hey",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Harker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "um, hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "um, hey \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Um",
+          "Um, hey.",
+          "Um, hey.",
+          "Hey",
+          "Harker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 2.3,
+        "parts": [
+          "um, hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "um, hey \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Come.",
+          "I'm, hey.",
+          "I'm, hey.",
+          "Hey",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "positive",
+        "latch_s": 3.1,
+        "parts": [
+          "um, hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "um, hey \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Come.",
+          "Um, hey.",
+          "Um, hey.",
+          "Hey",
+          "Thank you.",
+          "Haka",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "kind": "positive",
+        "latch_s": null,
+        "parts": [
+          "um, hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "um, hey \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Oh",
+          "I'm a",
+          "I'm a",
+          "Okay",
+          "Tarko",
+          "Tarker"
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "positive",
+        "latch_s": null,
+        "parts": [
+          "um, hey",
+          3.2,
+          "parker"
+        ],
+        "phrase": "um, hey \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Oh",
+          "I'm Okay",
+          "Um, hey.",
+          "Okay",
+          "Thank you.",
+          "Tarko",
+          "Paracure",
+          "Paracure"
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "stale",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          10.0,
+          "parker"
+        ],
+        "phrase": "hey \u202610.0 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey!",
+          "Hey!",
+          "Hey",
+          "Okay.",
+          "Parker",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "stale",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          10.0,
+          "parker"
+        ],
+        "phrase": "hey \u202610.0 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey!",
+          "Hey",
+          "Hey",
+          "Hey.",
+          "harker",
+          "Parker",
+          "harker"
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "stale",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          10.0,
+          "parker"
+        ],
+        "phrase": "hey \u202610.0 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey.",
+          "Hey",
+          "Hey",
+          "Okay.",
+          "Parker",
+          "Parker",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "stale",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          10.0,
+          "parker"
+        ],
+        "phrase": "hey \u202610.0 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "today.",
+          "Haka",
+          "Parker",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "stale",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          10.0,
+          "parker"
+        ],
+        "phrase": "hey \u202610.0 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "",
+          "Sorry, Kurt.",
+          "Tarker",
+          "Parker"
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "stale",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          10.0,
+          "parker"
+        ],
+        "phrase": "hey \u202610.0 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "Hey.",
+          "TARAKER",
+          "Tarker",
+          "Paracure"
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "reported",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          1.0,
+          "I'm parking the car",
+          2.6,
+          "parker"
+        ],
+        "phrase": "hey \u20261.0 s\u2026 I'm parking the car \u20262.6 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey!",
+          "Hey!",
+          "Hey. I'm part-",
+          "I'm parking the car",
+          "I'm parking the car",
+          "parking the car",
+          "Parker",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "reported",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          1.0,
+          "I'm parking the car",
+          2.6,
+          "parker"
+        ],
+        "phrase": "hey \u20261.0 s\u2026 I'm parking the car \u20262.6 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey!",
+          "Hey",
+          "Hey, I'm",
+          "I'm parking the car",
+          "I'm parking the car",
+          "parking the car.",
+          "Thank you very much. Thank you.",
+          "Parker Parker"
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "reported",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          1.0,
+          "I'm parking the car",
+          2.6,
+          "parker"
+        ],
+        "phrase": "hey \u20261.0 s\u2026 I'm parking the car \u20262.6 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey.",
+          "Hey",
+          "Hey... I'm bu-",
+          "I'm parking the car",
+          "I'm parking the car",
+          "parking the car",
+          "",
+          "Haka."
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "reported",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          1.0,
+          "I'm parking the car",
+          2.6,
+          "parker"
+        ],
+        "phrase": "hey \u20261.0 s\u2026 I'm parking the car \u20262.6 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey, I'm...",
+          "I'm parking the car",
+          "I'm parking the car.",
+          "and parking the car.",
+          "uh",
+          "Oh"
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "reported",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          1.0,
+          "I'm parking the car",
+          2.6,
+          "parker"
+        ],
+        "phrase": "hey \u20261.0 s\u2026 I'm parking the car \u20262.6 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey, I'm-",
+          "Okay, time for a change of color.",
+          "I'm Karakazakura.",
+          "Carcassicara",
+          "",
+          "Purr. Purr."
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "kind": "reported",
+        "latch_s": null,
+        "parts": [
+          "hey",
+          1.0,
+          "I'm parking the car",
+          2.6,
+          "parker"
+        ],
+        "phrase": "hey \u20261.0 s\u2026 I'm parking the car \u20262.6 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey, I'm",
+          "Okay, time for a king's account.",
+          "I'm Pirake Zikara.",
+          "Carcassicara",
+          "up. Thank you.",
+          "Okay."
+        ],
+        "voice": "Fred",
+        "woke": false
+      },
+      {
+        "heard": "Parker",
+        "kind": "reported",
+        "latch_s": 2.3,
+        "parts": [
+          "a",
+          3.2,
+          "parker"
+        ],
+        "phrase": "a \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Okay.",
+          "Hey",
+          "Hey.",
+          "Bye.",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Parker",
+        "kind": "reported",
+        "latch_s": 2.3,
+        "parts": [
+          "a",
+          3.2,
+          "parker"
+        ],
+        "phrase": "a \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Okay.",
+          "Hey",
+          "Hey",
+          "Okay.",
+          "Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "kind": "reported",
+        "latch_s": null,
+        "parts": [
+          "a",
+          3.2,
+          "parker"
+        ],
+        "phrase": "a \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Okay.",
+          "Okay.",
+          "Okay.",
+          "Thank you.",
+          "Haka",
+          "Parker",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "Parker",
+        "kind": "reported",
+        "latch_s": 3.1,
+        "parts": [
+          "a",
+          3.2,
+          "parker"
+        ],
+        "phrase": "a \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Okay.",
+          "Hey",
+          "Hey",
+          "Bye.",
+          "Haka",
+          "Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Tarker",
+        "kind": "reported",
+        "latch_s": 2.3,
+        "parts": [
+          "a",
+          3.2,
+          "parker"
+        ],
+        "phrase": "a \u20263.2 s\u2026 parker",
+        "rate": 175,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "",
+          "Tarker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "kind": "reported",
+        "latch_s": null,
+        "parts": [
+          "a",
+          3.2,
+          "parker"
+        ],
+        "phrase": "a \u20263.2 s\u2026 parker",
+        "rate": 120,
+        "transcripts": [
+          "Hey",
+          "Hey",
+          "Hey",
+          "",
+          "Pyraku",
+          "TariKo",
+          "Paracure"
+        ],
+        "voice": "Fred",
+        "woke": false
+      }
+    ],
+    "stale": 6,
+    "stale_quiet": 6,
+    "stale_wakes": 0,
+    "status": "ran"
+  },
+  "provenance": {
+    "audio": "macOS say synthesized speech only; no private audio",
+    "model": "local faster-whisper"
+  },
+  "recall": {
+    "misses": 0,
+    "positives": 48,
+    "recall": 1.0,
+    "rows": [
+      {
+        "heard": "Hey Parker!",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parker",
+        "transcripts": [
+          "Hey",
+          "Hey Parker!"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parker",
+        "transcripts": [
+          "Hey",
+          "Hey Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parker",
+        "transcripts": [
+          "Hey!",
+          "Hey Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parker",
+        "transcripts": [
+          "Hey",
+          "Hey Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parker",
+        "transcripts": [
+          "Hey",
+          "Hey Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker!",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parker",
+        "transcripts": [
+          "Hey!",
+          "Hey Parker!"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey, parker.",
+        "transcripts": [
+          "Hey!",
+          "Hey, Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "You",
+        "text": "hey, parker.",
+        "transcripts": [
+          "Hey!",
+          "Hey, Parker",
+          "You",
+          "You"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey, parker.",
+        "transcripts": [
+          "Hey.",
+          "Hey! Park!",
+          "Hey, Parker!"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey, parker.",
+        "transcripts": [
+          "Hey.",
+          "Hey",
+          "Hey, Parker!"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey, parker.",
+        "transcripts": [
+          "Hey",
+          "Hey, Parker.",
+          "",
+          ""
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey, parker.",
+        "transcripts": [
+          "Hey",
+          "Hey, Purr.",
+          "Hey Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey... parker",
+        "transcripts": [
+          "Hey!",
+          "Hey, Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "You",
+        "text": "hey... parker",
+        "transcripts": [
+          "Hey!",
+          "Hey, Parker",
+          "You",
+          "You"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey... parker",
+        "transcripts": [
+          "Hey.",
+          "Hey! Park!",
+          "Hey, Parker!"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey... parker",
+        "transcripts": [
+          "Hey.",
+          "Hey",
+          "Hey, Parker!"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey... parker",
+        "transcripts": [
+          "Hey",
+          "Hey, Parker.",
+          "",
+          ""
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey... parker",
+        "transcripts": [
+          "Hey",
+          "Hey, Purr.",
+          "Hey Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parka",
+        "transcripts": [
+          "Hey",
+          "Hey, Parker."
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parka",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parka",
+        "transcripts": [
+          "Hey",
+          "Hey Parka"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parka",
+        "transcripts": [
+          "Hey!",
+          "Hey Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parka",
+        "transcripts": [
+          "Hey",
+          "Hey Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parka",
+        "transcripts": [
+          "Hey",
+          "Hey, part of",
+          "Hey, Parker."
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey parka",
+        "transcripts": [
+          "Hey!",
+          "Hey, Parker."
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker!",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey par ker",
+        "transcripts": [
+          "Hey",
+          "Hey Parker!"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey par ker",
+        "transcripts": [
+          "Hey.",
+          "Hey Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker!",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey par ker",
+        "transcripts": [
+          "Hey",
+          "Hey Parker!"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey par ker",
+        "transcripts": [
+          "Hey",
+          "Hey Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey par ker",
+        "transcripts": [
+          "Hey!",
+          "Hey Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hey par ker",
+        "transcripts": [
+          "Hey!",
+          "Hey Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker!",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hi parker",
+        "transcripts": [
+          "Hi",
+          "Hi Parker!"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hi parker",
+        "transcripts": [
+          "Hi",
+          "Hi Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hi parker",
+        "transcripts": [
+          "Hi",
+          "Hi Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hi parker",
+        "transcripts": [
+          "Hi",
+          "Hi Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hi Parker!",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "hi parker",
+        "transcripts": [
+          "Hi",
+          "Hi Parker!"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hi, Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "hi parker",
+        "transcripts": [
+          "Hi.",
+          "Hi, Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker, Ken",
+        "rate": 175,
+        "tail": "ken",
+        "tail_after": "and you helped me.",
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Hey",
+          "Hey Parker, Ken",
+          "And you helped me.",
+          "and you helped me.",
+          "and you helped me."
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "Can you help me?",
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Hey",
+          "Hey Parker",
+          "Can you help me?",
+          "can you help me?",
+          "Can you help me?"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "Can you help me?",
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Hey",
+          "Hey Parker",
+          "Can you help me?",
+          "Can you help me?",
+          "Can you help me?"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey Parker!",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "Can you help me?",
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Hey",
+          "Hey Parker!",
+          "Can you help me?",
+          "Can you help me?",
+          "Can you help me?"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker.",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "New Help Me",
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Hey!",
+          "Hey, Parker.",
+          "new health",
+          "New Help Me",
+          "New Help Me"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker!",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "You help me",
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Hey!",
+          "Hey, Parker!",
+          "And you'll have...",
+          "You help me.",
+          "You help me"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Um, Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "um, hey parker",
+        "transcripts": [
+          "Um",
+          "Um, hey park",
+          "Um, Hey Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Um, Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "um, hey parker",
+        "transcripts": [
+          "Um",
+          "Um, head part.",
+          "Um, Hey Parker"
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Um, Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "um, hey parker",
+        "transcripts": [
+          "Come.",
+          "Um, hay park.",
+          "Um, Hey Parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Um, hay parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "um, hey parker",
+        "transcripts": [
+          "Come.",
+          "Um, hey, pa",
+          "Um, hay parker"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "Um, Hey Parker",
+        "rate": 175,
+        "tail": "",
+        "tail_after": "",
+        "text": "um, hey parker",
+        "transcripts": [
+          "Huh?",
+          "Um, hey",
+          "Um, Hey Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      },
+      {
+        "heard": "Um, Hey Parker",
+        "rate": 120,
+        "tail": "",
+        "tail_after": "",
+        "text": "um, hey parker",
+        "transcripts": [
+          "Oh",
+          "Um, hey",
+          "Um, Hey Parker"
+        ],
+        "voice": "Fred",
+        "woke": true
+      }
+    ],
+    "status": "ran",
+    "woke": 48
+  },
+  "soak": {
+    "audio_minutes": 4.0,
+    "cpu_fraction_of_realtime": 2.411,
+    "cpu_seconds_per_audio_minute": 144.65,
+    "false_wakes": [
+      {
+        "heard": "Hey, I'm Parker something. Hey.",
+        "matched": "hey i'm parker",
+        "tail": "something hey"
+      }
+    ],
+    "hops_gated_by_background": 0,
+    "infer_ms_max": 1960.8,
+    "infer_ms_p50": 423.0,
+    "infer_ms_p95": 500.4,
+    "inferences": 312,
+    "inferences_per_audio_minute": 78.0,
+    "status": "ran",
+    "wall_seconds": 140.8
+  }
+}

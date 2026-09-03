@@ -68,10 +68,12 @@ def test_he_cuts_in_halfway_and_the_owed_nudge_waits_for_his_mouth(voice_world):
         assert creates_before == 2  # greeting + the ack's nudge
 
         fake.feed(model_said("I checked — Alcaraz plays the "))
-        assert ws.receive_json() == {
-            "type": "assistant_transcript_delta",
-            "text": "I checked — Alcaraz plays the ",
-        }
+        delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
+        assert delta["text"] == "I checked — Alcaraz plays the "
         fake.feed(speech_started())  # he cuts in
         assert ws.receive_json() == {"type": "clear"}
 
@@ -139,15 +141,15 @@ def test_barge_in_over_the_wrapup_with_an_answer_already_queued(
         monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 30.0)
 
         fake.feed(speech_started())
-        assert ws.receive_json() == {"type": "clear"}
+        browser_frame(ws, "clear", working=[("search", "started")])
         gate.set()  # the answer lands while he is mid-word
         assert _wait_until(lambda: len(lookup_notes(fake)) == 1)
 
         fake.feed(user_said("no wait — the tennis, when's it on"))
-        assert ws.receive_json() == {
-            "type": "user_transcript",
-            "text": "no wait — the tennis, when's it on",
-        }
+        transcript = browser_frame(
+            ws, "user_transcript", working=[("search", "done")]
+        )
+        assert transcript["text"] == "no wait — the tennis, when's it on"
         time.sleep(0.3)
         assert _response_creates(fake) == 2  # two owed nudges, zero fired
 
@@ -203,10 +205,10 @@ def test_he_changes_the_subject_before_the_answer_lands(voice_world):
         assert _wait_until(lambda: _response_creates(fake) == 2)
 
         fake.feed(user_said("actually — is Sarah still coming Sunday?"))
-        assert ws.receive_json() == {
-            "type": "user_transcript",
-            "text": "actually — is Sarah still coming Sunday?",
-        }
+        transcript = browser_frame(
+            ws, "user_transcript", working=[("search", "started")]
+        )
+        assert transcript["text"] == "actually — is Sarah still coming Sunday?"
         fake.feed(model_said("She is, Sunday lunch."))
         assert ws.receive_json() == {
             "type": "assistant_transcript_delta",
@@ -227,8 +229,7 @@ def test_he_changes_the_subject_before_the_answer_lands(voice_world):
         assert "never an instruction" in note
         assert "US Open schedule" not in note  # sources are browser-only
 
-        chips = ws.receive_json()
-        assert chips["type"] == "sources"
+        chips = browser_frame(ws, "sources", working=[("search", "done")])
         assert chips["items"][0]["label"] == "US Open schedule"
 
         assert _wait_until(lambda: _response_creates(fake) == 3)
@@ -365,10 +366,10 @@ def test_stop_kills_the_ramble_but_not_the_answer_he_wanted(voice_world):
         assert _acks(fake)[0]["status"] == "working"
 
         fake.feed(model_said("Well, the forecast today has a band of cloud moving "))
-        assert ws.receive_json() == {
-            "type": "assistant_transcript_delta",
-            "text": "Well, the forecast today has a band of cloud moving ",
-        }
+        delta = browser_frame(
+            ws, "assistant_transcript_delta", working=[("search", "started")]
+        )
+        assert delta["text"] == "Well, the forecast today has a band of cloud moving "
 
         ws.send_json({"type": "stop"})
         assert ws.receive_json() == {"type": "clear"}
@@ -393,10 +394,11 @@ def test_stop_kills_the_ramble_but_not_the_answer_he_wanted(voice_world):
         assert _response_creates(fake) == 3
 
         fake.feed(model_said("Twenty-four and clear — good walking weather."))
-        assert ws.receive_json() == {
-            "type": "assistant_transcript_delta",
-            "text": "Twenty-four and clear — good walking weather.",
-        }  # the line survived the Stop
+        delta = browser_frame(
+            ws, "assistant_transcript_delta", working=[("search", "done")]
+        )
+        assert delta["text"] == "Twenty-four and clear — good walking weather."
+        # the line survived the Stop
         ws.send_json({"type": "end"})
 
 
@@ -493,6 +495,14 @@ def test_he_asks_it_again_an_hour_later(voice_world):
         assert _wait_until(
             lambda: _response_creates(fake) == before_first_safe_point + 1
         )
+        fake.feed(model_said("Clear and twenty-four at the beach."))
+        first_delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
+        assert first_delta["text"] == "Clear and twenty-four at the beach."
+        fake.feed(done())
         time.sleep(0.25)
         assert _response_creates(fake) == before_first_safe_point + 1
 
@@ -515,6 +525,14 @@ def test_he_asks_it_again_an_hour_later(voice_world):
         assert _wait_until(
             lambda: _response_creates(fake) == before_second_safe_point + 1
         )
+        fake.feed(model_said("It is still clear at the beach."))
+        second_delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
+        assert second_delta["text"] == "It is still clear at the beach."
+        fake.feed(done())
         time.sleep(0.25)
         assert _response_creates(fake) == before_second_safe_point + 1
         ws.send_json({"type": "end"})

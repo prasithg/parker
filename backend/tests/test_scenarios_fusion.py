@@ -85,8 +85,9 @@ def test_weather_question_is_really_a_walk_question(voice_world):
         fake.feed(done())
         assert _wait_until(lambda: _response_creates(fake) == 3)
 
-        chips = ws.receive_json()
-        assert chips["type"] == "sources"
+        chips = browser_frame(
+            ws, "sources", working=[("search", "started"), ("search", "done")]
+        )
         assert chips["items"][0]["label"] == "Weather service"
         assert chips["items"][0]["fresh_as_of"] == "today 7am"
 
@@ -176,17 +177,16 @@ def test_alcaraz_then_the_channel_then_remind_me(voice_world):
         assert ack["status"] == "staged"
         assert "confirmation" in ack["detail"]
 
-        chips_one = ws.receive_json()
-        chips_two = ws.receive_json()
-        assert [chips_one["type"], chips_two["type"]] == ["sources", "sources"]
+        chips_one = browser_frame(
+            ws, "sources", working=[("search", "started"), ("search", "done")]
+        )
+        chips_two = browser_frame(
+            ws, "sources", working=[("search", "started"), ("search", "done")]
+        )
         assert chips_one["items"][0]["label"] == "US Open schedule"
         assert chips_two["items"][0]["label"] == "TV listings"
 
-        staged_note = ws.receive_json()
-        assert staged_note == {
-            "type": "proposal_staged",
-            "label": "tell me when Alcaraz starts",
-        }
+        assert_staged(ws.receive_json(), "tell me when Alcaraz starts")
         ws.send_json({"type": "end"})
 
     assert _wait_until(lambda: realtime._active_bridges == 0)  # finalize landed
@@ -240,8 +240,13 @@ def test_pharmacy_hours_with_no_med_data_and_no_brain_tonight(voice_world):
         assert _wait_until(lambda: _response_creates(fake) == 3)  # failure earns a turn
 
         fake.feed(model_said("Right."))
-        # No sources, no notice ever queued ahead of it.
-        assert ws.receive_json()["type"] == "assistant_transcript_delta"
+        # Only the honest presence pair (started -> FAILED) precedes the
+        # delta — no sources, no notice ever queued ahead of it.
+        browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "failed")],
+        )
         ws.send_json({"type": "end"})
 
 
@@ -287,7 +292,7 @@ def test_a_pharmacy_answer_that_tries_to_dose_him(voice_world, monkeypatch):
     # The REAL search worker, with only the brain faked: this asserts the
     # bridge-level consequences of the worker's own screening.
     monkeypatch.setattr(settings, "anthropic_api_key", "test-anthropic-key")
-    monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda: FakeBrain())
+    monkeypatch.setattr("app.brain.build.build_brain_adapter", lambda **_: FakeBrain())
 
     fake = world.script([])
     with world.connect() as ws:
@@ -310,9 +315,14 @@ def test_a_pharmacy_answer_that_tries_to_dose_him(voice_world, monkeypatch):
         assert "never an instruction" in note
 
         fake.feed(model_said("Right."))
-        # A guarded answer loses its sources with it: the transcript delta
-        # is the very next browser frame, so no sources frame was queued.
-        assert ws.receive_json()["type"] == "assistant_transcript_delta"
+        # A guarded answer loses its sources with it: past the presence
+        # pair, the transcript delta is the very next browser frame — no
+        # sources frame was ever queued.
+        browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
         ws.send_json({"type": "end"})
 
     assert _wait_until(lambda: realtime._active_bridges == 0)  # finalize landed
@@ -367,10 +377,7 @@ def test_sarah_is_coming_sunday_and_he_wants_to_say_yes(voice_world, monkeypatch
         )
         assert _wait_until(lambda: _function_outputs(fake))
         assert json.loads(_function_outputs(fake)[0]["item"]["output"])["status"] == "staged"
-        assert ws.receive_json() == {
-            "type": "proposal_staged",
-            "label": "tell Sarah about Sunday",
-        }
+        assert_staged(ws.receive_json(), "tell Sarah about Sunday")
         ws.send_json({"type": "end"})
 
     from app.db.models import CallLog, OutboxMessage, StagedAction
@@ -543,11 +550,7 @@ def test_writing_down_a_question_for_thursdays_neurologist(voice_world):
         assert "not allowed" in outputs["prop-appt"]["detail"]
         assert outputs["prop-rem"]["status"] == "staged"
 
-        staged_note = ws.receive_json()
-        assert staged_note == {
-            "type": "proposal_staged",
-            "label": "write my questions Wednesday night",
-        }
+        assert_staged(ws.receive_json(), "write my questions Wednesday night")
 
         # The two acks share the nudge budget: one fired, one deferred.
         assert _wait_until(lambda: _response_creates(fake) == 2)
@@ -622,6 +625,11 @@ def test_the_hermes_box_wakes_up_late_and_the_card_arrives_after_the_answer(
         assert world.search_calls == ["who sang Mere Sapno Ki Rani?"]
 
         fake.feed(model_said("Kishore Kumar."))
-        # A slow context source is not an error he hears about.
-        assert ws.receive_json()["type"] == "assistant_transcript_delta"
+        # A slow context source is not an error he hears about — only the
+        # lookup's own presence pair precedes the delta.
+        browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
         ws.send_json({"type": "end"})

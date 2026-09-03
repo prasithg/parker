@@ -683,9 +683,20 @@ def main() -> int:
     parser.add_argument(
         "--as-of",
         default=None,
-        help="judge source-report freshness against this YYYY-MM-DD instead of today (tests only)",
+        help=(
+            "judge source-report freshness against this YYYY-MM-DD instead of today "
+            "(tests only; refused together with --write-report, which must never mint "
+            "a dated report from evidence that fails the gate today)"
+        ),
     )
     args = parser.parse_args()
+    if args.as_of and args.write_report:
+        # Exit 2 via argparse before any evaluation or file write: a gate
+        # verdict (0/1) must never be confused with a refused flag pair.
+        parser.error(
+            "--as-of is a test-only freshness override and cannot mint a dated report; "
+            "drop --as-of or --write-report"
+        )
 
     as_of = date.fromisoformat(args.as_of) if args.as_of else None
     result = evaluate_release_readiness(as_of=as_of)
