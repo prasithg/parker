@@ -495,6 +495,14 @@ def test_he_asks_it_again_an_hour_later(voice_world):
         assert _wait_until(
             lambda: _response_creates(fake) == before_first_safe_point + 1
         )
+        fake.feed(model_said("Clear and twenty-four at the beach."))
+        first_delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
+        assert first_delta["text"] == "Clear and twenty-four at the beach."
+        fake.feed(done())
         time.sleep(0.25)
         assert _response_creates(fake) == before_first_safe_point + 1
 
@@ -517,6 +525,14 @@ def test_he_asks_it_again_an_hour_later(voice_world):
         assert _wait_until(
             lambda: _response_creates(fake) == before_second_safe_point + 1
         )
+        fake.feed(model_said("It is still clear at the beach."))
+        second_delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
+        assert second_delta["text"] == "It is still clear at the beach."
+        fake.feed(done())
         time.sleep(0.25)
         assert _response_creates(fake) == before_second_safe_point + 1
         ws.send_json({"type": "end"})

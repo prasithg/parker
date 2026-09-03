@@ -120,15 +120,15 @@ Some inert legacy modules from an earlier phone-call prototype remain (`calls/`,
 | --- | --- | --- |
 | Backend | Python 3.11 / FastAPI | — |
 | Storage | SQLite (`backend/parker.db`), all local | — |
-| Speech-to-text | faster-whisper on-device, personal-lexicon biasing, optional dep | realtime cloud speech (family opt-in), voice-activity end-pointing |
+| Speech-to-text | faster-whisper on-device for local wake/talk with personal-lexicon biasing; opt-in gpt-realtime audio/transcription after wake | additional local/cloud ASR fallbacks and measured per-user routing |
 | Repair choices | n-best hypothesis probing + claude-haiku (opt-in), deterministic fallback | few-shot from consented repair history |
 | Learning | consent-gated repair-event capture, personal lexicon | mined lexicon suggestions, per-user fine-tunes |
-| Conversational brain | `BrainAdapter` contract; Claude v0 (`claude-sonnet-5`, opt-in via `ANTHROPIC_API_KEY`), OpenClaw gateway adapter + skill execution seam (fake-gateway tested; real instance is a deployment step), deterministic stub keyless | realtime speech models (family opt-in) |
+| Conversational brain | `BrainAdapter` contract; Claude v0 (`claude-sonnet-5`, opt-in via `ANTHROPIC_API_KEY`), OpenClaw gateway adapter + skill execution seam (fake-gateway tested; real instance is a deployment step), deterministic stub keyless; gpt-realtime on the opt-in companion lane | additional provider/local-fallback lanes |
 | Family/caregiver view | `/parker/review/ui` single-file page, opt-in Basic auth | richer admin/skills dashboard |
 | Eval harness | real-audio harness + full synthetic suite (see above) | pilot-voice longitudinal tracking, human-graded repair quality |
-| Voice out / live loop | macOS `say` TTS + energy-VAD end-pointing in `make talk-loop`, per-turn latency line; no external send path exists | wake word, realtime models (gpt-realtime family) |
+| Voice out / live loop | macOS `say` + energy-VAD in `make talk-loop`; local wake dormancy and gpt-realtime full duplex on the opt-in companion; no external send path exists | physical-room output tuning and longitudinal latency evidence |
 | Companion / operator surfaces | `/parker/converse`: power + CC only, local wake dormancy into Parker-owned full-duplex realtime; `/parker/converse/lab`: manual Start/Done, transcript, text fallback, sources, browser TTS, and explicit Stop for family testing | physical Reachy shell and household deployment |
-| Live conversation (opt-in) | the fast-voice orchestrator: gpt-realtime full duplex behind Parker's server relay (semantic end-pointing, native barge-in), background search/context workers injecting mid-conversation via one gated emitter, session lifecycle + persisted call log/topic memory, propose_action-only tool surface staged through the same pipeline, post-hoc transcript guard, Dad-screen mirror; needs `OPENAI_API_KEY`. Scenario-tested by the Ravi deck (`make eval-voice-scenarios`) | wake word, spoken confirmation in-lane, realtime outcome instrumentation |
+| Live conversation (opt-in) | the fast-voice orchestrator: local wake into gpt-realtime full duplex behind Parker's server relay (semantic end-pointing, native barge-in), background search/context workers injecting mid-conversation via one gated emitter, spoken confirmation, session lifecycle + persisted call log/topic memory, propose_action-only staging, transcript guard, and Dad-screen mirror; needs `OPENAI_API_KEY`. Scenario-tested by the Ravi deck (`make eval-voice-scenarios`) | additional realtime providers and real-household longitudinal quality evidence |
 
 ## Parker as an app (beta)
 

@@ -80,8 +80,14 @@ class CompanionPower:
     save_state: str = "idle"  # idle | pending | saved | failed
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _persist_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _transition: int = 0
     _next_id: int = 1
     _sockets: dict[int, _Registration] = field(default_factory=dict, repr=False)
+    # Superseded realtime bridges drain asynchronously so a replacement can
+    # open immediately. They remain power-owned until their handler observes
+    # true provider quiescence and unregisters them; a later OFF must include
+    # them in its boundary.
+    _retired: dict[int, _Registration] = field(default_factory=dict, repr=False)
 
     # ------------------------------------------------------------------
     # Transitions
@@ -93,12 +99,14 @@ class CompanionPower:
         """Turn Parker on for *client_id*; returns the owner credentials.
 
         ``persist`` writes the durable ``power_on`` flag (raising on
-        failure). It runs under the lock so two tabs claiming at once are
-        serialized and only one becomes the owner.
+        failure). Durable writes are serialized, but the state lock is not
+        held across I/O: OFF can always detach every socket immediately. A
+        transition ticket prevents a pre-OFF claim from installing itself
+        after its delayed write returns.
         """
 
         client_id = (client_id or "")[:64]
-        with self._persist_lock, self._lock:
+        with self._lock:
             # Every registered socket belongs to the current owner (claim
             # and release both clear the registry), so "any live socket"
             # means "the current owner is actually listening".
@@ -113,6 +121,10 @@ class CompanionPower:
                     "elsewhere",
                     "Parker is already on and listening on another screen.",
                 )
+            self._transition += 1
+            transition = self._transition
+
+        with self._persist_lock:
             try:
                 persist(True)
             except Exception:  # noqa: BLE001 — the reason is logged; the page hears "not saved"
@@ -120,18 +132,39 @@ class CompanionPower:
                 raise PowerRefused(
                     503, "not_saved", "Parker could not save the switch — nothing is on."
                 )
-            # A stale owner (a page that claimed but never connected, or a
-            # previous generation of this same page) is displaced here.
-            previous = list(self._sockets.values())
-            self._sockets.clear()
-            self.generation += 1
-            self.owner_token = secrets.token_urlsafe(24)
-            self.owner_client = client_id
-            self.on = True
-            self.released = False
-            self.save_state = "saved"
-            gen = self.generation
-            token = self.owner_token
+            with self._lock:
+                if transition != self._transition:
+                    raise PowerRefused(
+                        503,
+                        "not_saved",
+                        "Parker was turned off before the switch finished — nothing is on.",
+                    )
+                # An old owner may have connected while this write was in
+                # flight. Never displace a different screen that became live.
+                if (
+                    self.on
+                    and self.owner_token is not None
+                    and self.owner_client != client_id
+                    and self._sockets
+                ):
+                    raise PowerRefused(
+                        409,
+                        "elsewhere",
+                        "Parker is already on and listening on another screen.",
+                    )
+                # A stale owner (a page that claimed but never connected, or
+                # a previous generation of this same page) drains here.
+                previous = list(self._sockets.values())
+                self._retired.update(self._sockets)
+                self._sockets.clear()
+                self.generation += 1
+                self.owner_token = secrets.token_urlsafe(24)
+                self.owner_client = client_id
+                self.on = True
+                self.released = False
+                self.save_state = "saved"
+                gen = self.generation
+                token = self.owner_token
         return {
             "power_on": True,
             "owner": token,
@@ -152,6 +185,7 @@ class CompanionPower:
         """
 
         with self._lock:
+            self._transition += 1
             self.on = False
             self.released = True
             self.generation += 1
@@ -159,8 +193,9 @@ class CompanionPower:
             self.owner_token = None
             self.owner_client = ""
             self.save_state = "pending"
-            revoked = list(self._sockets.values())
+            self._retired.update(self._sockets)
             self._sockets.clear()
+            revoked = list(self._retired.values())
         saved: Optional[bool] = None
         if persist is not None:
             outcome = self.persist_release(generation, persist)
@@ -264,6 +299,7 @@ class CompanionPower:
                 for sid, reg in list(self._sockets.items()):
                     if reg.kind == "realtime":
                         superseded.append(reg)
+                        self._retired[sid] = reg
                         del self._sockets[sid]
             sid = self._next_id
             self._next_id += 1
@@ -279,6 +315,7 @@ class CompanionPower:
     def unregister(self, sid: int) -> None:
         with self._lock:
             self._sockets.pop(sid, None)
+            self._retired.pop(sid, None)
 
     def live_sockets(self) -> dict[str, int]:
         with self._lock:

@@ -398,9 +398,10 @@ MY_DAY_TOOL: dict[str, Any] = {
 MY_DAY_LIMIT_LINE = (
     "Parker keeps no calendar — only the reminders and notes written down here."
 )
+_CountedLine = tuple[str, int]
 
 
-def _my_day_medication_lines(db: Any, now_local: Any = None) -> list[str]:
+def _my_day_medication_lines(db: Any, now_local: Any = None) -> list[_CountedLine]:
     """Every active medicine's scheduled times — names and times only, never a dose.
 
     ``now_local`` is the shared source signature; schedules are daily, so it
@@ -408,14 +409,14 @@ def _my_day_medication_lines(db: Any, now_local: Any = None) -> list[str]:
 
     from app.meds.tracker import _parse_schedule_times, get_active_medications
 
-    lines: list[str] = []
+    lines: list[_CountedLine] = []
     for medication in get_active_medications(db):
         times = _parse_schedule_times(medication.schedule_times)
         if not times:
             continue
         spoken = [_speakable_time(t) for t in times]
         joined = ", ".join(spoken[:-1]) + f" and {spoken[-1]}" if len(spoken) > 1 else spoken[0]
-        lines.append(f"His {medication.name} is scheduled at {joined}.")
+        lines.append((f"His {medication.name} is scheduled at {joined}.", 1))
     return lines
 
 
@@ -450,7 +451,7 @@ def _local_day_start(now_local: Any) -> Any:
     return now_local.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
+def _my_day_reminder_lines(db: Any, now_local: Any) -> list[_CountedLine]:
     """Reminders by when they are DUE on his local day, not when he set them.
 
     Fresh review of the my_day slice (P0.3): selecting on ``created_at``
@@ -510,8 +511,18 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
         db.query(CapturedIntent)
         .filter(CapturedIntent.status == "pending")
         .filter(CapturedIntent.requested_action.in_(("remind", "reminder")))
-        .filter(CapturedIntent.due_at.isnot(None))
-        .filter(CapturedIntent.due_at < _to_stored(day_after))
+        .filter(
+            or_(
+                and_(
+                    CapturedIntent.due_at.is_(None),
+                    CapturedIntent.created_at >= now_utc - timedelta(days=2),
+                ),
+                and_(
+                    CapturedIntent.due_at.isnot(None),
+                    CapturedIntent.due_at < _to_stored(day_after),
+                ),
+            )
+        )
         .filter(~CapturedIntent.resolutions.any(ResolutionResult.staged_actions.any()))
         .order_by(CapturedIntent.due_at.asc(), CapturedIntent.created_at.desc())
         .all()
@@ -562,13 +573,16 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
     ordered = today_lines + tomorrow_lines + undated_lines + open_lines
     if len(ordered) > 6:
         more = len(ordered) - 6
-        ordered = ordered[:6] + [
-            f"…and {more} more reminders Parker did not list here — never say he has none."
+        return [(line, 1) for line in ordered[:6]] + [
+            (
+                f"…and {more} more reminders Parker did not list here — never say he has none.",
+                more,
+            )
         ]
-    return ordered
+    return [(line, 1) for line in ordered]
 
 
-def _my_day_note_lines(db: Any, now_local: Any) -> list[str]:
+def _my_day_note_lines(db: Any, now_local: Any) -> list[_CountedLine]:
     """Family notes that read like plans, dated by the day they were written.
 
     Read straight from the memory table — the context-card bullets carry
@@ -623,11 +637,14 @@ def _my_day_note_lines(db: Any, now_local: Any) -> list[str]:
         lines.append(line)
     if len(lines) > 4:
         omitted = len(lines) - 4
-        lines = lines[:4] + [
-            f"…and {omitted} more plan-like notes Parker did not list here — "
-            "never say he has none."
+        return [(line, 1) for line in lines[:4]] + [
+            (
+                f"…and {omitted} more plan-like notes Parker did not list here — "
+                "never say he has none.",
+                omitted,
+            )
         ]
-    return lines
+    return [(line, 1) for line in lines]
 
 
 def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerResult:
@@ -645,7 +662,9 @@ def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerR
     started = time.time()
     tz = home_timezone()
     now_local = (now if now is not None else datetime.now(tz)).astimezone(tz)
-    lines: list[str] = [f"Right now it is {local_date_line(now_local)}."]
+    lines: list[_CountedLine] = [
+        (f"Right now it is {local_date_line(now_local)}.", 0)
+    ]
     db = None
     failed_sources: list[str] = []
     try:
@@ -656,7 +675,12 @@ def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerR
             ("notes", _my_day_note_lines),
         ):
             try:
-                lines.extend(source(db, now_local))
+                for item in source(db, now_local):
+                    if isinstance(item, tuple):
+                        text, represented = item
+                    else:  # test/custom source compatibility
+                        text, represented = str(item), 1
+                    lines.append((text, max(0, int(represented))))
             except Exception:  # noqa: BLE001 — one failing source never kills the answer
                 logger.debug("my_day source %s failed", name, exc_info=True)
                 failed_sources.append(name)
@@ -674,21 +698,29 @@ def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerR
                 db.close()
             except Exception:  # noqa: BLE001
                 pass
-    safe = [line for line in lines if not speech_violates_medical_boundary(line)]
+    safe = [item for item in lines if not speech_violates_medical_boundary(item[0])]
     # Cap data before adding source-health truth; a busy day must never hide
     # that one source failed and invite the model to deny records it could not read.
     if len(safe) > 11:
-        dropped = len(safe) - 10
-        safe = safe[:10] + [f"…and {dropped} more Parker did not list here — never say he has none."]
+        dropped = sum(represented for _line, represented in safe[10:])
+        safe = safe[:10] + [
+            (
+                f"…and {dropped} more Parker did not list here — never say he has none.",
+                dropped,
+            )
+        ]
     if failed_sources:
         safe.append(
-            "Parker could not read his " + " and ".join(failed_sources)
-            + " just now — never say he has none; say you couldn't check those."
+            (
+                "Parker could not read his " + " and ".join(failed_sources)
+                + " just now — never say he has none; say you couldn't check those.",
+                0,
+            )
         )
     elif len(safe) == 1:
-        safe.append("Nothing is on record for him today — no reminders and no notes.")
-    safe.append(MY_DAY_LIMIT_LINE)
-    speech = "\n".join(safe)
+        safe.append(("Nothing is on record for him today — no reminders and no notes.", 0))
+    safe.append((MY_DAY_LIMIT_LINE, 0))
+    speech = "\n".join(line for line, _represented in safe)
     if speech_violates_medical_boundary(speech):
         speech = f"Right now it is {local_date_line(now_local)}.\n{MY_DAY_LIMIT_LINE}"
     return WorkerResult(kind="my_day", speech=speech, started_at=started, finished_at=time.time())

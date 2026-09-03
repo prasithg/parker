@@ -561,10 +561,16 @@ async def converse_realtime(websocket: WebSocket) -> None:
         realtime_lane.release_bridge_slot()
         await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
         return
+    bridge_task = asyncio.create_task(bridge.run())
     try:
         # One owner, one line: a reconnect replaces its old bridge.
         await _revoke_all(superseded, "superseded")
-        await bridge.run()
+        await bridge_task
+    except asyncio.CancelledError:
+        # revoke() cancels the bridge supervisor, not this WebSocket handler.
+        # Its shutdown has already closed transport and is awaited below.
+        if not bridge.revoked:
+            raise
     except WebSocketDisconnect:
         pass
     except Exception:  # noqa: BLE001 — never leak internals to the patient page
@@ -577,6 +583,12 @@ async def converse_realtime(websocket: WebSocket) -> None:
         except Exception:  # noqa: BLE001
             pass
     finally:
+        # A superseded line may finish its socket shutdown before a cancelled
+        # provider thread has unwound. Keep its retired registration visible
+        # to a later OFF until true provider quiescence, even under handler
+        # cancellation.
+        quiescing = asyncio.ensure_future(bridge.wait_quiesced())
+        await realtime_lane._await_despite_cancel(quiescing)
         authority.unregister(sid)
         realtime_lane.release_bridge_slot()
 

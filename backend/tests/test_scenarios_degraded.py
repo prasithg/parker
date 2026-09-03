@@ -61,6 +61,14 @@ def test_timed_out_lookup_is_honest_and_the_second_ask_really_retries(
             # the deferred note nudge fires at the next safe point
             fake.feed(done())
             assert _wait_until(lambda: _response_creates(fake) == 3)
+            fake.feed(model_said("That lookup took too long, but I can try again."))
+            first_delta = browser_frame(
+                ws,
+                "assistant_transcript_delta",
+                working=[("search", "started"), ("search", "failed")],
+            )
+            assert "try again" in first_delta["text"]
+            fake.feed(done())  # the result was actually spoken; retry is now fresh
 
             # --- he asks again: a real retry, not "already_working" --------
             fake.feed(done(look_call("is Alcaraz playing tonight?", call_id="look-2")))
@@ -91,16 +99,16 @@ def test_timed_out_lookup_is_honest_and_the_second_ask_really_retries(
             # nothing but the honest presence pairs reached the browser:
             # no sources chips, no hiccup notice — each timed-out ask is
             # started then FAILED, never silently pending.
-            fake.feed(model_said("Still with you."))
+            fake.feed(model_said("That lookup timed out again; I can try later."))
             delta = browser_frame(
                 ws,
                 "assistant_transcript_delta",
                 working=[
                     ("search", "started"), ("search", "failed"),
-                    ("search", "started"), ("search", "failed"),
                 ],
             )
-            assert delta["text"] == "Still with you."
+            assert "timed out again" in delta["text"]
+            fake.feed(done())
             ws.send_json({"type": "end"})
     finally:
         gate.set()

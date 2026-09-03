@@ -515,7 +515,10 @@ def test_a_lookup_in_flight_on_the_old_line_never_lands_on_the_new_one(voice_wor
                 world.settle_open(fakes[1])
                 _revoked(ws_a, "superseded")
                 _page_hangs_up(ws_a, fakes[0])
-                assert _wait_until(lambda: realtime._active_bridges == 1)
+                # The old bridge is retired but still owns its provider
+                # computation. It keeps the overlap slot until true quiescence
+                # so a later OFF can still wait for it.
+                assert realtime._active_bridges == 2
                 assert finished == []  # his answer is still being worked on
 
                 # the same question on the new line: a fresh worker, never
@@ -529,6 +532,7 @@ def test_a_lookup_in_flight_on_the_old_line_never_lands_on_the_new_one(voice_wor
 
                 gate.set()  # both answers come back together
                 assert _wait_until(lambda: len(finished) == 2)
+                assert _wait_until(lambda: realtime._active_bridges == 1)
                 assert _wait_until(lambda: lookup_notes(fakes[1]))
                 # the stale worker has fully unwound (its thread is done)
                 # — so "no note anywhere else" is a settled fact, not a gap

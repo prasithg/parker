@@ -302,6 +302,32 @@ def test_dated_reminder_pending_in_the_pipeline_is_his_day_before_it_stages(db):
     )
 
 
+def test_recent_undated_pending_intent_is_recorded_but_not_set(db):
+    """An unresolved voice reminder with no time is durable and must be named."""
+
+    call = _call(db)
+    result = execute_tool(
+        db,
+        call.id,
+        "capture_intent",
+        {
+            "intent_text": "remind me to water the plants",
+            "requested_action": "remind",
+            "subject": "water the plants",
+        },
+    )
+    intent = db.get(CapturedIntent, result["captured_intent_id"])
+    intent.created_at = _stored(NOW - timedelta(hours=1))
+    db.commit()
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert _line_with(lines, "water the plants") == (
+        "A reminder (recorded; not set yet): water the plants — no time on record."
+    )
+    assert not any(line.startswith("Nothing is on record") for line in lines)
+
+
 @pytest.mark.parametrize("raw", ["2026-09-02T16:00:00-04:00", "2026-09-02T16:00:00"])
 def test_captured_due_time_with_offset_or_as_home_wall_time_is_stored_as_utc(db, raw):
     """P03-2: the only due-time writer (`pipeline._coerce_datetime`) kept the
@@ -457,6 +483,31 @@ def test_more_than_four_plan_notes_report_the_omitted_count(db):
     assert len([line for line in lines if line.startswith("A note")]) == 4
     assert _line_with(lines, "more plan-like notes") == (
         "…and 2 more plan-like notes Parker did not list here — never say he has none."
+    )
+
+
+def test_global_cap_counts_records_inside_source_summaries(db, monkeypatch):
+    """A nested source summary represents its raw records, not one line."""
+
+    for index in range(6):
+        _note(
+            db,
+            f"Appointment plan {index} at {index + 1} PM.",
+            created=NOW - timedelta(minutes=index + 1),
+            memory_type="event",
+            source="manual",
+        )
+    monkeypatch.setattr(
+        realtime_workers,
+        "_my_day_medication_lines",
+        lambda _db, _now: [f"Medication record {index}." for index in range(12)],
+    )
+    monkeypatch.setattr(realtime_workers, "_my_day_reminder_lines", lambda _db, _now: [])
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert _line_with(lines, "more Parker did not list here") == (
+        "…and 9 more Parker did not list here — never say he has none."
     )
 
 

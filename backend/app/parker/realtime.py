@@ -973,6 +973,7 @@ class RealtimeBridge:
         self._closed = False
         self._cancel = CancelToken()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._run_task: Optional[asyncio.Task] = None
         self._connect_task: Optional[asyncio.Task] = None
         self._pump_tasks: set[asyncio.Task] = set()
         self._early_frames: list[Any] = []
@@ -1000,14 +1001,15 @@ class RealtimeBridge:
         # its local playback queue (independent review, 2026-09-01).
         self._audio_sent = False
         self._user_speaking = False
+        self._response_stopped = False
         self._pending_nudge_count = 0
         self._inflight_lookups: set[str] = set()
         self._pending_result_keys: set[str] = set()
         self._active_result_keys: set[str] = set()
         self._worker_tasks: set[asyncio.Task] = set()
-        # Provider-bearing runners are cancelled at their transport token,
-        # not abandoned at the asyncio wrapper. OFF waits for these runners
-        # to unwind before its HTTP acknowledgement.
+        # Provider computations are separate from their cancellable result
+        # delivery runners. OFF cancels delivery immediately, but waits for
+        # the actual computation task (and therefore its thread) to finish.
         self._provider_tasks: set[asyncio.Task] = set()
         self._providers_quiesced = _threading.Event()
         self._providers_quiesced.set()
@@ -1139,14 +1141,21 @@ class RealtimeBridge:
         self._cancel.cancel()  # provider sockets: thread-safe and immediate
 
         def cancel_async_tasks() -> None:
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            run_task = self._run_task
+            if run_task is not None and run_task is not current and not run_task.done():
+                run_task.cancel()
             connect_task = self._connect_task
             if connect_task is not None and not connect_task.done():
                 connect_task.cancel()
             for task in self._pump_tasks:
                 task.cancel()
-            # Cancelling run_in_threadpool abandons the await while its
-            # provider thread keeps running. Keep those runners observable.
-            for task in self._worker_tasks - self._provider_tasks:
+            # Delivery/background tasks are cancellable. Actual provider
+            # computations live in _provider_tasks and remain observable.
+            for task in self._worker_tasks:
                 task.cancel()
 
         loop = self._loop
@@ -1168,9 +1177,15 @@ class RealtimeBridge:
         await run_in_threadpool(self._transport_quiesced.wait)
         await run_in_threadpool(self._providers_quiesced.wait)
 
+    @property
+    def revoked(self) -> bool:
+        return self._closed
+
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
+        self._run_task = asyncio.current_task()
         if self._closed:
+            self._run_task = None
             return
         self._transport_quiesced.clear()
         connect = self._upstream_connect or globals()["connect_openai"]
@@ -1237,7 +1252,10 @@ class RealtimeBridge:
                     raise exc
         finally:
             self._connect_task = None
-            await self._shutdown()
+            try:
+                await self._shutdown()
+            finally:
+                self._run_task = None
 
     async def _shutdown(self) -> None:
         """Persist and close even when the whole handler is being cancelled.
@@ -1279,7 +1297,11 @@ class RealtimeBridge:
             # on provider runners, never on session persistence below.
             self._transport_quiesced.set()
         # 3. Let the pumps and the (now cancelled) worker threads unwind.
-        draining = set(self._pump_tasks) | set(self._worker_tasks)
+        draining = (
+            set(self._pump_tasks)
+            | set(self._worker_tasks)
+            | set(self._provider_tasks)
+        )
         if draining:
             await _await_despite_cancel(
                 asyncio.ensure_future(asyncio.wait(draining, timeout=1.0))
@@ -1488,13 +1510,30 @@ class RealtimeBridge:
             finally:
                 realtime_workers.CURRENT_CANCEL.reset(token)
 
+        # Keep the actual computation distinct from its delivery coroutine.
+        # wait_for() may time out/cancel the delivery await, but shield keeps
+        # this task—and therefore the underlying thread—observable until it
+        # truly exits.
+        self._providers_quiesced.clear()
+        provider_task = asyncio.create_task(_tracked_thread(work_with_cancel))
+        self._provider_tasks.add(provider_task)
+
+        def provider_finished(done: asyncio.Task) -> None:
+            self._provider_tasks.discard(done)
+            if not done.cancelled():
+                done.exception()  # retrieve a late failure after timeout/revoke
+            if not self._provider_tasks:
+                self._providers_quiesced.set()
+
+        provider_task.add_done_callback(provider_finished)
+
         async def runner() -> None:
             requested = time.monotonic()
             delivered = False
             try:
                 try:
                     result = await asyncio.wait_for(
-                        _tracked_thread(work_with_cancel), WORKER_TIMEOUT_SECONDS
+                        asyncio.shield(provider_task), WORKER_TIMEOUT_SECONDS
                     )
                 except asyncio.TimeoutError:
                     result = WorkerResult(kind=kind, question=question, error="it took too long")
@@ -1519,16 +1558,11 @@ class RealtimeBridge:
                     self._pending_result_keys.discard(inflight_key)
                     self._active_result_keys.discard(inflight_key)
 
-        self._providers_quiesced.clear()
         task = asyncio.create_task(runner())
         self._worker_tasks.add(task)
-        self._provider_tasks.add(task)
 
         def finished(done: asyncio.Task) -> None:
             self._worker_tasks.discard(done)
-            self._provider_tasks.discard(done)
-            if not self._provider_tasks:
-                self._providers_quiesced.set()
 
         task.add_done_callback(finished)
 
@@ -1544,6 +1578,8 @@ class RealtimeBridge:
             # Context steers the *next* thing said; it never triggers speech
             # of its own (the model must not narrate the card).
             await self._send_system_item(realtime_workers.render_context_item(result))
+            if self._closed:
+                return
             logger.info("realtime receipt kind=context worker_ms=%d", worker_ms)
             await self._journal(
                 "injection",
@@ -1553,10 +1589,16 @@ class RealtimeBridge:
             return
         if result.kind == "my_day":
             await self._send_system_item(realtime_workers.render_my_day_item(result))
+            if self._closed:
+                return
             await self._browser_send(
                 {"type": "working", "kind": "my_day", "status": "failed" if result.error else "done"}
             )
+            if self._closed:
+                return
             await self._request_nudge(result_key=result_key)
+            if self._closed:
+                return
             await self._journal(
                 "injection",
                 said=result.speech,
@@ -1567,6 +1609,8 @@ class RealtimeBridge:
         await self._send_system_item(
             realtime_workers.render_search_item(result, age_seconds=age_seconds)
         )
+        if self._closed:
+            return
         # Presence truth for the page (2026-08-31 Reachy brief): the lookup
         # that `working` started is now finished — done or honestly failed.
         # Paired with the `started` frame sent at dispatch; the page's
@@ -1579,6 +1623,8 @@ class RealtimeBridge:
                 "status": "failed" if result.error else "done",
             }
         )
+        if self._closed:
+            return
         if result.sources:
             await self._browser_send(
                 {
@@ -1589,6 +1635,8 @@ class RealtimeBridge:
                     ],
                 }
             )
+            if self._closed:
+                return
         logger.info(
             "realtime receipt kind=search worker_ms=%d age_s=%d guard_tripped=%s error=%s",
             worker_ms,
@@ -1597,6 +1645,8 @@ class RealtimeBridge:
             result.error or "none",
         )
         await self._request_nudge(result_key=result_key)
+        if self._closed:
+            return
         asked = self._lookup_asked.pop(" ".join(result.question.lower().split()), None)
         await self._journal(
             "injection",
@@ -1708,6 +1758,7 @@ class RealtimeBridge:
                     json.dumps({"type": "input_audio_buffer.append", "audio": encoded})
                 )
             elif kind == "stop":
+                self._response_stopped = True
                 await self._upstream.send(json.dumps({"type": "response.cancel"}))
                 await self._browser_send({"type": "clear"})
             elif kind == "expression":
@@ -1834,23 +1885,39 @@ class RealtimeBridge:
         if not isinstance(response, dict):
             response = {}
         self._response_active = False
-        # This response has now spoken every result obligation bound when it
-        # began. Only now may compound gratitude become an end signal.
-        self._inflight_lookups.difference_update(self._active_result_keys)
+        active_results = set(self._active_result_keys)
         self._active_result_keys.clear()
         self._last_activity = time.monotonic()
-        if self._audio_sent:
+        had_audio = self._audio_sent
+        speech = (
+            self._assistant_transcript
+            if not self._guard_tripped
+            else MEDICAL_BOUNDARY_REDIRECT
+        )
+        response_status = str(response.get("status") or "completed").lower()
+        result_spoken = self._guard_tripped or (
+            response_status == "completed" and (had_audio or bool(speech.strip()))
+        )
+        if active_results:
+            if result_spoken:
+                # Only a completed response with observable speech retires
+                # the lookup. A guard redirect is also a spoken safe outcome.
+                self._inflight_lookups.difference_update(active_results)
+            else:
+                # Cancellation, failure, interruption, or a silent completion
+                # cannot make gratitude close the line. The next response
+                # owns these results; retry now unless the person pressed Stop.
+                self._pending_result_keys.update(active_results)
+                if not self._response_stopped:
+                    self._pending_nudge_count = max(self._pending_nudge_count, 1)
+        self._response_stopped = False
+        if had_audio:
             # The authoritative end of an audio-bearing response, in-order
             # after its last audio frame: the page may claim "listening"
             # only after this AND its scheduled playback truly drained —
             # an inter-chunk network gap alone proves nothing.
             self._audio_sent = False
             await self._browser_send({"type": "response_state", "status": "done"})
-        speech = (
-            self._assistant_transcript
-            if not self._guard_tripped
-            else MEDICAL_BOUNDARY_REDIRECT
-        )
         # Consume the turn synchronously BEFORE any await: cancellation can
         # land on any await below, and a turn that is mid-recording must not
         # still look unanswered to shutdown's dangling-turn capture (S09) —

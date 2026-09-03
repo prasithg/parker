@@ -2189,3 +2189,273 @@ def test_revoke_before_run_is_quiescent_and_never_connects():
         return connects
 
     assert asyncio.run(scenario()) == 0
+
+
+@pytest.mark.parametrize(
+    "stage", ["session_update", "call_log", "greeting_injection", "initial_nudge"]
+)
+def test_revoke_cancels_the_supervisor_during_every_startup_await(stage, monkeypatch):
+    """OFF reaches startup before the three long-lived pump tasks exist."""
+
+    db_started = threading.Event()
+    release_db = threading.Event()
+
+    if stage == "call_log":
+
+        def ensure_call_log(_call_sid):
+            db_started.set()
+            assert release_db.wait(timeout=3.0)
+
+    else:
+
+        def ensure_call_log(_call_sid):
+            return None
+
+    monkeypatch.setattr(realtime, "_ensure_call_log_sync", ensure_call_log)
+    monkeypatch.setattr(realtime, "_finalize_session_sync", lambda *_args: None)
+
+    async def scenario() -> tuple[bool, bool]:
+        entered = asyncio.Event()
+        release_send = asyncio.Event()
+        never = asyncio.Event()
+
+        class StartupUpstream:
+            def __init__(self):
+                self.send_count = 0
+                self.closed = False
+
+            async def send(self, raw: str) -> None:
+                self.send_count += 1
+                frame_type = json.loads(raw).get("type")
+                blocked = (
+                    (stage == "session_update" and self.send_count == 1)
+                    or (stage == "greeting_injection" and self.send_count == 2)
+                    or (stage == "initial_nudge" and frame_type == "response.create")
+                )
+                if blocked:
+                    entered.set()
+                    await release_send.wait()
+
+            async def close(self) -> None:
+                self.closed = True
+
+        upstream = StartupUpstream()
+        hello_sent = False
+
+        async def connect():
+            return upstream
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            nonlocal hello_sent
+            if not hello_sent:
+                hello_sent = True
+                return {"type": "hello", "tail": ""}
+            await never.wait()
+            return {}
+
+        bridge = realtime.RealtimeBridge(
+            browser_send, browser_receive, upstream_connect=connect
+        )
+        running = asyncio.create_task(bridge.run())
+        if stage == "call_log":
+            assert await asyncio.to_thread(db_started.wait, 1.0)
+        else:
+            await asyncio.wait_for(entered.wait(), timeout=1.0)
+        bridge.revoke()
+        quiesced = asyncio.create_task(bridge.wait_quiesced())
+        try:
+            await asyncio.wait_for(asyncio.shield(quiesced), timeout=0.25)
+            stopped_before_release = True
+        except asyncio.TimeoutError:
+            stopped_before_release = False
+        finally:
+            release_send.set()
+            release_db.set()
+            if not running.done():
+                running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+            if not quiesced.done():
+                await asyncio.wait_for(quiesced, timeout=1.0)
+        return stopped_before_release, upstream.closed
+
+    stopped, upstream_closed = asyncio.run(scenario())
+    assert stopped
+    assert upstream_closed
+
+
+def test_worker_timeout_does_not_claim_provider_quiescence_before_thread_exit(monkeypatch):
+    """The timeout owns the result, but OFF still owns the real provider thread."""
+
+    monkeypatch.setattr(realtime, "WORKER_TIMEOUT_SECONDS", 0.05)
+
+    async def abandoning_tracked_thread(fn):
+        return await asyncio.to_thread(fn)
+
+    monkeypatch.setattr(realtime, "_tracked_thread", abandoning_tracked_thread)
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    async def scenario() -> bool:
+        timeout_delivered = asyncio.Event()
+
+        class Upstream:
+            async def send(self, _raw: str) -> None:
+                return None
+
+        async def browser_send(frame):
+            if frame == {"type": "working", "kind": "search", "status": "failed"}:
+                timeout_delivered.set()
+
+        async def browser_receive() -> dict[str, Any]:
+            await asyncio.Event().wait()
+            return {}
+
+        def work() -> WorkerResult:
+            worker_started.set()
+            assert release_worker.wait(timeout=3.0)
+            return WorkerResult(kind="search", question="probe", speech="late")
+
+        bridge = realtime.RealtimeBridge(browser_send, browser_receive)
+        bridge._upstream = Upstream()
+        bridge._spawn_worker("search", work, inflight_key="probe", question="probe")
+        assert await asyncio.to_thread(worker_started.wait, 1.0)
+        await asyncio.wait_for(timeout_delivered.wait(), timeout=1.0)
+        bridge.revoke()
+        quiesced = asyncio.create_task(bridge.wait_quiesced())
+        await asyncio.sleep(0.1)
+        returned_while_thread_running = quiesced.done()
+        release_worker.set()
+        await asyncio.wait_for(quiesced, timeout=1.0)
+        return returned_while_thread_running
+
+    try:
+        assert asyncio.run(scenario()) is False
+    finally:
+        release_worker.set()
+
+
+def test_revoke_cancels_result_delivery_already_blocked_on_the_realtime_socket():
+    """A provider may finish before OFF; its still-blocked delivery stays silent."""
+
+    async def scenario() -> tuple[list[dict], list[dict]]:
+        send_started = asyncio.Event()
+        release_send = asyncio.Event()
+        sent: list[dict] = []
+        browser_frames: list[dict] = []
+
+        class Upstream:
+            async def send(self, raw: str) -> None:
+                send_started.set()
+                await release_send.wait()
+                sent.append(json.loads(raw))
+
+        async def browser_send(frame):
+            browser_frames.append(frame)
+
+        async def browser_receive() -> dict[str, Any]:
+            await asyncio.Event().wait()
+            return {}
+
+        bridge = realtime.RealtimeBridge(browser_send, browser_receive)
+        bridge._upstream = Upstream()
+        bridge._spawn_worker(
+            "search",
+            lambda: WorkerResult(kind="search", question="probe", speech="answer"),
+            inflight_key="probe",
+            question="probe",
+        )
+        await asyncio.wait_for(send_started.wait(), timeout=1.0)
+        bridge.revoke()
+        await asyncio.sleep(0)
+        release_send.set()
+        await asyncio.wait_for(bridge.wait_quiesced(), timeout=1.0)
+        await asyncio.sleep(0)
+        return sent, browser_frames
+
+    sent, browser_frames = asyncio.run(scenario())
+    assert sent == []
+    assert browser_frames == []
+
+
+@pytest.mark.parametrize("result_key", ["search:us-open", "my_day:"])
+@pytest.mark.parametrize("status", ["cancelled", "incomplete", "failed", "completed"])
+def test_unspoken_result_response_keeps_the_obligation_open(result_key, status):
+    """Search and My Day stay open until a completed response produces speech."""
+
+    async def scenario() -> tuple[set[str], set[str], set[str], str]:
+        class Upstream:
+            async def send(self, _raw: str) -> None:
+                return None
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            await asyncio.Event().wait()
+            return {}
+
+        bridge = realtime.RealtimeBridge(browser_send, browser_receive)
+        bridge._upstream = Upstream()
+
+        async def no_journal(*_args, **_kwargs):
+            return None
+
+        bridge._journal = no_journal
+        bridge._last_assistant_speech = "Here is the useful answer Parker gave him just before."
+        bridge._inflight_lookups.add(result_key)
+        await bridge._request_nudge(result_key=result_key)
+        await bridge._handle_upstream_event(
+            {"type": "response.done", "response": {"status": status, "output": []}}
+        )
+        await bridge._maybe_end_session("OK, thanks.")
+        return (
+            set(bridge._inflight_lookups),
+            set(bridge._pending_result_keys),
+            set(bridge._active_result_keys),
+            bridge._session_end_kind,
+        )
+
+    inflight, pending, active, end_kind = asyncio.run(scenario())
+    assert result_key in inflight
+    assert result_key in pending | active
+    assert end_kind == ""
+
+
+def test_browser_stop_keeps_result_pending_without_immediately_restarting_speech():
+    """Stop silences this response; the result rebinds only when he continues."""
+
+    async def scenario() -> tuple[int, set[str], set[str]]:
+        sent: list[dict[str, Any]] = []
+        browser_frames = iter(({"type": "stop"}, {"type": "end"}))
+
+        class Upstream:
+            async def send(self, raw: str) -> None:
+                sent.append(json.loads(raw))
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            return next(browser_frames)
+
+        bridge = realtime.RealtimeBridge(browser_send, browser_receive)
+        bridge._upstream = Upstream()
+        bridge._inflight_lookups.add("search:weather")
+        await bridge._request_nudge(result_key="search:weather")
+        await bridge._pump_browser()
+        await bridge._handle_upstream_event(
+            {
+                "type": "response.done",
+                "response": {"status": "cancelled", "output": []},
+            }
+        )
+        creates = sum(frame.get("type") == "response.create" for frame in sent)
+        return creates, set(bridge._inflight_lookups), set(bridge._pending_result_keys)
+
+    creates, inflight, pending = asyncio.run(scenario())
+    assert creates == 1
+    assert inflight == {"search:weather"}
+    assert pending == {"search:weather"}

@@ -162,6 +162,14 @@ def test_the_same_question_asked_after_it_finished_really_runs_again(voice_world
         assert _wait_until(lambda: len(lookup_notes(fake)) == 1)
         fake.feed(done())  # the deferred note nudge fires here
         assert _wait_until(lambda: _response_creates(fake) == 3)
+        fake.feed(model_said("Alcaraz plays the semifinal Friday night."))
+        first_delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
+        assert "Alcaraz" in first_delta["text"]
+        fake.feed(done())
 
         # the identical question, once the first one is provably done
         fake.feed(done(look_call(question, call_id="look-2")))

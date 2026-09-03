@@ -10,6 +10,7 @@ a failed settings write leaves Parker OFF and the page told.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -166,6 +167,160 @@ def test_restart_forgets_the_owner_but_keeps_the_durable_flag_for_the_page():
     assert restarted.authorize(a["owner"], a["gen"]) == "power_off"
     b = restarted.claim(_persist_ok, client_id="tab-a")
     assert restarted.authorize(b["owner"], b["gen"]) is None
+
+
+def test_off_preempts_a_blocked_same_owner_power_on_write():
+    """OFF owns memory immediately even while a re-claim is stuck in SQLite."""
+
+    import threading
+
+    power = CompanionPower()
+    first = power.claim(_persist_ok, client_id="tab-a")
+    power.register(
+        token=first["owner"], kind="wake", close=_closer([], "wake")
+    )
+    write_started = threading.Event()
+    release_write = threading.Event()
+    off_done = threading.Event()
+    claim_result: dict[str, object] = {}
+    off_result: dict[str, Any] = {}
+
+    def blocked_persist(_on: bool) -> None:
+        write_started.set()
+        assert release_write.wait(timeout=3.0)
+
+    def reclaim() -> None:
+        try:
+            claim_result.update(power.claim(blocked_persist, client_id="tab-a"))
+        except PowerRefused as refused:
+            claim_result["reason"] = refused.reason
+
+    def turn_off() -> None:
+        off_result.update(power.release())
+        off_done.set()
+
+    claimant = threading.Thread(target=reclaim, daemon=True)
+    claimant.start()
+    assert write_started.wait(timeout=1.0)
+    releaser = threading.Thread(target=turn_off, daemon=True)
+    releaser.start()
+    try:
+        off_won_immediately = off_done.wait(timeout=0.25)
+        snapshot_while_write_blocked = power.snapshot()
+    finally:
+        release_write.set()
+        claimant.join(timeout=3.0)
+        releaser.join(timeout=3.0)
+
+    assert off_won_immediately
+    assert snapshot_while_write_blocked["power_on"] is False
+    assert len(off_result["revoked"]) == 1
+    assert claim_result == {"reason": "not_saved"}
+
+
+def test_superseded_realtime_stays_in_the_later_off_batch_until_unregistered():
+    """Fast handover must not make an old provider invisible to OFF."""
+
+    power = CompanionPower()
+    granted = power.claim(_persist_ok, client_id="tab-a")
+    first_sid, _ = power.register(
+        token=granted["owner"], kind="realtime", close=_closer([], "line-1")
+    )
+    second_sid, superseded = power.register(
+        token=granted["owner"], kind="realtime", close=_closer([], "line-2")
+    )
+
+    assert first_sid is not None and second_sid is not None
+    assert len(superseded) == 1
+    revoked = power.release()["revoked"]
+    assert len(revoked) == 2
+    assert any(registration is superseded[0] for registration in revoked)
+    assert len(power.release()["revoked"]) == 2
+    power.unregister(first_sid)
+    power.unregister(second_sid)
+    assert power.release()["revoked"] == []
+
+
+def test_claims_queued_before_off_cannot_turn_power_back_on():
+    """The later OFF transition supersedes every already-started ON ticket."""
+
+    import threading
+    import time
+
+    power = CompanionPower()
+    power.claim(_persist_ok, client_id="tab-a")
+    first_write_started = threading.Event()
+    release_first_write = threading.Event()
+    failures: list[str] = []
+
+    def first_persist(_on: bool) -> None:
+        first_write_started.set()
+        assert release_first_write.wait(timeout=3.0)
+
+    def claim_with(persist) -> None:
+        try:
+            power.claim(persist, client_id="tab-a")
+        except PowerRefused as refused:
+            failures.append(refused.reason)
+
+    first = threading.Thread(target=claim_with, args=(first_persist,), daemon=True)
+    first.start()
+    assert first_write_started.wait(timeout=1.0)
+
+    second = threading.Thread(target=claim_with, args=(_persist_ok,), daemon=True)
+    second.start()
+    deadline = time.monotonic() + 1.0
+    while power._transition < 3 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert power._transition == 3, "the second pre-OFF claim never took its ticket"
+
+    released = power.release()
+    release_first_write.set()
+    first.join(timeout=3.0)
+    second.join(timeout=3.0)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert sorted(failures) == ["not_saved", "not_saved"]
+    assert released["power_on"] is False
+    assert power.snapshot()["power_on"] is False
+
+
+def test_power_off_waits_for_a_retired_realtime_registration():
+    """Handover is fast, but a later OFF includes the old provider receipt."""
+
+    import threading
+
+    power = CompanionPower()
+    granted = power.claim(_persist_ok, client_id="tab-a")
+    provider_finished = threading.Event()
+
+    async def close(_reason: str) -> None:
+        return None
+
+    async def quiesce() -> None:
+        await asyncio.to_thread(provider_finished.wait, 3.0)
+
+    first_sid, _ = power.register(
+        token=granted["owner"], kind="realtime", close=close, quiesce=quiesce
+    )
+    _, superseded = power.register(
+        token=granted["owner"], kind="realtime", close=close
+    )
+    assert first_sid is not None
+
+    async def scenario() -> bool:
+        from app.parker.converse_router import _revoke_all
+
+        await _revoke_all(superseded, "superseded")
+        released = power.release()
+        off = asyncio.create_task(_revoke_all(released["revoked"], "power_off"))
+        await asyncio.sleep(0.05)
+        returned_early = off.done()
+        provider_finished.set()
+        await asyncio.wait_for(off, timeout=1.0)
+        return returned_early
+
+    assert asyncio.run(scenario()) is False
 
 
 # ---------------------------------------------------------------------------
