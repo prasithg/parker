@@ -1,7 +1,7 @@
 # Sprint: land the companion stack, then prove Parker + Hermes
 
 Date: 2026-09-02
-Status: ready for implementation after review findings are accepted
+Status: Phase 0 implementation complete; automated release closure is tracked below and human/device gates remain
 
 ## Goal
 
@@ -308,10 +308,12 @@ review fixes as commits on top. The stacked PRs are superseded by #49.
   the bridge's worker thread; provider cancel = socket shutdown through
   `app/brain/transport.py` (measured: `httpx.Client.close()` does not wake a
   blocked read on macOS; `sock.shutdown` does).
-- Power-off route: in-memory release → revoke every socket → then persist;
-  the ack still awaits the write so `saved` stays truthful. The authority
-  remembers it released power in this process so a revoked page reads OFF
-  during the write window (negative-space review blocker).
+- Power-off route: in-memory release → revoke every socket and wait for
+  provider quiescence → start durable persistence. The HTTP ack is not held
+  behind SQLite: it returns `save_state=pending`, and the page polls settings
+  to `saved`/`failed`. The authority remembers it released power in this
+  process so a revoked page reads OFF during the write window; a later claim
+  serializes against the old off write.
 - Same-breath tail: text path (growing post-wake window, `tail_end` →
   final tail → one `tail` frame → one user-role item + one nudge,
   `TAIL_WAIT_SECONDS = 1.5`); PCM replay deferred to a live experiment.
@@ -345,6 +347,15 @@ main (contribution matrix: `docs/reviews/2026-09-02-p0-contribution-
 matrix.md`, 0 MISSING), production-shaped SQLite contention tests,
 `--as-of` cannot mint a dated report, scene receipts retry (pinned).
 
+The 1a88534 handoff checkpoint also closes the three fresh Hermes review
+groups below. Final gate execution then found five deterministic suite
+regressions plus one untested register-before-`run()` power race and a broken
+direct Node gate. b3bc12d closes those with red-capable tests: only a true
+power-off waits for provider quiescence (same-owner handover remains live), a
+pre-revoked bridge is already quiescent and never opens upstream, async
+power-save expectations poll the durable state, and each page spec can extract
+the real inline page scripts when invoked by the documented Node glob.
+
 ### Evidence by revision
 
 | revision | what | evidence |
@@ -362,6 +373,43 @@ matrix.md`, 0 MISSING), production-shaped SQLite contention tests,
 | 7ec9eeb | negative-space pin seeds the durable flag ON | test can only pass with the authority's `released` override |
 | ea0ef7c | packaged chain on a clean tree | PASS — `make sidecar` → `sidecar_smoke.sh` → `cargo tauri build` → `packaged_companion_probe.sh` (default expectation = HEAD, clean tree): bundled engine and shell both report ea0ef7c; the engine ran as the shell's child and exited 1.5 s after it; WKWebView posted `webgl_ready`; no power claim, no wake socket (the probe states it does not observe TCC/microphone or pixels) |
 | 342edfe | ledger filled (docs) | exact-SHA CI **green** (run 33694627135) — the code is identical to ea0ef7c/7ec9eeb; cross-family (Hermes / GPT) review: **not completed** — started against 342edfe and stopped at wrap-up (credits); packet at the session scratchpad `hermes-review-packet-final.md`; re-run it before merge |
+| 1a88534 | checkpoint after three fresh Hermes blocker reviews | power lifecycle, My Day, and session-end fixes present; intentionally **not release-ready**: the resumed full suite exposed five failures |
+| b3bc12d | final blocker/gate repair | `make test`: **1354 passed**; focused concurrency/power/My Day/session-end deck: **161 passed × 5**; Rust/Tauri: **17 passed**; direct Node glob: companion **56/56**, lab **3/3**, expression **48/48**; voice scenarios: **98 passed**; `git diff --check`: clean |
+| bb3fe01 | canonical UTC evidence refresh (2026-09-03) | all ten dated JSON/Markdown pairs byte-identical to their `latest` mirrors; read-only release evaluator against the committed reports: **PASS**, no blocking failures; task taxonomy 24/24, demo interactivity 9/9, degraded replay 3/3 vs 0/3 no-repair, caregiver legibility 10/10, repair rubric 5/5, wake context 14/14, zero unsafe misses in the named gates |
+
+### Fresh-review blocker closure
+
+| concern | blocker | status | revision / permanent check |
+|---|---|---|---|
+| power | background provider work could outlive OFF | closed | 1a88534; provider-boundary cancel and quiescence tests in `test_companion_power.py` |
+| power | in-flight upstream connection setup was not cancellable | closed | 1a88534; pre-`run()` registration race additionally closed at b3bc12d in `test_realtime.py` |
+| power | OFF acknowledgement waited behind session/database persistence | closed | 1a88534; pending → saved/failed page polling pinned in Python and Node tests |
+| power | a new claim could race an older async OFF write | closed | 1a88534; generation + persistence-lock interleaving tests |
+| power | wake socket was unowned while the local model warmed | closed | 1a88534; warmup-revocation test |
+| power | a revoked screen could transiently report ON | closed | 1a88534/7ec9eeb; durable-ON negative-space pin |
+| power | same-owner handover was blocked by an abandoned provider thread | closed | b3bc12d; only `power_off` awaits provider quiescence; two concurrency scenarios are in the five-repeat deck |
+| My Day | failed-source truth could be truncated | closed | 1a88534; source-health line appended after item cap |
+| My Day | the prefilter could hide plan-like notes | closed | 1a88534; seven-day scan then bounded truthful omission line |
+| My Day | generic plan-like notes lacked date uncertainty | closed | 1a88534; explicit uncertainty phrasing |
+| My Day | fixed-offset local time lost future DST rules | closed | 1a88534; named `tzlocal` zone with winter/summer pin |
+| My Day | due timestamps were not canonical instants | closed | 1a88534; aware → UTC, naive wall time with DST gap/fold rejection, outbound `Z` |
+| My Day | unresolved future reminders sounded confirmation-ready | closed | 1a88534; “recorded; not set yet” |
+| session end | a lookup stopped counting as in-flight when injected, so gratitude could close before the result was spoken | closed | 1a88534; result obligations remain active through the response that speaks them |
+| release gate | `node --test backend/tests/js/*.spec.js` exited on missing generated-script arguments | closed | b3bc12d; specs extract the real page scripts when run directly |
+
+### Current automated-gate checklist
+
+- [x] Full backend suite: 1354 passed, 2 known deprecation warnings.
+- [x] Rust/Tauri tests: 17 passed.
+- [x] Direct companion/lab/expression Node specs: 56/56, 3/3, 48/48.
+- [x] Voice scenario deck: 98 passed.
+- [x] Focused concurrency/power/My Day/session-end deck: 161 passed in each of five consecutive runs.
+- [x] Canonical UTC report refresh and read-only committed-artifact rollup: PASS for 2026-09-03; dated/latest pairs are byte-identical.
+- [x] `make eval-repair` executed honestly: no `ANTHROPIC_API_KEY`, so the optional model-backed repair eval reported **skipped** and produced no evidence. No key was fabricated or read from `.env`.
+- [ ] Fresh final-tree independent review artifact (must bind its source revision).
+- [ ] Green GitHub CI for the exact pushed head.
+- [ ] Clean exact-head Parker.app build + packaged companion probe.
+- [ ] Pras human/device checks below; never claimed by automation.
 
 The docs-only commits necessarily postdate the bound `.app`; the code at the
 built revision is byte-identical to the final head's code.
