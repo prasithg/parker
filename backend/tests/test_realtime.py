@@ -2160,3 +2160,32 @@ def test_revoke_cancels_an_upstream_connection_attempt_before_it_can_open():
     connect_cancelled, run_finished = asyncio.run(scenario())
     assert connect_cancelled
     assert run_finished
+
+
+def test_revoke_before_run_is_quiescent_and_never_connects():
+    """A bridge registered during handover can be powered off before run()."""
+
+    async def scenario() -> int:
+        connects = 0
+
+        async def connect():
+            nonlocal connects
+            connects += 1
+            raise AssertionError("a pre-revoked bridge must not open upstream")
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            await asyncio.Event().wait()
+            return {}
+
+        bridge = realtime.RealtimeBridge(
+            browser_send, browser_receive, upstream_connect=connect
+        )
+        bridge.revoke()
+        await asyncio.wait_for(bridge.wait_quiesced(), timeout=0.2)
+        await asyncio.wait_for(bridge.run(), timeout=0.2)
+        return connects
+
+    assert asyncio.run(scenario()) == 0

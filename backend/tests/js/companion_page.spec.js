@@ -18,12 +18,12 @@
 
 const assert = require('assert');
 const { createEnv } = require('./converse_page_env');
+const { extractedPageScripts } = require('./page_script_fixture');
 
-const pageScript = process.argv[2];
-const sceneScript = process.argv[3]; // optional: the scene boot module script
+let pageScript = process.argv[2];
+let sceneScript = process.argv[3]; // optional: the scene boot module script
 if (!pageScript) {
-  process.stderr.write('usage: node companion_page.spec.js <inline-script.js> [<scene-boot.js>]\n');
-  process.exit(2);
+  [pageScript, sceneScript] = extractedPageScripts('companion');
 }
 
 const results = [];

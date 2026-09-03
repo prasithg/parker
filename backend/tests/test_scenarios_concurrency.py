@@ -428,11 +428,21 @@ def test_power_off_from_another_screen_kills_his_line_and_his_credentials(voice_
 
         off = _power_off("sarah-phone")
         assert off.status_code == 200
-        assert off.json() == {"power_on": False, "saved": True}
+        assert off.json() == {
+            "power_on": False,
+            "saved": None,
+            "save_state": "pending",
+        }
         _revoked(ws_a, "power_off")
         _page_hangs_up(ws_a, fakes[0])
         assert _wait_until(_finalized(world, 1))
         assert _wait_until(lambda: realtime._active_bridges == 0)
+        assert _wait_until(
+            lambda: client.get("/parker/converse/companion/settings").json()[
+                "power_save_state"
+            ]
+            == "saved"
+        )
 
     calls = _realtime_calls(world)
     assert len(calls) == 1

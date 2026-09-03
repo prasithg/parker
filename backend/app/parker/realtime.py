@@ -1012,6 +1012,7 @@ class RealtimeBridge:
         self._providers_quiesced = _threading.Event()
         self._providers_quiesced.set()
         self._transport_quiesced = _threading.Event()
+        self._transport_quiesced.set()  # no connect/socket exists before run()
         self._exchanges: list[tuple[str, str]] = []
         self._last_activity = time.monotonic()
         self._last_user_activity = 0.0  # only his voice stands the close down
@@ -1169,8 +1170,15 @@ class RealtimeBridge:
 
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
+        if self._closed:
+            return
+        self._transport_quiesced.clear()
         connect = self._upstream_connect or globals()["connect_openai"]
         self._connect_task = asyncio.ensure_future(connect())
+        # revoke() can race between the closed check and task creation. Its
+        # first cancel sees no task in that window, so close it here too.
+        if self._closed:
+            self._connect_task.cancel()
         try:
             try:
                 self._upstream = await self._connect_task

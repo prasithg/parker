@@ -590,12 +590,18 @@ def test_a_revoked_screen_reads_off_while_the_durable_write_is_still_landing(voi
     assert seen_by_page["power_on"] is False, seen_by_page  # …and the page read OFF: never "on with no owner"
     assert seen_by_page["owner_client"] == ""
     # After the write, off is durable too.
-    assert client.get("/parker/converse/companion/settings").json()["power_on"] is False
+    assert _wait_until(
+        lambda: client.get("/parker/converse/companion/settings").json()[
+            "power_save_state"
+        ]
+        == "saved"
+    )
+    assert get_companion_settings(world.db)["power_on"] is False
     # An engine restart: a fresh authority has released nothing, so the
     # durable flag (whatever it says) is what the page reads — the restart
     # re-claim path is untouched.
     world.mp.setattr(converse_router, "authority", CompanionPower())
-    converse_router.set_companion_settings(world.db, power_on=True)
+    set_companion_settings(world.db, power_on=True)
     assert client.get("/parker/converse/companion/settings").json()["power_on"] is True
     assert _wait_until(lambda: fake.closed)
 

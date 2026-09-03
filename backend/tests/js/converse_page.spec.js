@@ -10,11 +10,11 @@
 
 const assert = require('assert');
 const { createEnv } = require('./converse_page_env');
+const { extractedPageScripts } = require('./page_script_fixture');
 
-const pageScript = process.argv[2];
+let pageScript = process.argv[2];
 if (!pageScript) {
-  process.stderr.write('usage: node converse_page.spec.js <inline-script.js>\n');
-  process.exit(2);
+  [pageScript] = extractedPageScripts('lab');
 }
 
 const results = [];

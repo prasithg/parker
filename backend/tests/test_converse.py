@@ -621,7 +621,15 @@ def test_companion_settings_persist_and_default_off(db):
     assert refused.status_code == 400  # a page cannot write power behind the authority
 
     off = client.post("/parker/converse/companion/power", json={"on": False}).json()
-    assert off["power_on"] is False and off["saved"] is True  # durable — the restart contract
+    assert off == {"power_on": False, "saved": None, "save_state": "pending"}
+    from scenario_harness import _wait_until
+
+    assert _wait_until(
+        lambda: client.get("/parker/converse/companion/settings").json()[
+            "power_save_state"
+        ]
+        == "saved"
+    )
     assert client.get("/parker/converse/companion/settings").json()["power_on"] is False
 
 

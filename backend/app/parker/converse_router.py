@@ -145,9 +145,9 @@ async def companion_power(
     nothing is on). ``off`` turns Parker off for EVERY screen, in this
     order: the in-memory flip (synchronous — no new socket authorizes
     from this instant), every wake/realtime socket receives a ``revoked``
-    frame and closes, and only THEN the flag persists — the ack waits for
-    that write so ``saved`` is truthful (false when it failed, so the page
-    can say so and retry), but the lines never wait behind SQLite.
+    frame and closes, and only THEN the flag starts persisting. The ack is
+    not held behind SQLite: it reports ``save_state=pending`` and the page
+    polls settings until that state becomes ``saved`` or ``failed``.
     """
 
     from starlette.concurrency import run_in_threadpool
@@ -235,15 +235,21 @@ async def _wait_registration(registration) -> None:
 async def _revoke_all(registrations, reason: str) -> None:
     registrations = list(registrations)
     # Fire every synchronous provider cancel before one wedged WebSocket can
-    # delay another. Socket closes are independently bounded; provider
-    # quiescence is awaited without coupling it to session persistence.
+    # delay another. Socket closes are independently bounded. Only a real
+    # power-off waits for provider quiescence: a same-owner reconnect may
+    # overlap the superseded bridge long enough for its abandoned thread to
+    # unwind, and the closed bridge already drops that stale result.
     for registration in registrations:
         if registration.revoke is not None:
             registration.revoke()
-    await asyncio.gather(
-        *(_close_registration(registration, reason) for registration in registrations),
-        *(_wait_registration(registration) for registration in registrations),
-    )
+    operations = [
+        _close_registration(registration, reason) for registration in registrations
+    ]
+    if reason == "power_off":
+        operations.extend(
+            _wait_registration(registration) for registration in registrations
+        )
+    await asyncio.gather(*operations)
 
 
 def _socket_credentials(websocket: WebSocket) -> tuple[str, str]:
