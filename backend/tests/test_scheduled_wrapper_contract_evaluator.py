@@ -16,6 +16,15 @@ from benchmark.scheduled_wrapper_v0 import load_scenarios
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "benchmark/data/scheduled_wrapper_contract_v0.json"
 EVALUATOR = REPO / "benchmark/evaluate_scheduled_wrapper_v0.py"
+MAKEFILE = REPO / "Makefile"
+
+
+def test_make_target_executes_the_scheduled_wrapper_evaluator():
+    makefile = MAKEFILE.read_text()
+    assert (
+        "\neval-scheduled-wrapper:\n"
+        "\tpython3 benchmark/evaluate_scheduled_wrapper_v0.py\n"
+    ) in makefile
 
 
 def _scenarios() -> list[dict]:

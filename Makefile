@@ -118,6 +118,20 @@ eval-brain-lane: backend-venv
 eval-hands: backend-venv
 	$(BACKEND_PYTHON) benchmark/evaluate_hands_v0.py --write-report
 
+# Scheduled-wrapper contract: synthetic no-agent traces pin scheduler-only key
+# access, verifier-only handoff, protected ledger ownership, retryable pending
+# failures, final acknowledgement ordering, and bounded sanitized output. This
+# does not read a live key, configure cron, deploy a wrapper, or prove an event.
+eval-scheduled-wrapper:
+	python3 benchmark/evaluate_scheduled_wrapper_v0.py
+
+# Inactive wrapper integration harness: executes one scrubbed, unprivileged
+# synthetic subprocess and checks real temporary filesystem ownership/modes with
+# no-follow opens plus bounded timeout/output cleanup. It does not read cron or
+# credentials, call the production verifier, or prove separate OS identities.
+eval-scheduled-wrapper-harness:
+	python3 benchmark/scheduled_wrapper_harness_v0.py
+
 # Patient Curiosity Loop eval: the six Dad-shaped traces, failure
 # containment, and stop races through the real converse harness path with
 # fake providers. Keyless and offline; pass LIVE=1 to add a one-shot real
