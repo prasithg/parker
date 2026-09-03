@@ -380,6 +380,7 @@ the real inline page scripts when invoked by the documented Node glob.
 | `3e97c2d` | first fresh-review blocker closure | OFF preempts blocked/queued ON claims; retired bridges remain power-owned; startup and delivery are cancel-safe; actual provider computation is tracked through timeout; unspoken results remain in flight; My Day includes undated pending reminders with truthful cardinality; README stack contradictions corrected. Full backend **1380 passed**; focused six-file deck **182 passed × 5**; Rust/Tauri **17 passed**; direct Node **56/56 + 3/3 + 48/48**; voice scenarios **98 passed**. |
 | `3a8833b` | first-review ledger closure + second fresh review source | power lifecycle **PASS**; release evidence/docs **PASS**; My Day/session correctness **NEEDS_FIX** on two new edge cases: search/My Day key aliasing and safety-filtered records disappearing from both omission counts and the empty-day decision. |
 | `064b60d` | second-review blocker closure | search keys are structurally namespaced; safety-filtered records retain generic counted presence without exposing content; stale power comment and medication README wording corrected. Full backend **1383 passed**; focused six-file deck **185 passed × 5**; Rust/Tauri **17 passed**; direct Node **56/56 + 3/3 + 48/48**; voice scenarios **98 passed**; release-readiness **PASS**. |
+| `2630996` | final narrow-review source | **PASS** on the two second-cycle fixes and ledger claims; the reviewer independently confirmed all three new regressions pass here and fail on `3a8833b`, then reran the exact six-file deck (**185 passed**). Aggregate final review: power PASS, My Day/session PASS, evidence/docs PASS. Artifact: `docs/reviews/2026-09-03-pr49-hermes-final-review.md`. |
 
 ### Fresh-review blocker closure
 
@@ -425,7 +426,7 @@ the real inline page scripts when invoked by the documented Node glob.
 - [x] Canonical UTC report refresh and read-only committed-artifact rollup: PASS for 2026-09-03; dated/latest pairs are byte-identical.
 - [x] Scheduled-wrapper contract and inactive harness: 15/15 and 9/9 real checks (not phony no-ops).
 - [x] `make eval-repair` executed honestly: no `ANTHROPIC_API_KEY`, so the optional model-backed repair eval reported **skipped** and produced no evidence. No key was fabricated or read from `.env`.
-- [ ] Fresh final-tree independent review artifact (must bind its source revision).
+- [x] Fresh final-tree independent review artifact bound to source `26309965a5f57ac18516e3d89379c0480bc212cd`: `docs/reviews/2026-09-03-pr49-hermes-final-review.md`.
 - [ ] Green GitHub CI for the exact pushed head.
 - [ ] Clean exact-head Parker.app build + packaged companion probe.
 - [ ] Pras human/device checks below; never claimed by automation.
