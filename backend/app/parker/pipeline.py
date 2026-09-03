@@ -423,26 +423,39 @@ def _get_action(db: Session, staged_action_id: int) -> StagedAction:
 
 
 def _coerce_datetime(value: datetime | str | None) -> datetime | None:
-    """An ISO-8601 due time → the naive-UTC form every reader decodes.
+    """Normalize due times to the naive-UTC form every reader decodes.
 
-    The DateTime columns hold naive UTC (SQLite discards tzinfo), and the
-    readers (`realtime_workers._from_stored`, the rollups) re-attach UTC.
-    A bare `fromisoformat` kept the wall-clock digits of an offset-bearing
-    string, so "16:00-04:00" was read back as 16:00 UTC — a reminder spoken
-    hours early and called overdue (P03-2). Aware → UTC. Naive → his home
-    wall time (a brain talking to a local user emits local time), then
-    UTC. A datetime object is stored as given: the seed and the tests pass
-    UTC-naive datetimes already.
+    Aware strings and datetime objects become UTC. A naive datetime object is
+    already the repository's internal UTC representation. A naive string is
+    home wall time; DST gaps and folds are rejected unless the caller supplies
+    an explicit offset, because either silently invents the wrong instant.
     """
 
-    if value is None or isinstance(value, datetime):
-        return value
-    from app.parker.rollup import home_timezone  # function-local: tests patch it there
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
 
     parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=home_timezone())
-    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+    from app.parker.rollup import home_timezone  # function-local: tests patch it there
+
+    zone = home_timezone()
+    instants: list[datetime] = []
+    for fold in (0, 1):
+        candidate = parsed.replace(tzinfo=zone, fold=fold)
+        instant = candidate.astimezone(timezone.utc)
+        if instant.astimezone(zone).replace(tzinfo=None) == parsed and instant not in instants:
+            instants.append(instant)
+    if not instants:
+        raise ValueError("Local due time does not exist; include an explicit UTC offset")
+    if len(instants) > 1:
+        raise ValueError("Local due time is ambiguous; include an explicit UTC offset")
+    return instants[0].replace(tzinfo=None)
 
 
 def _json_payload(raw: str | None) -> dict[str, Any]:

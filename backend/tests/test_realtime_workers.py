@@ -172,10 +172,11 @@ def test_search_worker_wraps_a_crash_into_an_error_envelope(monkeypatch):
 def test_context_card_reads_memory_meds_doseless_and_survives_a_bad_source(db):
     from app.db.models import Medication
     from app.memory.store import save_memory
+    from app.parker.rollup import home_timezone
 
     save_memory(db, "Loves old Hindi songs.", "preference")
     save_memory(db, "Refill of 25-100 mg is ready.", "event")  # must be dropped
-    soon = (datetime.utcnow() + timedelta(minutes=10)).strftime("%H:%M")
+    soon = (datetime.now(home_timezone()) + timedelta(minutes=10)).strftime("%H:%M")
     db.add(
         Medication(
             name="Carbidopa-Levodopa",

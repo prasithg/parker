@@ -201,11 +201,11 @@ function createEnv() {
   };
 
   // ------------------------------------------------------------ network
-  env.settings = { power_on: false, cc_on: false }; // the persisted store
+  env.settings = { power_on: false, cc_on: false, power_save_state: 'saved' };
   // The engine's power authority (companion_power.py), as the page sees it:
   // 'grant' issues owner credentials; 'elsewhere' refuses 409; 'fail' is a
   // 503 (write failed); 'unreachable' rejects the fetch. `offSave` controls
-  // whether the OFF write lands ({saved:false} otherwise).
+  // whether the asynchronous OFF write eventually lands.
   env.powerMode = 'grant';
   env.offSave = true;
   env.powerGen = 0;
@@ -233,13 +233,17 @@ function createEnv() {
         }
         env.powerGen += 1;
         env.settings.power_on = true;
+        env.settings.power_save_state = 'saved';
         return Promise.resolve(jsonResponse({ power_on: true, owner: 'tok-' + env.powerGen, gen: env.powerGen }));
       }
       env.powerReleases.push(body);
       if (env.powerMode === 'unreachable') return Promise.reject(new Error('engine down'));
       env.powerGen += 1;
       if (env.offSave) env.settings.power_on = false;
-      return Promise.resolve(jsonResponse({ power_on: false, saved: !!env.offSave }));
+      env.settings.power_save_state = env.offSave ? 'saved' : 'failed';
+      return Promise.resolve(jsonResponse({
+        power_on: false, saved: null, save_state: 'pending',
+      }));
     }
     if (String(url).endsWith('/sessions') && opts && opts.method === 'POST') {
       return Promise.resolve(jsonResponse({

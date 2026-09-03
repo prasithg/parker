@@ -708,6 +708,21 @@ async function claimPower() {
 // revokes every other screen and persists. A failed write is retried a
 // bounded number of times and then said out loud — never swallowed.
 const OFF_SAVE_DELAYS = [1000, 3000, 8000];
+const OFF_SAVE_POLL_DELAYS = [0, 100, 250, 500, 1000];
+async function offSaveLanded(genAtCall) {
+  for (const delay of OFF_SAVE_POLL_DELAYS) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (genAtCall !== powerGen) return true;
+    try {
+      const res = await fetch('/parker/converse/companion/settings');
+      const data = res.ok ? await res.json() : null;
+      const state = data && data.power_save_state;
+      if (state === 'saved' || state === 'superseded') return true;
+      if (state === 'failed') return false;
+    } catch (err) { /* keep polling inside the bounded window */ }
+  }
+  return false;
+}
 function releasePower(attempt) {
   clearTimeout(offSaveTimer);
   const genAtCall = powerGen;
@@ -733,7 +748,9 @@ function releasePower(attempt) {
     if (!res.ok) { failed(); return; }
     let data = null;
     try { data = await res.json(); } catch (err) {}
-    if (!data || data.saved !== true) failed();
+    if (!data) { failed(); return; }
+    if (data.saved === true || data.save_state === 'superseded') return;
+    if (data.save_state !== 'pending' || !(await offSaveLanded(genAtCall))) failed();
   }).catch(failed).then(() => { if (power.pendingRelease === settled) power.pendingRelease = null; });
   power.pendingRelease = settled;
 }

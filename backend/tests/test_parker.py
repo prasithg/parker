@@ -47,6 +47,7 @@ def test_capture_intent_tool_persists_pending_intent(db, monkeypatch):
     )
 
     assert result["status"] == "captured"
+    assert result["due_at"] == "2026-06-03T09:00:00Z"
     saved = db.get(CapturedIntent, result["captured_intent_id"])
     assert saved.call_log_id == call.id
     assert saved.intent_text == "Remind me to call Mary tomorrow morning."

@@ -242,7 +242,17 @@ def test_power_off_from_another_tab_revokes_the_listening_tab(db, monkeypatch):
         off = client.post(
             "/parker/converse/companion/power", json={"on": False, "client_id": "tab-b"}
         ).json()
-        assert off["power_on"] is False and off["saved"] is True
+        assert off == {
+            "power_on": False, "saved": None, "save_state": "pending"
+        }
+        from scenario_harness import _wait_until
+
+        assert _wait_until(
+            lambda: client.get("/parker/converse/companion/settings").json()[
+                "power_save_state"
+            ]
+            == "saved"
+        )
         frame = ws.receive_json()
         assert frame == {"type": "revoked", "reason": "power_off"}
         with pytest.raises(WebSocketDisconnect):
@@ -300,7 +310,17 @@ def test_a_failed_power_off_write_still_kills_the_line_and_says_so(db, monkeypat
 
         monkeypatch.setattr(converse_router, "set_companion_settings", broken)
         off = client.post("/parker/converse/companion/power", json={"on": False}).json()
-        assert off["power_on"] is False and off["saved"] is False
+        assert off == {
+            "power_on": False, "saved": None, "save_state": "pending"
+        }
+        from scenario_harness import _wait_until
+
+        assert _wait_until(
+            lambda: client.get("/parker/converse/companion/settings").json()[
+                "power_save_state"
+            ]
+            == "failed"
+        )
         assert ws.receive_json()["reason"] == "power_off"
     # In memory it is off regardless — no socket can open.
     with client.websocket_connect(_wake_url(a)) as ws:
@@ -497,7 +517,10 @@ def test_power_off_revokes_the_line_before_the_durable_write(voice_world, monkey
         finally:
             poster.join(5.0)
         assert not poster.is_alive()
-        assert response == {"power_on": False, "saved": True}
+        assert response == {
+            "power_on": False, "saved": None, "save_state": "pending"
+        }
+        assert _wait_until(lambda: "end" in persist)
         assert persist["end"] > revoked_at
         assert _audio_appends(fake) == ["QUJD"]  # only what he said before the flip
     assert _wait_until(lambda: fake.closed)
@@ -575,3 +598,245 @@ def test_a_revoked_screen_reads_off_while_the_durable_write_is_still_landing(voi
     converse_router.set_companion_settings(world.db, power_on=True)
     assert client.get("/parker/converse/companion/settings").json()["power_on"] is True
     assert _wait_until(lambda: fake.closed)
+
+
+def test_power_off_owns_the_wake_socket_while_the_model_is_warming(db, monkeypatch):
+    """OFF closes the browser/mic before a slow first model load returns."""
+
+    import threading
+
+    warming = threading.Event()
+    finish_warming = threading.Event()
+    revoked = threading.Event()
+    real_closer = converse_router._closer
+
+    def load_transcriber():
+        warming.set()
+        finish_warming.wait(timeout=3.0)
+        return lambda _path: []
+
+    def observed_closer(websocket):
+        close = real_closer(websocket)
+
+        async def observed(reason):
+            revoked.set()
+            await close(reason)
+
+        return observed
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", load_transcriber)
+    monkeypatch.setattr(converse_router, "_closer", observed_closer)
+    granted = _claim("tab-a").json()
+    closed_while_warming = False
+    try:
+        with client.websocket_connect(_wake_url(granted)) as ws:
+            assert warming.wait(timeout=1.0)
+            off = client.post(
+                "/parker/converse/companion/power",
+                json={"on": False, "client_id": "tab-b"},
+            ).json()
+            closed_while_warming = revoked.wait(timeout=0.25)
+            finish_warming.set()
+            frame = ws.receive_json()
+            assert frame["type"] == "revoked" and frame["reason"] == "power_off"
+            assert off["power_on"] is False
+    finally:
+        finish_warming.set()
+    assert closed_while_warming
+
+
+def test_power_off_ack_is_not_held_behind_the_durable_write(db, monkeypatch):
+    """The line is dead before the response; the settings write follows it."""
+
+    import threading
+
+    write_started = threading.Event()
+    release_write = threading.Event()
+    response_done = threading.Event()
+    real_set = converse_router.set_companion_settings
+
+    def blocked_set(session, **fields):
+        if fields.get("power_on") is False:
+            write_started.set()
+            release_write.wait(timeout=3.0)
+        return real_set(session, **fields)
+
+    monkeypatch.setattr(converse_router, "set_companion_settings", blocked_set)
+    granted = _claim("tab-a").json()
+    response: dict = {}
+
+    def flip_off() -> None:
+        response.update(
+            client.post(
+                "/parker/converse/companion/power",
+                json={"on": False, "client_id": "tab-a"},
+            ).json()
+        )
+        response_done.set()
+
+    acknowledged_before_write = False
+    try:
+        with client.websocket_connect(_wake_url(granted)) as ws:
+            poster = threading.Thread(target=flip_off, daemon=True)
+            poster.start()
+            assert ws.receive_json()["reason"] == "power_off"
+            assert write_started.wait(timeout=1.0)
+            acknowledged_before_write = response_done.wait(timeout=0.25)
+            release_write.set()
+            poster.join(timeout=3.0)
+            assert not poster.is_alive()
+    finally:
+        release_write.set()
+    assert acknowledged_before_write
+    assert response["saved"] is None
+    assert response["save_state"] == "pending"
+
+
+def test_a_newer_on_claim_cannot_be_clobbered_by_an_older_off_write(db):
+    """A later ON owns durable truth even when the old OFF was draining."""
+
+    import asyncio
+    import threading
+
+    old_close_started = threading.Event()
+    finish_old_close = threading.Event()
+    off_response: dict = {}
+    granted = _claim("tab-a").json()
+
+    async def slow_old_close(_reason):
+        old_close_started.set()
+        await asyncio.to_thread(finish_old_close.wait, 3.0)
+
+    sid, _ = converse_router.authority.register(
+        token=granted["owner"], kind="wake", close=slow_old_close
+    )
+    assert sid is not None
+
+    def flip_off() -> None:
+        off_response.update(
+            client.post(
+                "/parker/converse/companion/power",
+                json={"on": False, "client_id": "tab-a"},
+            ).json()
+        )
+
+    poster = threading.Thread(target=flip_off, daemon=True)
+    poster.start()
+    try:
+        assert old_close_started.wait(timeout=1.0)
+        newer_response = client.post(
+            "/parker/converse/companion/power",
+            json={"on": True, "client_id": "tab-b"},
+        )
+        assert newer_response.status_code == 200
+        newer = newer_response.json()
+    finally:
+        finish_old_close.set()
+        poster.join(timeout=3.0)
+    assert not poster.is_alive()
+    assert off_response["save_state"] == "superseded"
+    settings = client.get("/parker/converse/companion/settings").json()
+    assert settings["power_on"] is True
+    assert converse_router.authority.authorize(newer["owner"], newer["gen"]) is None
+
+
+def test_power_off_starts_every_socket_revoke_before_waiting_for_one(db):
+    """A wedged wake close cannot postpone realtime/provider cancellation."""
+
+    import asyncio
+    import threading
+
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+    realtime_started = threading.Event()
+    granted = _claim("tab-a").json()
+
+    async def slow_wake(_reason):
+        slow_started.set()
+        await asyncio.to_thread(release_slow.wait, 3.0)
+
+    async def cancel_realtime(_reason):
+        realtime_started.set()
+
+    converse_router.authority.register(
+        token=granted["owner"], kind="wake", close=slow_wake
+    )
+    converse_router.authority.register(
+        token=granted["owner"], kind="realtime", close=cancel_realtime
+    )
+    response: dict = {}
+
+    def flip_off() -> None:
+        response.update(
+            client.post("/parker/converse/companion/power", json={"on": False}).json()
+        )
+
+    poster = threading.Thread(target=flip_off, daemon=True)
+    poster.start()
+    try:
+        assert slow_started.wait(timeout=1.0)
+        realtime_started_without_waiting = realtime_started.wait(timeout=0.25)
+    finally:
+        release_slow.set()
+        poster.join(timeout=3.0)
+    assert not poster.is_alive()
+    assert realtime_started_without_waiting
+    assert response["power_on"] is False
+
+
+def test_power_off_ack_waits_for_the_provider_worker_to_exit(voice_world, monkeypatch):
+    """Cancellation is complete—not merely signalled—when OFF acknowledges."""
+
+    import threading
+
+    from app.parker import realtime, realtime_workers
+    from app.parker.realtime_workers import WorkerResult
+    from scenario_harness import _wait_until, done, look_call
+
+    world = voice_world
+    world.enable_search({"probe": "unused"})
+    worker_started = threading.Event()
+    worker_cancelled = threading.Event()
+    release_worker = threading.Event()
+    response_done = threading.Event()
+
+    def blocked_worker(question):
+        cancel = realtime_workers.CURRENT_CANCEL.get()
+        assert cancel is not None
+        worker_started.set()
+        assert cancel.wait(timeout=3.0)
+        worker_cancelled.set()
+        release_worker.wait(timeout=3.0)
+        return WorkerResult(kind="search", question=question, error="stopped")
+
+    monkeypatch.setattr(realtime_workers, "run_search_worker", blocked_worker)
+    fake = world.script([])
+    response: dict = {}
+
+    def flip_off() -> None:
+        response.update(
+            client.post("/parker/converse/companion/power", json={"on": False}).json()
+        )
+        response_done.set()
+
+    acknowledged_before_exit = False
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        fake.feed(done(look_call("probe")))
+        assert worker_started.wait(timeout=1.0)
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
+        poster = threading.Thread(target=flip_off, daemon=True)
+        poster.start()
+        try:
+            assert worker_cancelled.wait(timeout=1.0)
+            assert ws.receive_json()["reason"] == "power_off"
+            acknowledged_before_exit = response_done.wait(timeout=0.25)
+        finally:
+            release_worker.set()
+            poster.join(timeout=3.0)
+        assert not poster.is_alive()
+        assert response["power_on"] is False
+    assert not acknowledged_before_exit
+    assert _wait_until(lambda: realtime._inflight_db_threads == 0)

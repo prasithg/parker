@@ -189,60 +189,38 @@ confirmation offers ("Shall I go ahead — yes or no?"), which appear with
 an empty "You said" and a yes/no chip. Options stay on screen through
 silent windows: taking a minute to answer never blanks the cards.
 
-## The Patient Curiosity Loop: `/parker/converse`
+## Companion voice and operator lab
 
-The laptop/browser harness for the first-user experience in
-`docs/strategy/2026-08-29-problem-first-value-proposition.md`: tap Start,
-take your time (pauses never cut a turn off — only Done sends it), see
-what Parker heard, get a brief current answer with its source named on
-screen, ask a follow-up without restating the topic, and Stop instantly.
+`/parker/converse` is the companion surface the user meets. It has one power
+switch and one CC toggle—no Start/Done controls, transcript panel, text box,
+or per-turn buttons. Power on enters local wake dormancy. “Hey Parker” opens
+the opted-in OpenAI realtime lane; spoken closing returns to dormancy, and
+power off releases the microphone, revokes every screen/socket, cancels and
+drains provider work, then persists OFF asynchronously.
 
-Setup (the family member does all of this before Dad sits down):
+Family setup before the user sits down:
 
 ```bash
 PARKER_HOME_PLACE="Melbourne, Australia" make run
 ```
 
-then open `http://localhost:8000/parker/converse` in Safari or Chrome and
-grant the microphone permission with one throwaway question of your own.
-The page speaks through the browser (`speechSynthesis`) so Stop is
-immediate; the microphone is only open between Start and Done, so Parker
-never hears itself.
+Open `http://localhost:8000/parker/converse`, grant microphone permission,
+and verify the power/wake/session-end checklist. `OPENAI_API_KEY` is required
+for the active realtime conversation. The local wake model must also be
+installed (`make voice-deps`); if it is missing or repeatedly fails, Parker
+turns off and says so rather than streaming continuous cloud audio.
 
-- Every subject — weather, footy, news, people — answers through the one
-  general brain lane (Claude + server-side web search, needs
-  `ANTHROPIC_API_KEY`). There are deliberately no per-subject provider
-  lanes to configure or maintain.
-- `PARKER_HOME_PLACE` grounds local questions and searches — set it with
-  the country ("Melbourne, Australia"); a bare city name can collide with
-  same-named towns elsewhere. Any spoken place wins over it.
-- `PARKER_BRAIN_EFFORT=low` (default) is the latency lever: a searched
-  spoken turn measures ~4 s on the dev laptop (was ~15 s at high effort).
-- Everything else rides the shipped brainstem: repair choices render as
-  tappable cards, action requests read back and wait for yes/no (tap or
-  voice), refusal guards run before any provider, and staged actions
-  stay on `/parker/review/ui`.
-- "Type instead" (footer) is a quiet fallback for harder-speech days;
-  same turns, same pipeline.
-- **Stop is touch (or Escape) in this harness, not voice.** The
-  microphone is deliberately closed while Parker speaks so it cannot hear
-  itself, which means a spoken "stop" cannot land mid-answer. Do not tell
-  the first user "just say stop" — show the button. A voice barge-in
-  needs the full-duplex/realtime lane, which is explicitly out of scope
-  for this slice.
-- Latency receipts (stage timings only, never words) accumulate in
-  `PARKER_HOME/receipts/converse_latency.jsonl`; aggregate them with
-  `backend/.venv/bin/python benchmark/curiosity_latency_report.py`.
+`/parker/converse/lab` is the family/operator harness. It retains manual
+Start/Done capture, the transcript, source cards, browser speech synthesis,
+text fallback, and an explicit Stop/Escape action. In that lab the microphone
+is closed while Parker speaks, so Stop is touch/Escape rather than spoken
+barge-in. Do not describe those lab controls as the companion contract.
 
-**Live conversation (optional, needs `OPENAI_API_KEY`).** With a key
-configured the page offers a fifth control, Live conversation: full-duplex
-speech over gpt-realtime — no Start/Done at all, semantic end-pointing
-tuned patient, talking over Parker just works, and Stop is one big way
-out. Parker's server stays in the middle: same persona, `propose_action`
-staging only, the medical guard cancelling a bad reply mid-word, the Dad
-screen mirroring the conversation. Audio goes to OpenAI in this mode —
-the family's explicit choice of lane. A/B it against the patient loop
-with the same receipts before deciding which one Dad meets first.
+Both surfaces keep Parker’s server in the policy boundary: repair, medical
+screening, staged-action confirmation, stale-result suppression, and local
+receipts remain server-owned. Sources are display evidence and URLs are never
+read aloud. Audio reaches OpenAI only after the family opts into realtime and
+the local wake lane opens an active conversation.
 
 **Reviewing a finished live session (the human-testing flywheel).**
 Every live session is journaled locally; open

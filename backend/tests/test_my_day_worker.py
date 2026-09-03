@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -202,7 +203,10 @@ def test_stale_tomorrow_note_is_dated_within_a_week_and_dropped_beyond_it(db):
         + " — written on Monday, so its “tomorrow” counts from then; the date is uncertain."
     ]
     assert not any("tennis" in line for line in lines)
-    assert _line_with(lines, "Priya") == "A note the family left today: Priya is coming to visit on Saturday."
+    assert _line_with(lines, "Priya") == (
+        "A note the family left today: Priya is coming to visit on Saturday."
+        " — its plan date is not explicit, so the date is uncertain."
+    )
 
 
 def test_medicine_lines_stay_dose_free_and_a_dosed_reminder_is_dropped(db):
@@ -283,7 +287,7 @@ def test_dated_reminder_pending_in_the_pipeline_is_his_day_before_it_stages(db):
 
     lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
 
-    assert _line_with(lines, "the dentist") == "A reminder (waiting for his yes): the dentist — today at 4 PM."
+    assert _line_with(lines, "the dentist") == "A reminder (recorded; not set yet): the dentist — today at 4 PM."
     assert not any(line.startswith("Nothing is on record") for line in lines)
 
     later = _local(2026, 9, 2, 16, 30)
@@ -334,6 +338,42 @@ def test_captured_due_time_in_utc_still_round_trips_and_datetimes_pass_through(d
     assert capture_intent(db, call_log_id=call.id, intent_text="u", subject="u", due_at=None).due_at is None
 
 
+def test_aware_datetime_object_is_normalized_to_naive_utc(db):
+    aware = datetime(2026, 9, 2, 16, 0, tzinfo=timezone(timedelta(hours=-4)))
+
+    captured = capture_intent(
+        db,
+        call_log_id=_call(db).id,
+        intent_text="remind me about the dentist",
+        subject="the dentist",
+        due_at=aware,
+    )
+
+    assert captured.due_at == datetime(2026, 9, 2, 20, 0)
+
+
+@pytest.mark.parametrize(
+    "wall_time, problem",
+    [
+        ("2026-03-08T02:30:00", "does not exist"),
+        ("2026-11-01T01:30:00", "ambiguous"),
+    ],
+)
+def test_dst_gap_and_fold_require_an_explicit_offset(db, monkeypatch, wall_time, problem):
+    monkeypatch.setattr(
+        "app.parker.rollup.home_timezone", lambda: ZoneInfo("America/New_York")
+    )
+
+    with pytest.raises(ValueError, match=problem):
+        capture_intent(
+            db,
+            call_log_id=_call(db).id,
+            intent_text="remind me then",
+            subject="the appointment",
+            due_at=wall_time,
+        )
+
+
 def test_seven_reminders_are_cut_at_six_with_a_more_line_never_silently(db):
     """P03-3: the six-line reminder cap cut silently and the render item
     then told the model to deny anything missing. Seven undated reminders:
@@ -361,3 +401,80 @@ def test_five_reminders_have_no_more_line(db):
     assert len([line for line in lines if line.startswith("A reminder")]) == 5
     assert not any("more reminders" in line for line in lines)
     assert lines[-1] == MY_DAY_LIMIT_LINE
+
+
+def test_generic_plan_note_is_explicitly_date_uncertain(db):
+    _note(
+        db,
+        "Dentist appointment at 3 PM.",
+        created=NOW - timedelta(days=3),
+        memory_type="event",
+        source="manual",
+    )
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert _line_with(lines, "Dentist appointment").endswith(
+        "— its plan date is not explicit, so the date is uncertain."
+    )
+
+
+def test_relevant_plan_note_is_not_hidden_behind_twenty_newer_memories(db):
+    _note(
+        db,
+        "Dentist appointment at 3 PM.",
+        created=NOW - timedelta(days=1),
+        memory_type="event",
+        source="manual",
+    )
+    for index in range(20):
+        _note(
+            db,
+            f"Unrelated family memory {index}.",
+            created=NOW - timedelta(minutes=index + 1),
+            memory_type="fact",
+            source="manual",
+        )
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert any("Dentist appointment" in line for line in lines)
+    assert not any(line.startswith("Nothing is on record") for line in lines)
+
+
+def test_more_than_four_plan_notes_report_the_omitted_count(db):
+    for index in range(6):
+        _note(
+            db,
+            f"Appointment plan {index} at {index + 1} PM.",
+            created=NOW - timedelta(minutes=index + 1),
+            memory_type="event",
+            source="manual",
+        )
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert len([line for line in lines if line.startswith("A note")]) == 4
+    assert _line_with(lines, "more plan-like notes") == (
+        "…and 2 more plan-like notes Parker did not list here — never say he has none."
+    )
+
+
+def test_busy_day_never_caps_away_a_source_failure(db, monkeypatch):
+    monkeypatch.setattr(
+        realtime_workers,
+        "_my_day_medication_lines",
+        lambda _db, _now: [f"Safe schedule line {index}." for index in range(12)],
+    )
+
+    def broken(_db, _now):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(realtime_workers, "_my_day_reminder_lines", broken)
+    monkeypatch.setattr(realtime_workers, "_my_day_note_lines", lambda _db, _now: [])
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert _line_with(lines, "could not read his reminders")
+    assert _line_with(lines, "more Parker did not list here")
+    assert not any(line.startswith("Nothing is on record") for line in lines)

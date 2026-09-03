@@ -35,6 +35,8 @@ from typing import Any, Awaitable, Callable, Optional
 logger = logging.getLogger("parker.companion_power")
 
 Closer = Callable[[str], Awaitable[None]]
+Revoker = Callable[[], None]
+Quiescer = Callable[[], Awaitable[None]]
 
 
 class PowerRefused(Exception):
@@ -52,6 +54,13 @@ class _Registration:
     token: str
     kind: str  # "wake" | "realtime"
     close: Closer
+    revoke: Optional[Revoker] = None
+    quiesce: Optional[Quiescer] = None
+
+    async def __call__(self, reason: str) -> None:
+        """Keep the old callable contract for focused authority tests."""
+
+        await self.close(reason)
 
 
 @dataclass
@@ -68,7 +77,9 @@ class CompanionPower:
     # review, 2026-09-02). A fresh process starts False, so the restart
     # re-claim keeps working.
     released: bool = False
+    save_state: str = "idle"  # idle | pending | saved | failed
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _persist_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _next_id: int = 1
     _sockets: dict[int, _Registration] = field(default_factory=dict, repr=False)
 
@@ -87,7 +98,7 @@ class CompanionPower:
         """
 
         client_id = (client_id or "")[:64]
-        with self._lock:
+        with self._persist_lock, self._lock:
             # Every registered socket belongs to the current owner (claim
             # and release both clear the registry), so "any live socket"
             # means "the current owner is actually listening".
@@ -118,13 +129,14 @@ class CompanionPower:
             self.owner_client = client_id
             self.on = True
             self.released = False
+            self.save_state = "saved"
             gen = self.generation
             token = self.owner_token
         return {
             "power_on": True,
             "owner": token,
             "gen": gen,
-            "displaced": [reg.close for reg in previous],
+            "displaced": previous,
         }
 
     def release(self, persist: Optional[Callable[[bool], Any]] = None) -> dict[str, Any]:
@@ -143,23 +155,68 @@ class CompanionPower:
             self.on = False
             self.released = True
             self.generation += 1
+            generation = self.generation
             self.owner_token = None
             self.owner_client = ""
+            self.save_state = "pending"
             revoked = list(self._sockets.values())
             self._sockets.clear()
-            saved: Optional[bool] = None
-            if persist is not None:
-                saved = True
-                try:
-                    persist(False)
-                except Exception:  # noqa: BLE001 — off in memory regardless
-                    logger.warning("companion power-off write failed", exc_info=True)
-                    saved = False
+        saved: Optional[bool] = None
+        if persist is not None:
+            outcome = self.persist_release(generation, persist)
+            saved = outcome in {"saved", "superseded"}
+        with self._lock:
+            save_state = self.save_state
         return {
             "power_on": False,
             "saved": saved,
-            "revoked": [reg.close for reg in revoked],
+            "save_state": save_state,
+            "generation": generation,
+            "revoked": revoked,
         }
+
+    def is_current_release(self, generation: int) -> bool:
+        """Whether *generation* still owns the pending OFF transition."""
+
+        with self._lock:
+            return (
+                generation == self.generation
+                and self.released
+                and not self.on
+            )
+
+    def persist_release(
+        self, generation: int, persist: Callable[[bool], Any]
+    ) -> str:
+        """Persist OFF iff no newer transition won; return its truthful state.
+
+        The slow write runs under the durable-write lock only after every live
+        line has been revoked; live-state reads remain responsive. A later
+        claim either completes first (and this stale write is skipped) or waits
+        and then writes ON after this OFF.
+        """
+
+        with self._persist_lock:
+            with self._lock:
+                if (
+                    generation != self.generation
+                    or not self.released
+                    or self.on
+                ):
+                    return "superseded"
+            try:
+                persist(False)
+            except Exception:  # noqa: BLE001 — off in memory regardless
+                logger.warning("companion power-off write failed", exc_info=True)
+                with self._lock:
+                    if generation == self.generation and self.released:
+                        self.save_state = "failed"
+                return "failed"
+            with self._lock:
+                if generation == self.generation and self.released:
+                    self.save_state = "saved"
+                    return "saved"
+                return "superseded"
 
     # ------------------------------------------------------------------
     # Socket authority
@@ -181,8 +238,14 @@ class CompanionPower:
             return None
 
     def register(
-        self, *, token: str, kind: str, close: Closer
-    ) -> tuple[Optional[int], list[Closer]]:
+        self,
+        *,
+        token: str,
+        kind: str,
+        close: Closer,
+        revoke: Optional[Revoker] = None,
+        quiesce: Optional[Quiescer] = None,
+    ) -> tuple[Optional[int], list[_Registration]]:
         """Track one authorized socket so power-off can revoke it.
 
         Re-validates the owner under the lock: a power-off that landed
@@ -196,15 +259,21 @@ class CompanionPower:
         with self._lock:
             if not self.on or token != self.owner_token:
                 return None, []
-            superseded: list[Closer] = []
+            superseded: list[_Registration] = []
             if kind == "realtime":
                 for sid, reg in list(self._sockets.items()):
                     if reg.kind == "realtime":
-                        superseded.append(reg.close)
+                        superseded.append(reg)
                         del self._sockets[sid]
             sid = self._next_id
             self._next_id += 1
-            self._sockets[sid] = _Registration(token=token, kind=kind, close=close)
+            self._sockets[sid] = _Registration(
+                token=token,
+                kind=kind,
+                close=close,
+                revoke=revoke,
+                quiesce=quiesce,
+            )
             return sid, superseded
 
     def unregister(self, sid: int) -> None:
@@ -223,6 +292,7 @@ class CompanionPower:
             return {
                 "power_on": self.on,
                 "released": self.released,
+                "save_state": self.save_state,
                 "gen": self.generation,
                 "owner_client": self.owner_client,
                 "live": {

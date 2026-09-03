@@ -71,6 +71,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
+from tzlocal import get_localzone
 
 from app.conversation.outcomes import (
     INTERACTION_OUTCOMES,
@@ -96,10 +97,9 @@ REPEATED_ERROR_MIN_DAYS = 2
 
 
 def home_timezone() -> tzinfo:
-    """The home machine's local timezone (rollup buckets run on it)."""
+    """The home machine's named local zone, including future DST rules."""
 
-    local = datetime.now().astimezone().tzinfo
-    return local if local is not None else timezone.utc
+    return get_localzone()
 
 
 def week_start_for(day: date) -> date:

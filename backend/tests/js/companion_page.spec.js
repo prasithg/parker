@@ -576,6 +576,17 @@ async function poweredActive(env) {
     assert.strictEqual(liveSockets(env).length, 2, 'no third line without his wake');
   });
 
+  await test('a pending off save settles without a false retry', async () => {
+    const env = await bootedEnv();
+    await poweredDormant(env);
+    await poweredOff(env);
+    await env.flush();
+    env.advance(100); await env.flush();
+    env.advance(13000); await env.flush();
+    assert.strictEqual(env.powerReleases.length, 1, 'the saved async write is not retried');
+    assert.strictEqual(power(env), 'off');
+  });
+
   await test('a power-off write that fails keeps everything dead, retries, then says so', async () => {
     const env = await bootedEnv();
     const wakeWs = await poweredDormant(env);

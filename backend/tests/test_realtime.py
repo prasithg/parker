@@ -33,6 +33,7 @@ import json
 import queue
 import threading
 import time
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -2112,3 +2113,50 @@ def test_a_tail_frame_without_a_wake_handoff_is_ignored(db, realtime_enabled, br
         ws.send_json({"type": "end"})
     assert _user_items(fake) == []
     assert _response_creates(fake) == 1
+
+
+def test_revoke_cancels_an_upstream_connection_attempt_before_it_can_open():
+    """Strict OFF owns connection setup too, not only an opened socket."""
+
+    async def scenario() -> tuple[bool, bool]:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def connect():
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            await asyncio.Event().wait()
+            return {}
+
+        bridge = realtime.RealtimeBridge(
+            browser_send, browser_receive, upstream_connect=connect
+        )
+        running = asyncio.create_task(bridge.run())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        bridge.revoke()
+        try:
+            await asyncio.wait_for(cancelled.wait(), timeout=0.2)
+        except asyncio.TimeoutError:
+            pass
+        try:
+            await asyncio.wait_for(asyncio.shield(running), timeout=0.2)
+        except asyncio.TimeoutError:
+            pass
+        observed = cancelled.is_set(), running.done()
+        if not running.done():
+            running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+        return observed
+
+    connect_cancelled, run_finished = asyncio.run(scenario())
+    assert connect_cancelled
+    assert run_finished

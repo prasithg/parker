@@ -40,6 +40,8 @@ router = APIRouter()
 # One store per server process; tests swap it for one built on the test DB
 # (same pattern as setup_api.first_session_manager).
 converse_store = ConverseStore()
+_power_persist_threads: set[threading.Thread] = set()
+_power_persist_lock = threading.Lock()
 
 
 class TurnRequest(BaseModel):
@@ -106,11 +108,12 @@ def companion_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
 
     settings = get_companion_settings(db)
     live = authority.snapshot()
-    if live["released"]:
-        # Off in this process: the durable flag may still be landing (the
-        # route revokes first, then writes). A revoked page must read OFF
-        # here, never "on with no owner" — the restart shape it re-claims on.
-        settings["power_on"] = False
+    if live["released"] or live["power_on"]:
+        # A live transition outranks a durable read that raced it. A revoked
+        # page must see OFF while that write is landing; a successful claim
+        # already persisted ON and must read ON.
+        settings["power_on"] = live["power_on"]
+    settings["power_save_state"] = live["save_state"]
     settings["gen"] = live["gen"]
     settings["owner_client"] = live["owner_client"]
     settings["live"] = live["live"]
@@ -164,32 +167,83 @@ async def companion_power(
                 status_code=refused.status_code,
                 detail={"reason": refused.reason, "text": refused.detail},
             )
-        for close in granted.pop("displaced"):
-            await _revoke(close, "superseded")
+        await _revoke_all(granted.pop("displaced"), "superseded")
         return granted
-    # Memory only — but claim() persists under the same lock from a
-    # threadpool thread, so an off that lands mid-claim must wait for that
-    # write off the event loop, never on it (fresh review, 2026-09-02).
+
+    # Flip memory first so no new socket authorizes, then revoke every line
+    # and wait for its provider work to finish. SQLite persistence starts only
+    # after that privacy boundary and never holds the HTTP acknowledgement.
     released = await run_in_threadpool(authority.release)
-    for close in released.pop("revoked"):
-        await _revoke(close, "power_off")
-    # Off is off; now the durable record (F1 probe 3b: written under the
-    # lock BEFORE the revoke, a slow write kept his mic streaming upstream).
-    saved = True
-    try:
-        await run_in_threadpool(persist, False)
-    except Exception:  # noqa: BLE001 — the lines are dead regardless; the page retries
-        logger.warning("companion power-off write failed", exc_info=True)
-        saved = False
-    released["saved"] = saved
+    generation = released.pop("generation")
+    await _revoke_all(released.pop("revoked"), "power_off")
+    if not authority.is_current_release(generation):
+        released["saved"] = True
+        released["save_state"] = "superseded"
+        return released
+
+    from sqlalchemy.orm import sessionmaker
+
+    power = authority
+    session_factory = sessionmaker(bind=db.get_bind())
+
+    def persist_off(_on: bool) -> None:
+        session = session_factory()
+        try:
+            set_companion_settings(session, power_on=False)
+        finally:
+            session.close()
+
+    def finish_persist() -> None:
+        outcome = "failed"
+        try:
+            outcome = power.persist_release(generation, persist_off)
+        finally:
+            with _power_persist_lock:
+                _power_persist_threads.discard(threading.current_thread())
+        if outcome == "failed":
+            logger.warning("companion power-off remains non-durable; page will retry")
+
+    thread = threading.Thread(
+        target=finish_persist,
+        name=f"parker-power-off-{generation}",
+        daemon=True,
+    )
+    with _power_persist_lock:
+        _power_persist_threads.add(thread)
+    thread.start()
+    released["saved"] = None
+    released["save_state"] = "pending"
     return released
 
 
-async def _revoke(close, reason: str) -> None:
+async def _close_registration(registration, reason: str) -> None:
     try:
-        await asyncio.wait_for(close(reason), timeout=2.0)
+        await asyncio.wait_for(registration.close(reason), timeout=2.0)
     except Exception:  # noqa: BLE001 — a wedged socket must not block the switch
         logger.debug("revoking a companion socket failed", exc_info=True)
+
+
+async def _wait_registration(registration) -> None:
+    if registration.quiesce is None:
+        return
+    try:
+        await registration.quiesce()
+    except Exception:  # noqa: BLE001 — bridge failure is surfaced on its own lane
+        logger.debug("waiting for companion provider quiescence failed", exc_info=True)
+
+
+async def _revoke_all(registrations, reason: str) -> None:
+    registrations = list(registrations)
+    # Fire every synchronous provider cancel before one wedged WebSocket can
+    # delay another. Socket closes are independently bounded; provider
+    # quiescence is awaited without coupling it to session persistence.
+    for registration in registrations:
+        if registration.revoke is not None:
+            registration.revoke()
+    await asyncio.gather(
+        *(_close_registration(registration, reason) for registration in registrations),
+        *(_wait_registration(registration) for registration in registrations),
+    )
 
 
 def _socket_credentials(websocket: WebSocket) -> tuple[str, str]:
@@ -289,11 +343,27 @@ async def converse_wake(websocket: WebSocket) -> None:
     if refusal is not None:
         await _refuse(websocket, refusal)
         return
+    # Register before warm-up: OFF from any screen must close this browser
+    # and release its microphone even while the first model load is blocked.
+    sid, _superseded = authority.register(
+        token=owner, kind="wake", close=_closer(websocket)
+    )
+    if sid is None:
+        await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
+        return
+
     # The warm-up loads the model (and, with weights missing, may try the
     # hub) — never on the event loop, where it would stall every other
-    # socket and the power switch (fresh review, 2026-09-02). The store
-    # serialises the load under its own lock.
-    transcriber = await run_in_threadpool(converse_store.transcriber)
+    # socket and the power switch. The store serialises the load.
+    try:
+        transcriber = await run_in_threadpool(converse_store.transcriber)
+    except BaseException:
+        authority.unregister(sid)
+        raise
+    if authority.authorize(owner, gen) is not None:
+        # The registered closer already sent the authoritative revoke.
+        authority.unregister(sid)
+        return
     if transcriber is None:
         await websocket.send_json(
             {
@@ -305,19 +375,19 @@ async def converse_wake(websocket: WebSocket) -> None:
             }
         )
         await websocket.close()
+        authority.unregister(sid)
         return
     from app.config import settings as app_settings
 
-    detector = wake_module.WakeDetector(
-        transcriber, relative_gate=app_settings.parker_wake_relative_gate
-    )
+    try:
+        detector = wake_module.WakeDetector(
+            transcriber, relative_gate=app_settings.parker_wake_relative_gate
+        )
+    except BaseException:
+        authority.unregister(sid)
+        raise
     opened = time.monotonic()
     woke_at: float | None = None
-    sid, _superseded = authority.register(token=owner, kind="wake", close=_closer(websocket))
-    if sid is None:
-        # Power moved while the model warmed: off, or a new owner.
-        await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
-        return
 
     async def _give_up() -> None:
         # The warmed model keeps failing under the lane. Say so and close
@@ -470,31 +540,24 @@ async def converse_realtime(websocket: WebSocket) -> None:
         )
         await websocket.close()
         return
-    # The closer tells the BRIDGE first: off must revoke the line the
-    # instant power moves (no more mic frames upstream, the upstream close
-    # begins now), not when the page's next frame or disconnect happens to
-    # reach the pump (fresh review, 2026-09-02).
-    holder: dict[str, Any] = {}
-    close_socket = _closer(websocket)
-
-    async def close(reason: str) -> None:
-        bridge = holder.get("bridge")
-        if bridge is not None:
-            bridge.revoke()
-        await close_socket(reason)
-
-    sid, superseded = authority.register(token=owner, kind="realtime", close=close)
+    # The authority owns both the immediate cancel hook and the quiescence
+    # receipt. OFF fans out every cancel before awaiting socket close, then
+    # proves no provider work remains without waiting on session persistence.
+    bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
+    sid, superseded = authority.register(
+        token=owner,
+        kind="realtime",
+        close=_closer(websocket),
+        revoke=bridge.revoke,
+        quiesce=bridge.wait_quiesced,
+    )
     if sid is None:
         realtime_lane.release_bridge_slot()
         await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
         return
-    bridge = realtime_lane.RealtimeBridge(websocket.send_json, websocket.receive_json)
-    holder["bridge"] = bridge
     try:
-        for close in superseded:
-            # One owner, one line: the page's own reconnect replaces its
-            # dead socket; the fenced page ignores frames from the old one.
-            await _revoke(close, "superseded")
+        # One owner, one line: a reconnect replaces its old bridge.
+        await _revoke_all(superseded, "superseded")
         await bridge.run()
     except WebSocketDisconnect:
         pass

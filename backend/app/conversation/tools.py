@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timezone
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
@@ -261,7 +262,13 @@ def handle_capture_intent(
         "status": "captured",
         "captured_intent_id": captured.id,
         "requested_action": captured.requested_action,
-        "due_at": captured.due_at.isoformat() if captured.due_at else None,
+        "due_at": (
+            captured.due_at.replace(tzinfo=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+            if captured.due_at
+            else None
+        ),
     }
 
 

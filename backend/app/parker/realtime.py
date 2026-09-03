@@ -972,6 +972,8 @@ class RealtimeBridge:
         # every provider call this bridge started.
         self._closed = False
         self._cancel = CancelToken()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._connect_task: Optional[asyncio.Task] = None
         self._pump_tasks: set[asyncio.Task] = set()
         self._early_frames: list[Any] = []
         self._early_receive: Optional["asyncio.Future[Any]"] = None
@@ -1000,7 +1002,16 @@ class RealtimeBridge:
         self._user_speaking = False
         self._pending_nudge_count = 0
         self._inflight_lookups: set[str] = set()
+        self._pending_result_keys: set[str] = set()
+        self._active_result_keys: set[str] = set()
         self._worker_tasks: set[asyncio.Task] = set()
+        # Provider-bearing runners are cancelled at their transport token,
+        # not abandoned at the asyncio wrapper. OFF waits for these runners
+        # to unwind before its HTTP acknowledgement.
+        self._provider_tasks: set[asyncio.Task] = set()
+        self._providers_quiesced = _threading.Event()
+        self._providers_quiesced.set()
+        self._transport_quiesced = _threading.Event()
         self._exchanges: list[tuple[str, str]] = []
         self._last_activity = time.monotonic()
         self._last_user_activity = 0.0  # only his voice stands the close down
@@ -1124,16 +1135,49 @@ class RealtimeBridge:
         does the awaits: upstream close, drain, persistence."""
 
         self._closed = True
-        for task in self._pump_tasks:
-            task.cancel()
-        self._cancel.cancel()
-        for task in self._worker_tasks:
-            task.cancel()
+        self._cancel.cancel()  # provider sockets: thread-safe and immediate
+
+        def cancel_async_tasks() -> None:
+            connect_task = self._connect_task
+            if connect_task is not None and not connect_task.done():
+                connect_task.cancel()
+            for task in self._pump_tasks:
+                task.cancel()
+            # Cancelling run_in_threadpool abandons the await while its
+            # provider thread keeps running. Keep those runners observable.
+            for task in self._worker_tasks - self._provider_tasks:
+                task.cancel()
+
+        loop = self._loop
+        if loop is None:
+            cancel_async_tasks()
+        else:
+            try:
+                on_owner_loop = asyncio.get_running_loop() is loop
+            except RuntimeError:
+                on_owner_loop = False
+            if on_owner_loop:
+                cancel_async_tasks()
+            else:
+                loop.call_soon_threadsafe(cancel_async_tasks)
+
+    async def wait_quiesced(self) -> None:
+        """Wait until this bridge owns no transport or provider work."""
+
+        await run_in_threadpool(self._transport_quiesced.wait)
+        await run_in_threadpool(self._providers_quiesced.wait)
 
     async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
         connect = self._upstream_connect or globals()["connect_openai"]
-        self._upstream = await connect()
+        self._connect_task = asyncio.ensure_future(connect())
         try:
+            try:
+                self._upstream = await self._connect_task
+            except asyncio.CancelledError:
+                if self._closed:
+                    return
+                raise
             if self._closed:
                 return  # revoked while connecting: shutdown closes what opened
             await self._upstream.send(json.dumps(build_session_update()))
@@ -1184,6 +1228,7 @@ class RealtimeBridge:
                 if exc is not None and not isinstance(exc, asyncio.CancelledError):
                     raise exc
         finally:
+            self._connect_task = None
             await self._shutdown()
 
     async def _shutdown(self) -> None:
@@ -1214,11 +1259,17 @@ class RealtimeBridge:
         # 2. Close the upstream FIRST — bounded: a wedged socket must never
         #    pin the bridge slot open.
         close = getattr(self._upstream, "close", None)
-        if close is not None:
-            closing = asyncio.ensure_future(asyncio.wait_for(close(), timeout=5.0))
-            await _await_despite_cancel(closing)
-            if not closing.cancelled():
-                closing.exception()  # best-effort close; retrieve, never raise
+        try:
+            if close is not None:
+                closing = asyncio.ensure_future(asyncio.wait_for(close(), timeout=5.0))
+                await _await_despite_cancel(closing)
+                if not closing.cancelled():
+                    closing.exception()  # best-effort close; retrieve, never raise
+        finally:
+            # Connection setup has been cancelled or the opened upstream has
+            # completed its bounded close. The power route may now wait only
+            # on provider runners, never on session persistence below.
+            self._transport_quiesced.set()
         # 3. Let the pumps and the (now cancelled) worker threads unwind.
         draining = set(self._pump_tasks) | set(self._worker_tasks)
         if draining:
@@ -1372,11 +1423,19 @@ class RealtimeBridge:
             )
         )
 
-    async def _request_nudge(self) -> None:
+    async def _request_nudge(self, *, result_key: str = "") -> None:
         """Ask for a model response covering everything injected so far."""
 
+        if result_key:
+            self._pending_result_keys.add(result_key)
         self._pending_nudge_count += 1
         await self._try_nudge()
+
+    def _begin_result_response(self) -> None:
+        """Bind every injected result waiting for speech to this response."""
+
+        self._active_result_keys.update(self._pending_result_keys)
+        self._pending_result_keys.clear()
 
     async def _try_nudge(self) -> None:
         if self._pending_nudge_count <= 0 or self._closing_sent or self._closed:
@@ -1385,6 +1444,7 @@ class RealtimeBridge:
             return  # deferred; response.done retries
         self._pending_nudge_count = 0
         self._goodbye_nudge_pending = False  # the goodbye (if owed) rides THIS response
+        self._begin_result_response()
         self._response_active = True  # optimistic — response.created confirms
         await self._upstream.send(json.dumps({"type": "response.create"}))
 
@@ -1422,6 +1482,7 @@ class RealtimeBridge:
 
         async def runner() -> None:
             requested = time.monotonic()
+            delivered = False
             try:
                 try:
                     result = await asyncio.wait_for(
@@ -1436,20 +1497,36 @@ class RealtimeBridge:
                     result = WorkerResult(
                         kind=kind, question=question, error="it hit a problem partway"
                     )
-                finally:
-                    if inflight_key:
-                        self._inflight_lookups.discard(inflight_key)
-                await self._deliver_result(result, requested)
+                await self._deliver_result(
+                    result, requested, result_key=inflight_key
+                )
+                delivered = True
             except asyncio.CancelledError:
                 raise  # session over — the late result is dropped by policy
             except Exception:  # noqa: BLE001 — a worker must never end the call
                 logger.warning("realtime %s result delivery failed", kind, exc_info=True)
+            finally:
+                if inflight_key and (not delivered or self._closed):
+                    self._inflight_lookups.discard(inflight_key)
+                    self._pending_result_keys.discard(inflight_key)
+                    self._active_result_keys.discard(inflight_key)
 
+        self._providers_quiesced.clear()
         task = asyncio.create_task(runner())
         self._worker_tasks.add(task)
-        task.add_done_callback(self._worker_tasks.discard)
+        self._provider_tasks.add(task)
 
-    async def _deliver_result(self, result: WorkerResult, requested: float) -> None:
+        def finished(done: asyncio.Task) -> None:
+            self._worker_tasks.discard(done)
+            self._provider_tasks.discard(done)
+            if not self._provider_tasks:
+                self._providers_quiesced.set()
+
+        task.add_done_callback(finished)
+
+    async def _deliver_result(
+        self, result: WorkerResult, requested: float, *, result_key: str = ""
+    ) -> None:
         if self._closed:
             return  # off: a late result is dropped, never injected or nudged
         worker_ms = int((time.monotonic() - requested) * 1000)
@@ -1471,7 +1548,7 @@ class RealtimeBridge:
             await self._browser_send(
                 {"type": "working", "kind": "my_day", "status": "failed" if result.error else "done"}
             )
-            await self._request_nudge()
+            await self._request_nudge(result_key=result_key)
             await self._journal(
                 "injection",
                 said=result.speech,
@@ -1511,7 +1588,7 @@ class RealtimeBridge:
             result.guard_tripped,
             result.error or "none",
         )
-        await self._request_nudge()
+        await self._request_nudge(result_key=result_key)
         asked = self._lookup_asked.pop(" ".join(result.question.lower().split()), None)
         await self._journal(
             "injection",
@@ -1713,6 +1790,7 @@ class RealtimeBridge:
                 # injected from here on count again and nudge at its done.
                 self._pending_nudge_count = 0
                 self._goodbye_nudge_pending = False
+                self._begin_result_response()
             self._response_active = True
         elif etype == "response.done":
             await self._on_response_done(event)
@@ -1726,6 +1804,11 @@ class RealtimeBridge:
                 if response_active:
                     self._response_active = True
                     self._pending_nudge_count = max(self._pending_nudge_count, 1)
+                    # Our optimistic response.create lost a race to an older
+                    # server response, so its result obligations are still
+                    # pending; that older response must not clear them.
+                    self._pending_result_keys.update(self._active_result_keys)
+                    self._active_result_keys.clear()
                     if self._goodbye_requested and not self._closing_sent:
                         # Our goodbye nudge collided with a server response
                         # that was already running (created before the
@@ -1743,6 +1826,10 @@ class RealtimeBridge:
         if not isinstance(response, dict):
             response = {}
         self._response_active = False
+        # This response has now spoken every result obligation bound when it
+        # began. Only now may compound gratitude become an end signal.
+        self._inflight_lookups.difference_update(self._active_result_keys)
+        self._active_result_keys.clear()
         self._last_activity = time.monotonic()
         if self._audio_sent:
             # The authoritative end of an audio-bearing response, in-order

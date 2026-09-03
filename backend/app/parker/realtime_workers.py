@@ -317,13 +317,17 @@ def _memory_lines(db: Any) -> list[str]:
 
 
 def _medication_lines(db: Any) -> list[str]:
-    """Due-soon medicines by name and time only — never a dose."""
+    """Due-soon medicines by name and home-local wall time, never a dose."""
+
+    from datetime import datetime
 
     from app.meds.tracker import get_due_medications
+    from app.parker.rollup import home_timezone
 
+    now_local = datetime.now(home_timezone()).replace(tzinfo=None)
     return [
         f"His {medication.name} is due around {scheduled_time}."
-        for medication, scheduled_time in get_due_medications(db)
+        for medication, scheduled_time in get_due_medications(db, now=now_local)
     ]
 
 
@@ -464,8 +468,8 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
     Two sources (fix round 2, P03-1): a dated reminder lives on
     ``CapturedIntent`` (status pending) until the resolve gate
     (``pipeline.resolve_captured_intents``: ``due_at <= now``) lets it
-    stage, so before its time it exists nowhere else — read it from there,
-    as waiting for his yes, through the same due-time phrasing. An intent
+    stage, so before its time it exists nowhere else — read it from there
+    as recorded but not set, through the same due-time phrasing. An intent
     that already has a staged action is skipped, so a reminder is one
     line before and after it resolves.
     """
@@ -529,7 +533,7 @@ def _my_day_reminder_lines(db: Any, now_local: Any) -> list[str]:
         subject = str(intent.subject or intent.intent_text or "").strip()
         if not subject:
             continue
-        entries.append((intent.due_at, f"A reminder (waiting for his yes): {subject}"))
+        entries.append((intent.due_at, f"A reminder (recorded; not set yet): {subject}"))
     today_lines: list[str] = []
     tomorrow_lines: list[str] = []
     undated_lines: list[str] = [f"{head} — no time on record." for stored, head in entries if stored is None]
@@ -592,7 +596,6 @@ def _my_day_note_lines(db: Any, now_local: Any) -> list[str]:
         .filter(ConversationMemory.source != "realtime")
         .filter(ConversationMemory.created_at >= _to_stored(today - timedelta(days=6)))
         .order_by(ConversationMemory.created_at.desc(), ConversationMemory.id.desc())
-        .limit(20)
         .all()
     )
     lines: list[str] = []
@@ -615,9 +618,15 @@ def _my_day_note_lines(db: Any, now_local: Any) -> list[str]:
                 f" — written {when}, so its “{relative.group(1)}” counts from then; "
                 "the date is uncertain."
             )
+        elif not (when == "today" and relative):
+            line += " — its plan date is not explicit, so the date is uncertain."
         lines.append(line)
-        if len(lines) == 4:
-            break
+    if len(lines) > 4:
+        omitted = len(lines) - 4
+        lines = lines[:4] + [
+            f"…and {omitted} more plan-like notes Parker did not list here — "
+            "never say he has none."
+        ]
     return lines
 
 
@@ -666,6 +675,11 @@ def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerR
             except Exception:  # noqa: BLE001
                 pass
     safe = [line for line in lines if not speech_violates_medical_boundary(line)]
+    # Cap data before adding source-health truth; a busy day must never hide
+    # that one source failed and invite the model to deny records it could not read.
+    if len(safe) > 11:
+        dropped = len(safe) - 10
+        safe = safe[:10] + [f"…and {dropped} more Parker did not list here — never say he has none."]
     if failed_sources:
         safe.append(
             "Parker could not read his " + " and ".join(failed_sources)
@@ -673,11 +687,6 @@ def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerR
         )
     elif len(safe) == 1:
         safe.append("Nothing is on record for him today — no reminders and no notes.")
-    # The limit line is unconditional: cap BEFORE appending it, and never
-    # cut silently — a cut item must not read as "nothing written down".
-    if len(safe) > 11:
-        dropped = len(safe) - 10
-        safe = safe[:10] + [f"…and {dropped} more Parker did not list here — never say he has none."]
     safe.append(MY_DAY_LIMIT_LINE)
     speech = "\n".join(safe)
     if speech_violates_medical_boundary(speech):

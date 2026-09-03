@@ -12,6 +12,7 @@ Each test asserts the BRIDGE CONTRACT only: the injected instruction, the
 
 from __future__ import annotations
 
+import asyncio
 import threading
 
 import pytest
@@ -473,3 +474,101 @@ def test_the_goodbye_is_spoken_even_when_the_vad_already_answered_his_closer(voi
         assert _drain_until_closing(ws)
     assert _wait_until(lambda: realtime._active_bridges == 0, timeout=5.0)
     assert len(_end_events(world)) == 1
+
+
+def test_compound_closer_during_lookup_result_injection_waits_for_the_answer(
+    voice_world, monkeypatch
+):
+    """A result remains open while its system item is crossing the bridge."""
+
+    world = voice_world
+    world.enable_search({"us open": "Djokovic plays at seven tonight."})
+    injection_started = threading.Event()
+    release_injection = threading.Event()
+    original = realtime.RealtimeBridge._send_system_item
+
+    async def blocked_result(self, text):
+        if "LOOKUP RESULT" in text:
+            injection_started.set()
+            await asyncio.to_thread(release_injection.wait, 3.0)
+        await original(self, text)
+
+    monkeypatch.setattr(realtime.RealtimeBridge, "_send_system_item", blocked_result)
+    fake = world.script([])
+    closed_early = False
+    try:
+        with world.connect() as ws:
+            world.settle_open(fake, expect_card=False)
+            _answer(
+                world, ws, fake, "who plays tonight",
+                "Let me check that for you right now.",
+            )
+            fake.feed(done(look_call("who plays at the US Open tonight")))
+            assert ws.receive_json() == {
+                "type": "working", "kind": "search", "status": "started"
+            }
+            assert injection_started.wait(timeout=1.0)
+            fake.feed(user_said("OK, thanks."))
+            assert ws.receive_json() == {"type": "user_transcript", "text": "OK, thanks."}
+            closed_early = _wait_until(
+                lambda: any("sounds finished" in item for item in _system_items(fake)),
+                timeout=0.3,
+            )
+            release_injection.set()
+            assert _wait_until(lambda: any("Djokovic" in item for item in _system_items(fake)))
+            ws.send_json({"type": "end"})
+    finally:
+        release_injection.set()
+    assert not closed_early
+    assert _end_events(world) == []
+
+
+def test_compound_closer_waits_for_the_result_bearing_response_done(voice_world):
+    """Only the response that can include the injected result closes the obligation."""
+
+    world = voice_world
+    world.enable_search({"us open": "Djokovic plays at seven tonight."})
+    fake = world.script([])
+    with world.connect() as ws:
+        world.settle_open(fake, expect_card=False)
+        _answer(
+            world, ws, fake, "who plays tonight",
+            "Let me check that for you right now.",
+        )
+        fake.feed(done(look_call("who plays at the US Open tonight")))
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
+        assert _wait_until(lambda: any("Djokovic" in item for item in _system_items(fake)))
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "done"
+        }
+
+        # The result arrived while the function-call acknowledgement response
+        # was active. Gratitude is still conversation before that response ends.
+        fake.feed(user_said("OK, thanks."))
+        assert ws.receive_json() == {"type": "user_transcript", "text": "OK, thanks."}
+        assert not any("sounds finished" in item for item in _system_items(fake))
+        fake.feed(model_said("I'm still checking that for you now."))
+        assert ws.receive_json()["type"] == "assistant_transcript_delta"
+        fake.feed(done())  # sends the deferred, result-bearing nudge
+
+        # The acknowledgement's done is not enough: the result response is
+        # now active and must still be heard before a soft close is possible.
+        fake.feed(user_said("OK, thanks."))
+        assert ws.receive_json() == {"type": "user_transcript", "text": "OK, thanks."}
+        goodbye_count = sum("sounds finished" in item for item in _system_items(fake))
+        assert goodbye_count == 0
+        fake.feed(model_said("Djokovic plays at seven tonight on the main court."))
+        assert ws.receive_json()["type"] == "assistant_transcript_delta"
+        fake.feed(done())
+
+        # Now the answer has actually landed; the observed compound closer
+        # may end the session normally.
+        fake.feed(user_said("OK, thanks."))
+        assert ws.receive_json() == {"type": "user_transcript", "text": "OK, thanks."}
+        assert _wait_until(
+            lambda: sum("sounds finished" in item for item in _system_items(fake))
+            == goodbye_count + 1
+        )
+        ws.send_json({"type": "end"})
