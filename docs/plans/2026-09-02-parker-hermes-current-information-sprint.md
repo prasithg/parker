@@ -381,6 +381,7 @@ the real inline page scripts when invoked by the documented Node glob.
 | `3a8833b` | first-review ledger closure + second fresh review source | power lifecycle **PASS**; release evidence/docs **PASS**; My Day/session correctness **NEEDS_FIX** on two new edge cases: search/My Day key aliasing and safety-filtered records disappearing from both omission counts and the empty-day decision. |
 | `064b60d` | second-review blocker closure | search keys are structurally namespaced; safety-filtered records retain generic counted presence without exposing content; stale power comment and medication README wording corrected. Full backend **1383 passed**; focused six-file deck **185 passed × 5**; Rust/Tauri **17 passed**; direct Node **56/56 + 3/3 + 48/48**; voice scenarios **98 passed**; release-readiness **PASS**. |
 | `2630996` | final narrow-review source | **PASS** on the two second-cycle fixes and ledger claims; the reviewer independently confirmed all three new regressions pass here and fail on `3a8833b`, then reran the exact six-file deck (**185 passed**). Aggregate final review: power PASS, My Day/session PASS, evidence/docs PASS. Artifact: `docs/reviews/2026-09-03-pr49-hermes-final-review.md`. |
+| `76f0011` | reviewed release-candidate receipt | Exact-head hosted CI **PASS** (run `33712062093`, job `100513492079`). Clean package chain **PASS**: `make sidecar`, `scripts/sidecar_smoke.sh`, `cargo tauri build`, and `scripts/packaged_companion_probe.sh --expect-sha 76f0011596f148c2970880751f8988ab63d273de .../Parker.app`; both engine and shell reported the full SHA, WKWebView posted `webgl_ready`, power stayed OFF with no wake socket, and the bundled engine exited with the shell. |
 
 ### Fresh-review blocker closure
 
@@ -427,13 +428,13 @@ the real inline page scripts when invoked by the documented Node glob.
 - [x] Scheduled-wrapper contract and inactive harness: 15/15 and 9/9 real checks (not phony no-ops).
 - [x] `make eval-repair` executed honestly: no `ANTHROPIC_API_KEY`, so the optional model-backed repair eval reported **skipped** and produced no evidence. No key was fabricated or read from `.env`.
 - [x] Fresh final-tree independent review artifact bound to source `26309965a5f57ac18516e3d89379c0480bc212cd`: `docs/reviews/2026-09-03-pr49-hermes-final-review.md`.
-- [ ] Green GitHub CI for the exact pushed head.
-- [ ] Clean exact-head Parker.app build + packaged companion probe.
+- [x] Green GitHub CI for reviewed/package source `76f0011596f148c2970880751f8988ab63d273de`: run `33712062093`, job `100513492079`.
+- [x] Clean `76f0011` Parker.app build + sidecar smoke + packaged companion probe; exact path: `/Users/prasithgovin/Development/personal/parkinsons-assistant/desktop/src-tauri/target/release/bundle/macos/Parker.app`.
 - [ ] Pras human/device checks below; never claimed by automation.
 
-The existing `.app` is bound only to `ea0ef7c`. It predates the later runtime
-and dependency fixes and is not a valid final-head test artifact; an exact-head
-package and probe remain required below.
+The receipt-only ledger commit after `76f0011` does not change `backend/app`, the desktop source, dependencies, or scripts. Its own exact-head CI and SHA-stamped rebuild are recorded in PR #49's mutable body and the final handoff rather than falsely self-referencing a commit hash from inside that same commit.
+
+The earlier `.app` bound to `ea0ef7c` is not valid final evidence because it predates the runtime and dependency fixes. The `76f0011` package above replaces it; the receipt-only head still requires its own SHA-stamped rebuild before handoff.
 
 ### What the wake soak says (real base model, synthesized voices, final tree)
 
