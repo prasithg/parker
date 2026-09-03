@@ -377,6 +377,7 @@ the real inline page scripts when invoked by the documented Node glob.
 | `b3bc12d` | final blocker/gate repair | `make test`: **1354 passed**; focused concurrency/power/My Day/session-end deck: **161 passed × 5**; Rust/Tauri: **17 passed**; direct Node glob: companion **56/56**, lab **3/3**, expression **48/48**; voice scenarios: **98 passed**; `git diff --check`: clean |
 | `bb3fe01` | canonical UTC evidence refresh (2026-09-03) | all ten dated JSON/Markdown pairs byte-identical to their `latest` mirrors; read-only release evaluator against the committed reports: **PASS**, no blocking failures; task taxonomy 24/24, demo interactivity 9/9, degraded replay 3/3 vs 0/3 no-repair, caregiver legibility 10/10, repair rubric 5/5, wake context 14/14, zero unsafe misses in the named gates |
 | `329b057` | scheduled-wrapper CI gate repair | restored the two Make recipes the semantic union had silently reduced to phony no-ops; static target pins pass; contract **15/15**, inactive harness **9/9** with one bounded worker and zero live activations; full backend **1356 passed** |
+| `3e97c2d` | first fresh-review blocker closure | OFF preempts blocked/queued ON claims; retired bridges remain power-owned; startup and delivery are cancel-safe; actual provider computation is tracked through timeout; unspoken results remain in flight; My Day includes undated pending reminders with truthful cardinality; all public/ledger contradictions corrected. Full backend **1380 passed**; focused six-file deck **182 passed × 5**; Rust/Tauri **17 passed**; direct Node **56/56 + 3/3 + 48/48**; voice scenarios **98 passed**. |
 
 ### Fresh-review blocker closure
 
@@ -389,23 +390,34 @@ the real inline page scripts when invoked by the documented Node glob.
 | power | wake socket was unowned while the local model warmed | closed | 1a88534; warmup-revocation test |
 | power | a revoked screen could transiently report ON | closed | 1a88534/7ec9eeb; durable-ON negative-space pin |
 | power | same-owner handover was blocked by an abandoned provider thread | closed | b3bc12d; only `power_off` awaits provider quiescence; two concurrency scenarios are in the five-repeat deck |
+| power | blocked ON persistence held the state lock and delayed synchronous OFF | closed | 3e97c2d; transition tickets plus blocked and queued-claim concurrency pins |
+| power | superseded bridges disappeared from later OFF accounting | closed | 3e97c2d; retired registrations remain power-owned through true quiescence |
+| power | revoke could strand the supervisor in a pre-pump await | closed | 3e97c2d; four gated startup-phase cancellation tests |
+| power | semantic timeout could mark provider quiescent while its thread still ran | closed | 3e97c2d; computation and delivery tasks split, with abandoned-thread pin |
+| power | a suspended result delivery could resume after revoke | closed | 3e97c2d; delivery cancellation plus post-await closed fences |
 | My Day | failed-source truth could be truncated | closed | 1a88534; source-health line appended after item cap |
 | My Day | the prefilter could hide plan-like notes | closed | 1a88534; seven-day scan then bounded truthful omission line |
 | My Day | generic plan-like notes lacked date uncertainty | closed | 1a88534; explicit uncertainty phrasing |
 | My Day | fixed-offset local time lost future DST rules | closed | 1a88534; named `tzlocal` zone with winter/summer pin |
 | My Day | due timestamps were not canonical instants | closed | 1a88534; aware → UTC, naive wall time with DST gap/fold rejection, outbound `Z` |
 | My Day | unresolved future reminders sounded confirmation-ready | closed | 1a88534; “recorded; not set yet” |
-| session end | a lookup stopped counting as in-flight when injected, so gratitude could close before the result was spoken | closed | 1a88534; result obligations remain active through the response that speaks them |
+| My Day | recent unresolved undated intents were omitted entirely | closed | 3e97c2d; pending-undated two-day-window regression |
+| My Day | medication defaults compared UTC digits with local schedules outside realtime | closed | 3e97c2d; central named-zone normalization with winter/summer pins |
+| My Day | nested source summaries made the global omission total false | closed | 3e97c2d; structured represented-record cardinality and mixed-source regression |
+| session end | a lookup stopped counting as in-flight before its result was actually spoken, including cancelled/incomplete/silent responses | closed | 1a88534 + 3e97c2d; response-bound obligations requeue until completed observable speech; browser Stop stays silent |
+| release evidence | the ledger could imply the old `ea0ef7c` app was code-identical to final | closed | 3e97c2d; old package explicitly invalid for final-head testing |
+| release evidence | wake-soak summary contradicted the committed Fred-voice misses | closed | 3e97c2d; five misses split accurately across 120/175 wpm plus the TV false wake |
+| public docs | shipped wake/realtime capabilities were also listed as future | closed | 3e97c2d; stack rows distinguish local talk, opt-in realtime, and later evidence/provider work |
 | release gate | `node --test backend/tests/js/*.spec.js` exited on missing generated-script arguments | closed | b3bc12d; specs extract the real page scripts when run directly |
 | release gate | CI named both scheduled-wrapper evaluators, but their phony Make targets had no recipes and passed without executing anything | closed | 329b057; restored historical recipes plus target-presence regressions; observed 15/15 + 9/9 real checks |
 
 ### Current automated-gate checklist
 
-- [x] Full backend suite: 1356 passed, 2 known deprecation warnings.
+- [x] Full backend suite: 1380 passed, 2 known deprecation warnings.
 - [x] Rust/Tauri tests: 17 passed.
 - [x] Direct companion/lab/expression Node specs: 56/56, 3/3, 48/48.
 - [x] Voice scenario deck: 98 passed.
-- [x] Focused concurrency/power/My Day/session-end deck: 161 passed in each of five consecutive runs.
+- [x] Focused concurrency/power/My Day/session-end deck: 182 passed in each of five consecutive runs. Exact command: `backend/.venv/bin/python -m pytest -q backend/tests/test_scenarios_concurrency.py backend/tests/test_companion_power.py backend/tests/test_realtime_workers.py backend/tests/test_my_day_worker.py backend/tests/test_realtime.py backend/tests/test_scenarios_session_end.py`.
 - [x] Canonical UTC report refresh and read-only committed-artifact rollup: PASS for 2026-09-03; dated/latest pairs are byte-identical.
 - [x] Scheduled-wrapper contract and inactive harness: 15/15 and 9/9 real checks (not phony no-ops).
 - [x] `make eval-repair` executed honestly: no `ANTHROPIC_API_KEY`, so the optional model-backed repair eval reported **skipped** and produced no evidence. No key was fabricated or read from `.env`.
@@ -414,8 +426,9 @@ the real inline page scripts when invoked by the documented Node glob.
 - [ ] Clean exact-head Parker.app build + packaged companion probe.
 - [ ] Pras human/device checks below; never claimed by automation.
 
-The docs-only commits necessarily postdate the bound `.app`; the code at the
-built revision is byte-identical to the final head's code.
+The existing `.app` is bound only to `ea0ef7c`. It predates the later runtime
+and dependency fixes and is not a valid final-head test artifact; an exact-head
+package and probe remain required below.
 
 ### What the wake soak says (real base model, synthesized voices, final tree)
 
@@ -455,7 +468,6 @@ not evidence.
   before lifting the pin.
 - Realtime `unavailable` (no OpenAI key) now rests honestly with a card;
   a real-key-missing packaged run is a human gate.
-- The wake soak's paused-greeting section is gated and currently FAILs on
-  ASR misses for two voices at 120 wpm; whether to keep it gated or report
-  it is Pras's call (the acceptance bullet asks for the latch and the
-  temporal tests, which pass).
+- The wake soak remains gated and currently FAILs on five Fred-voice paused-
+  greeting misses (three at 120 wpm and two at 175 wpm), plus the separately
+  recorded ambient-TV false wake. Human room disposition remains open.
