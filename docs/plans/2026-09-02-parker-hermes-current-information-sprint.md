@@ -374,8 +374,9 @@ the real inline page scripts when invoked by the documented Node glob.
 | ea0ef7c | packaged chain on a clean tree | PASS — `make sidecar` → `sidecar_smoke.sh` → `cargo tauri build` → `packaged_companion_probe.sh` (default expectation = HEAD, clean tree): bundled engine and shell both report ea0ef7c; the engine ran as the shell's child and exited 1.5 s after it; WKWebView posted `webgl_ready`; no power claim, no wake socket (the probe states it does not observe TCC/microphone or pixels) |
 | 342edfe | ledger filled (docs) | exact-SHA CI **green** (run 33694627135) — the code is identical to ea0ef7c/7ec9eeb; cross-family (Hermes / GPT) review: **not completed** — started against 342edfe and stopped at wrap-up (credits); packet at the session scratchpad `hermes-review-packet-final.md`; re-run it before merge |
 | 1a88534 | checkpoint after three fresh Hermes blocker reviews | power lifecycle, My Day, and session-end fixes present; intentionally **not release-ready**: the resumed full suite exposed five failures |
-| b3bc12d | final blocker/gate repair | `make test`: **1354 passed**; focused concurrency/power/My Day/session-end deck: **161 passed × 5**; Rust/Tauri: **17 passed**; direct Node glob: companion **56/56**, lab **3/3**, expression **48/48**; voice scenarios: **98 passed**; `git diff --check`: clean |
-| bb3fe01 | canonical UTC evidence refresh (2026-09-03) | all ten dated JSON/Markdown pairs byte-identical to their `latest` mirrors; read-only release evaluator against the committed reports: **PASS**, no blocking failures; task taxonomy 24/24, demo interactivity 9/9, degraded replay 3/3 vs 0/3 no-repair, caregiver legibility 10/10, repair rubric 5/5, wake context 14/14, zero unsafe misses in the named gates |
+| `b3bc12d` | final blocker/gate repair | `make test`: **1354 passed**; focused concurrency/power/My Day/session-end deck: **161 passed × 5**; Rust/Tauri: **17 passed**; direct Node glob: companion **56/56**, lab **3/3**, expression **48/48**; voice scenarios: **98 passed**; `git diff --check`: clean |
+| `bb3fe01` | canonical UTC evidence refresh (2026-09-03) | all ten dated JSON/Markdown pairs byte-identical to their `latest` mirrors; read-only release evaluator against the committed reports: **PASS**, no blocking failures; task taxonomy 24/24, demo interactivity 9/9, degraded replay 3/3 vs 0/3 no-repair, caregiver legibility 10/10, repair rubric 5/5, wake context 14/14, zero unsafe misses in the named gates |
+| `329b057` | scheduled-wrapper CI gate repair | restored the two Make recipes the semantic union had silently reduced to phony no-ops; static target pins pass; contract **15/15**, inactive harness **9/9** with one bounded worker and zero live activations; full backend **1356 passed** |
 
 ### Fresh-review blocker closure
 
@@ -396,15 +397,17 @@ the real inline page scripts when invoked by the documented Node glob.
 | My Day | unresolved future reminders sounded confirmation-ready | closed | 1a88534; “recorded; not set yet” |
 | session end | a lookup stopped counting as in-flight when injected, so gratitude could close before the result was spoken | closed | 1a88534; result obligations remain active through the response that speaks them |
 | release gate | `node --test backend/tests/js/*.spec.js` exited on missing generated-script arguments | closed | b3bc12d; specs extract the real page scripts when run directly |
+| release gate | CI named both scheduled-wrapper evaluators, but their phony Make targets had no recipes and passed without executing anything | closed | 329b057; restored historical recipes plus target-presence regressions; observed 15/15 + 9/9 real checks |
 
 ### Current automated-gate checklist
 
-- [x] Full backend suite: 1354 passed, 2 known deprecation warnings.
+- [x] Full backend suite: 1356 passed, 2 known deprecation warnings.
 - [x] Rust/Tauri tests: 17 passed.
 - [x] Direct companion/lab/expression Node specs: 56/56, 3/3, 48/48.
 - [x] Voice scenario deck: 98 passed.
 - [x] Focused concurrency/power/My Day/session-end deck: 161 passed in each of five consecutive runs.
 - [x] Canonical UTC report refresh and read-only committed-artifact rollup: PASS for 2026-09-03; dated/latest pairs are byte-identical.
+- [x] Scheduled-wrapper contract and inactive harness: 15/15 and 9/9 real checks (not phony no-ops).
 - [x] `make eval-repair` executed honestly: no `ANTHROPIC_API_KEY`, so the optional model-backed repair eval reported **skipped** and produced no evidence. No key was fabricated or read from `.env`.
 - [ ] Fresh final-tree independent review artifact (must bind its source revision).
 - [ ] Green GitHub CI for the exact pushed head.
