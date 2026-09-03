@@ -698,7 +698,21 @@ def run_my_day_worker(make_db: Callable[[], Any], *, now: Any = None) -> WorkerR
                 db.close()
             except Exception:  # noqa: BLE001
                 pass
-    safe = [item for item in lines if not speech_violates_medical_boundary(item[0])]
+    safe: list[_CountedLine] = []
+    blocked_records = 0
+    for item in lines:
+        if speech_violates_medical_boundary(item[0]):
+            blocked_records += item[1]
+        else:
+            safe.append(item)
+    if blocked_records:
+        noun = "record" if blocked_records == 1 else "records"
+        safe.append(
+            (
+                f"Parker has {blocked_records} {noun} on file that it cannot safely read aloud.",
+                blocked_records,
+            )
+        )
     # Cap data before adding source-health truth; a busy day must never hide
     # that one source failed and invite the model to deny records it could not read.
     if len(safe) > 11:

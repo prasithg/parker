@@ -157,8 +157,9 @@ async def companion_power(
 
     if payload.on:
         try:
-            # The durable write runs under the authority lock; keep both off
-            # the event loop so a SQLite busy wait never stalls a pump.
+            # The durable write is serialized by the authority's persistence
+            # lock, while its state lock stays available to an immediate OFF.
+            # Keep the I/O off the event loop so SQLite never stalls a pump.
             granted = await run_in_threadpool(
                 authority.claim, persist, client_id=payload.client_id
             )

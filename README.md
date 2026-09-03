@@ -112,7 +112,7 @@ The local v0 loop works end to end with no external services and no real sends:
 - **Review-the-session surface (the human-testing flywheel)** — every live session is journaled (`realtime_session_events`: turns, worker injections with the injected text, lookup acks and asked→injected latencies, proposal outcomes, guard trips) and `/parker/sessions/ui` (dashboard-auth) shows a finished session back to the human tester — plus what the *next* session's context card now carries, with the session's minted topic memory named. One tap files "that felt wrong because…" against the exact moment, locally. This is the seeing half of the human-testing flywheel: Pras is the first human tester ([docs/next-slices.md](docs/next-slices.md), 2026-08-31).
 - 1059 backend tests as of the human-testing-flywheel slice (2026-08-31).
 
-Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`, `meds/`); they are not wired into the v0 demo path.
+Some inert legacy modules from an earlier phone-call prototype remain (`calls/`, `voice/stream.py`); they are not wired into the v0 demo path. The medication tracker is active in My Day and call prompts.
 
 ## Stack
 

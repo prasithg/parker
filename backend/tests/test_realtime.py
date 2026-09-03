@@ -2459,3 +2459,51 @@ def test_browser_stop_keeps_result_pending_without_immediately_restarting_speech
     assert creates == 1
     assert inflight == {"search:weather"}
     assert pending == {"search:weather"}
+
+
+def test_search_question_cannot_alias_the_my_day_result_key(monkeypatch):
+    """Tool-controlled namespaces stay disjoint from arbitrary question text."""
+
+    monkeypatch.setattr(realtime_workers, "search_worker_available", lambda: True)
+
+    async def scenario():
+        sent = []
+        spawned = []
+
+        class Upstream:
+            async def send(self, raw):
+                sent.append(json.loads(raw))
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive():
+            await asyncio.Event().wait()
+            return {}
+
+        bridge = realtime.RealtimeBridge(browser_send, browser_receive)
+        bridge._upstream = Upstream()
+
+        async def no_journal(*_args, **_kwargs):
+            return None
+
+        bridge._journal = no_journal
+        bridge._spawn_search_worker = (
+            lambda question, key: spawned.append((question, key))
+        )
+        bridge._inflight_lookups.add("my_day:")
+        await bridge._handle_look_that_up(
+            {"call_id": "collision"}, {"question": "my_day:"}
+        )
+        outputs = [
+            json.loads(frame["item"]["output"])
+            for frame in sent
+            if frame.get("type") == "conversation.item.create"
+            and frame.get("item", {}).get("type") == "function_call_output"
+        ]
+        return spawned, outputs, set(bridge._inflight_lookups)
+
+    spawned, outputs, inflight = asyncio.run(scenario())
+    assert spawned == [("my_day:", "search:my_day:")]
+    assert [output["status"] for output in outputs] == ["working"]
+    assert inflight == {"my_day:", "search:my_day:"}

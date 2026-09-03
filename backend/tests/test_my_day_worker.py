@@ -511,6 +511,58 @@ def test_global_cap_counts_records_inside_source_summaries(db, monkeypatch):
     )
 
 
+def test_all_safety_filtered_records_never_become_an_empty_day_claim(db):
+    call = _call(db)
+    result = execute_tool(
+        db,
+        call.id,
+        "capture_intent",
+        {
+            "intent_text": "remind me to take 100 mg medicine",
+            "requested_action": "remind",
+            "subject": "take 100 mg medicine",
+        },
+    )
+    intent = db.get(CapturedIntent, result["captured_intent_id"])
+    intent.created_at = _stored(NOW - timedelta(hours=1))
+    db.commit()
+
+    speech = run_my_day_worker(lambda: db, now=NOW).speech
+
+    assert "100 mg" not in speech
+    assert "Nothing is on record" not in speech
+    assert "Parker has 1 record on file that it cannot safely read aloud." in speech
+
+
+def test_filtered_records_count_toward_the_global_omission_total(db, monkeypatch):
+    call = _call(db)
+    result = execute_tool(
+        db,
+        call.id,
+        "capture_intent",
+        {
+            "intent_text": "remind me to take 100 mg medicine",
+            "requested_action": "remind",
+            "subject": "take 100 mg medicine",
+        },
+    )
+    intent = db.get(CapturedIntent, result["captured_intent_id"])
+    intent.created_at = _stored(NOW - timedelta(hours=1))
+    db.commit()
+    monkeypatch.setattr(
+        realtime_workers,
+        "_my_day_medication_lines",
+        lambda _db, _now: [f"Safe schedule record {index}." for index in range(10)],
+    )
+
+    lines = _lines(run_my_day_worker(lambda: db, now=NOW).speech)
+
+    assert _line_with(lines, "more Parker did not list here") == (
+        "…and 2 more Parker did not list here — never say he has none."
+    )
+    assert "100 mg" not in " ".join(lines)
+
+
 def test_busy_day_never_caps_away_a_source_failure(db, monkeypatch):
     monkeypatch.setattr(
         realtime_workers,

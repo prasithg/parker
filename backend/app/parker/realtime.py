@@ -283,6 +283,8 @@ MAX_EXPRESSION_RECEIPTS = 400
 # Orchestrator timings. Module constants, not config: one household, and
 # the tests shrink them via monkeypatch.
 WORKER_TIMEOUT_SECONDS = 30.0
+_MY_DAY_RESULT_KEY = "my_day:"
+_SEARCH_RESULT_PREFIX = "search:"
 IDLE_WRAPUP_SECONDS = 90.0
 IDLE_GOODBYE_SECONDS = 30.0
 CLOSING_DRAIN_SECONDS = 10.0
@@ -307,6 +309,10 @@ MAX_WAKE_TAIL_CHARS = 200
 # ordered handoff that stops a delayed tail from being lost (PR #40
 # review blocker 2).
 TAIL_WAIT_SECONDS = 1.5
+
+
+def _search_result_key(question: str) -> str:
+    return _SEARCH_RESULT_PREFIX + " ".join(question.lower().split())
 
 
 def try_acquire_bridge_slot() -> bool:
@@ -1647,7 +1653,8 @@ class RealtimeBridge:
         await self._request_nudge(result_key=result_key)
         if self._closed:
             return
-        asked = self._lookup_asked.pop(" ".join(result.question.lower().split()), None)
+        lookup_key = result_key or _search_result_key(result.question)
+        asked = self._lookup_asked.pop(lookup_key, None)
         await self._journal(
             "injection",
             said=result.speech,
@@ -2200,15 +2207,15 @@ class RealtimeBridge:
 
         asked = time.monotonic()
         about = str(arguments.get("about", "")).strip()[:80]
-        if "my_day:" in self._inflight_lookups:
+        if _MY_DAY_RESULT_KEY in self._inflight_lookups:
             ack = {"status": "already_working", "detail": "Still gathering that — keep chatting."}
         else:
-            self._inflight_lookups.add("my_day:")  # namespaced: never a search question
+            self._inflight_lookups.add(_MY_DAY_RESULT_KEY)
             await self._browser_send({"type": "working", "kind": "my_day", "status": "started"})
             self._spawn_worker(
                 "my_day",
                 lambda: realtime_workers.run_my_day_worker(_make_db),
-                inflight_key="my_day:",
+                inflight_key=_MY_DAY_RESULT_KEY,
                 question=about,
             )
             ack = {
@@ -2245,7 +2252,7 @@ class RealtimeBridge:
         question = str(arguments.get("question", "")).strip()[
             : realtime_workers.MAX_QUESTION_LENGTH
         ]
-        key = " ".join(question.lower().split())
+        key = _search_result_key(question)
         if not question:
             ack = {"status": "rejected", "detail": "The lookup needs one clear question."}
         elif key in self._inflight_lookups:
