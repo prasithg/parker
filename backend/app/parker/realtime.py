@@ -99,8 +99,9 @@ Right now it is {clock_line} (when this call began)."""
 
 _NO_SEARCH_PARAGRAPH = """In this live mode you do NOT have web search or any live data —
 the one-web-search instruction above does not apply here. Never search;
-answer from what you know, say plainly when something would need checking,
-and never claim to have looked something up."""
+you can still converse and answer general questions from what you know.
+For current scores, news, or other changing facts, say plainly that you
+cannot check them right now and never claim to have looked something up."""
 
 _SEARCH_PARAGRAPH = """You can check live information with the look_that_up tool — it
 replaces the one-web-search instruction above; you never search directly

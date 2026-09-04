@@ -201,8 +201,17 @@ answered when the search lands → idle wrap-up → goodbye with a browser
 `closing` handshake → the session persisted (call log + one topic memory)
 so the *next* session's card knows about it.
 
-- **Tools: `propose_action`, plus `look_that_up` when a brain is
-  configured.** Proposals validate and stage through the same pipeline
+- **Conversation is always part of an enabled realtime session.** The
+  front model can chat, explain, and answer general questions without a
+  research provider. The action-tool list limits what it can set up, not
+  what it can discuss.
+- **Tools: `propose_action`, `my_day`, plus `look_that_up` when research is
+  configured.** Claude lookups require `ANTHROPIC_API_KEY` and
+  `PARKER_BRAIN_WEB_SEARCH=true` (the default); a configured OpenClaw
+  gateway supplies its own research capabilities. An OpenAI Realtime key
+  alone does not enable current scores, news, or weather. When research is
+  unavailable, Parker says it cannot check changing facts while remaining
+  available for conversation. Proposals validate and stage through the same pipeline
   (model told it's waiting for on-screen confirmation; nothing executes
   from this lane). Lookups are read-only information through the one
   general brain lane — still no subject lanes, still no action path.

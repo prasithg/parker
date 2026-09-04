@@ -5,6 +5,10 @@ Run from the repo root with the backend venv (keys from backend/.env):
 
     cd backend && ./.venv/bin/python ../scripts/realtime_live_probe.py
 
+To check conversation and a current score in the same session, use
+``--wake-tail "What can you do besides reminders?"`` and
+``--question "What was the final score of Alcaraz's most recent completed match?"``.
+
 What it does, for real money (one realtime session + one searched brain call):
 
 1. Seeds Ravi (docs/personas/ravi.md) into an isolated in-memory DB — the
@@ -29,10 +33,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 import sys
 import time
 
-sys.path.insert(0, ".")  # run from backend/
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -71,7 +76,7 @@ async def main() -> int:
         print("FAIL: realtime lane unavailable (no OPENAI_API_KEY?)")
         return 1
     if not realtime.realtime_workers.search_worker_available():
-        print("FAIL: no brain for look_that_up (no ANTHROPIC_API_KEY?)")
+        print("FAIL: lookups need ANTHROPIC_API_KEY + PARKER_BRAIN_WEB_SEARCH, or a research gateway")
         return 1
 
     engine = create_engine(
@@ -221,11 +226,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--wake-tail", default="", help="hello tail: his words after 'Hey Parker'")
+    parser.add_argument("--question", default=QUESTION, help="one current-information question to verify")
     parser.add_argument(
         "--pending", action="store_true",
         help="mark the hello pending and deliver the full tail on a later frame",
     )
     args = parser.parse_args()
+    QUESTION = args.question
     WAKE_TAIL = " ".join(args.wake_tail.split())
     PENDING = bool(args.pending and WAKE_TAIL)
     from app.version import git_sha  # noqa: E402 — after the sys.path insert

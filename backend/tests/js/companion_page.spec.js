@@ -82,6 +82,7 @@ async function poweredDormant(env) {
   await env.flush();
   const ws = wakeSockets(env)[wakeSockets(env).length - 1];
   ws.open();
+  ws.message({ type: 'ready' });
   return ws;
 }
 async function poweredOff(env) {
@@ -133,6 +134,9 @@ async function poweredActive(env) {
     const wakeWs = await poweredDormant(env);
     wakeWs.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker', tail: '' });
     assert.strictEqual(phase(env), 'connecting', 'the pop begins immediately');
+    assert.strictEqual(power(env), 'connecting', 'the lamp and fallback light before the live socket opens');
+    assert.ok(/I heard you/.test(env.element('power-label').textContent));
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'true');
     await env.flush();
     const live = liveSockets(env)[0];
     assert.ok(live, 'the realtime line opens');
@@ -154,6 +158,23 @@ async function poweredActive(env) {
     const transitions = receiptsAfterOff();
     const popped = transitions.find((t) => t.from === 'dormant' && t.to === 'connecting');
     assert.ok(popped && popped.reason === 'wake_detected', JSON.stringify(transitions));
+  });
+
+  await test('cold start invites the wake phrase only after the local model is ready', async () => {
+    const env = await bootedEnv();
+    await env.context.powerOn();
+    await env.flush();
+    const ws = wakeSockets(env)[0];
+    ws.open();
+    assert.ok(/getting wake listening ready/i.test(env.element('power-label').textContent));
+    assert.ok(!/hey parker/i.test(env.element('sr-status').textContent));
+    assert.strictEqual(liveSockets(env).length, 0);
+    env.micFrame(0.2);
+    assert.strictEqual(ws.sent.filter((frame) => frame.type === 'audio').length, 0,
+      'model loading cannot build a backlog of stale room audio');
+    ws.message({ type: 'ready' });
+    assert.ok(/say.*Hey Parker/.test(env.element('power-label').textContent));
+    assert.strictEqual(phase(env), 'dormant');
   });
 
   await test('the gentle wind-down returns to dormancy, wake re-armed', async () => {
@@ -942,6 +963,7 @@ async function poweredActive(env) {
     await starting;
     await env.flush();
     wakeSockets(env)[0].open();
+    wakeSockets(env)[0].message({ type: 'ready' });
     clean('starting -> dormant');
     assert.ok(/hey parker/i.test(env.element('sr-status').textContent));
     // powerOff.
@@ -1059,6 +1081,19 @@ async function poweredActive(env) {
   // ------------------------------------------------------------------------
   if (sceneScript) {
     const receipts = (env) => env.beacons.filter((b) => b.url.includes('/receipts'));
+
+    await test('a late CAD import cannot recreate the scene after pagehide', async () => {
+      const env = await bootedEnv();
+      let resolveModule;
+      const pending = new Promise(resolve => { resolveModule = resolve; });
+      let creations = 0;
+      await env.bootScene(sceneScript, pending);
+      env.firePagehide();
+      resolveModule({createReachyScene: () => { creations++; return {dispose() {}}; }});
+      await env.flush();
+      assert.strictEqual(creations, 0);
+      assert.ok(!env.context.ParkerPresence.scene);
+    });
 
     for (const reduced of [false, true]) {
       await test(`scene boot forwards prefers-reduced-motion=${reduced} to createReachyScene`, async () => {

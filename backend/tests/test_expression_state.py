@@ -60,6 +60,15 @@ def test_reachy_renderer_module_parses_as_esm():
     assert result.returncode == 0, result.stderr
 
 
+def test_reachy_model_module_parses_as_esm():
+    source = (STATIC_DIR / "converse" / "reachy-model.js").read_text()
+    result = subprocess.run(
+        ["node", "--input-type=module", "--check"], input=source,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def _extract_inline_scripts(html: str) -> list[str]:
     """Every non-empty inline script of a page, in document order: the
     conversation runtime first, then the scene boot module."""

@@ -73,7 +73,7 @@ COMPANION_PAGE_HTML = """<!doctype html>
     border-radius: 50%; background: #2a3648;
     transition: background .3s ease, box-shadow .3s ease;
   }
-  body[data-power="on"] #orb-fallback .dot { background: #7fe3a1; box-shadow: 0 0 80px 10px rgba(127,227,161,.3); animation: breathe 2s ease-in-out infinite; }
+  body[data-power="on"] #orb-fallback .dot, body[data-power="connecting"] #orb-fallback .dot { background: #7fe3a1; box-shadow: 0 0 80px 10px rgba(127,227,161,.3); animation: breathe 2s ease-in-out infinite; }
   body[data-power="dormant"] #orb-fallback .dot { background: #223041; animation: breathe 5s ease-in-out infinite; }
   body[data-power="starting"] #orb-fallback .dot { background: #ffd166; animation: breathe 1s ease-in-out infinite; }
   body[data-power="error"] #orb-fallback .dot { background: #ff9aa4; }
@@ -136,7 +136,7 @@ COMPANION_PAGE_HTML = """<!doctype html>
     width: 1em; height: 1em; border-radius: 50%; background: #2a3648; flex: none;
     transition: background .25s ease, box-shadow .25s ease;
   }
-  body[data-power="on"] #power .lamp { background: #7fe3a1; box-shadow: 0 0 18px 2px rgba(127,227,161,.6); }
+  body[data-power="on"] #power .lamp, body[data-power="connecting"] #power .lamp { background: #7fe3a1; box-shadow: 0 0 18px 2px rgba(127,227,161,.6); }
   body[data-power="dormant"] #power .lamp { background: #3f6b52; animation: breathe 4s ease-in-out infinite; }
   body[data-power="starting"] #power .lamp { background: #ffd166; }
   body[data-power="error"] #power .lamp { background: #ff9aa4; }
@@ -326,7 +326,7 @@ const audio = {stream: null, micCtx: null, playCtx: null, proc: null,
 // the live socket's first frame. The line usually opens before the lane
 // has finished hearing him, so `pending` means the lane was asked to
 // finish and its final transcript is still owed to the open line.
-const wake = {ws: null, retried: false, head: '', tail: '', tailTimer: null, pending: false};
+const wake = {ws: null, ready: false, retried: false, head: '', tail: '', tailTimer: null, pending: false};
 
 // `playing` holds the scheduled AudioBufferSourceNodes a flush must stop —
 // nothing else is ever written there (source citations are captions only).
@@ -467,7 +467,7 @@ async function acquireAudio() {
     if (audio.mode === 'wake') {
       // Dormant: frames go ONLY to the local wake lane — no cloud, no
       // presence energy (a lifeless robot does not react to the room).
-      if (wake.ws && wake.ws.readyState === 1) {
+      if (wake.ready && wake.ws && wake.ws.readyState === 1) {
         const pcm = resamplePCM16(data, audio.micCtx.sampleRate, WAKE_RATE);
         try { wake.ws.send(JSON.stringify({type: 'audio', data: bufferToBase64(pcm.buffer)})); } catch (err) {}
       }
@@ -537,6 +537,7 @@ function endLine() {
 function stopWakeLane() {
   const ws = wake.ws;
   wake.ws = null;
+  wake.ready = false;
   wake.pending = false;
   if (ws) {
     try { ws.send(JSON.stringify({type: 'end'})); } catch (err) {}
@@ -661,12 +662,13 @@ function handleLiveEvent(event) {
 function setPowerVisual(state) {
   document.body.dataset.power = state;
   const label = $('power-label');
-  const on = state === 'on' || state === 'dormant' || state === 'elsewhere';
+  const on = state === 'on' || state === 'dormant' || state === 'connecting' || state === 'elsewhere';
   $('power').setAttribute('aria-checked', on ? 'true' : 'false'); // 'starting' is not yet on
   // Dormant must read as ASLEEP at a glance, never as "engaged"
   // (Pras, session 3: powered-on-resting vs listening were confusable).
   label.textContent = state === 'on' ? 'Parker is on'
-    : state === 'dormant' ? 'Resting — say “Hey Parker”'
+    : state === 'dormant' ? (wake.ready ? 'Resting — say “Hey Parker”' : 'Getting wake listening ready…')
+    : state === 'connecting' ? 'I heard you — connecting…'
     : state === 'starting' ? 'Waking…'
     : state === 'error' ? 'Try again'
     : state === 'elsewhere' ? 'On another screen'
@@ -867,7 +869,7 @@ async function powerOn(options) {
 
 function powered() {
   const state = document.body.dataset.power;
-  return state === 'dormant' || state === 'on' || state === 'starting';
+  return state === 'dormant' || state === 'on' || state === 'connecting' || state === 'starting';
 }
 function switchedOn() {
   const state = document.body.dataset.power;
@@ -887,18 +889,22 @@ function startDormant() {
   clearTimeout(wake.tailTimer);
   stopWakeLane();
   wake.tail = ''; wake.head = '';
+  wake.ready = false;
   audio.mode = 'wake';
   presence('dormant');
   setPowerVisual('dormant');
   const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const ws = new WebSocket(scheme + location.host + '/parker/converse/wake' + powerQuery());
+  const ws = new WebSocket(scheme + location.host + '/parker/converse/wake' + powerQuery() + '&readiness=1');
   wake.ws = ws;
   ws.onmessage = (message) => {
     if (ws !== wake.ws) return;
     let event;
     try { event = JSON.parse(message.data); } catch (err) { return; }
     if (!event || typeof event !== 'object') return;
-    if (event.type === 'wake') onWake(event);
+    if (event.type === 'ready') {
+      wake.ready = true;
+      if (audio.mode === 'wake' && !live.ws) setPowerVisual('dormant');
+    } else if (event.type === 'wake') onWake(event);
     else if (event.type === 'tail') {
       // More of his same-breath request, transcribed while the line connects.
       // The engine cleared its window at the wake and only grows it after,
@@ -950,6 +956,7 @@ function onWake(event) {
   wake.head = (event && typeof event.tail === 'string') ? event.tail.trim().slice(0, 120) : '';
   wake.tail = wake.head;
   presence('wake_detected'); // the POP: eyes snap open, antennae perk
+  setPowerVisual('connecting');
   chirp();
   // The wake lane stays open (mic frames keep going to it) so the rest of
   // "Hey Parker, can you help me" is transcribed while the line connects;
@@ -1107,6 +1114,7 @@ function updateSrStatus() {
   const text =
     state === 'off' ? 'Parker is off. Nothing is listening.'
     : state === 'starting' ? 'Parker is waking up.'
+    : state === 'dormant' && !wake.ready ? 'Parker is getting wake listening ready.'
     : state === 'error' ? 'Parker hit a snag. Use the power switch to try again.'
     : state === 'elsewhere' ? 'Parker is on another screen. Use the switch here to turn it off everywhere.'
     : powered() ? ParkerExpression.describe(expr.getState())
@@ -1257,6 +1265,7 @@ window.addEventListener('pageshow', (event) => {
     && matchMedia('(prefers-reduced-motion: reduce)').matches;
   try {
     const mod = await import('/parker/converse/static/converse/reachy.js');
+    if (pageReleased) return; // pagehide may have happened while CAD assets loaded
     const scene = mod.createReachyScene(mount, controller, {reducedMotion: !!reduced});
     if (scene) {
       document.getElementById('orb-fallback').hidden = true;

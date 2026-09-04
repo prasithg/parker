@@ -9,6 +9,8 @@ alike (parker.spec ships the directory as package data).
 from __future__ import annotations
 
 import hashlib
+import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -33,6 +35,7 @@ def test_presence_assets_are_served_same_origin():
     for asset, marker in (
         ("converse/expression.js", "ParkerExpression"),
         ("converse/reachy.js", "three.module.min.js"),
+        ("converse/reachy-model.js", "reachy-mini.bin"),
         ("vendor/three/three.module.min.js", "three.core.min.js"),
         ("vendor/three/three.core.min.js", "revision"),
     ):
@@ -58,6 +61,31 @@ def test_vendored_three_ships_its_mit_license():
     assert "0.185.1" in readme
     for digest in THREE_SHA256.values():
         assert digest in readme
+
+
+def test_reachy_cad_assets_are_complete_and_valid():
+    """A truncated packaged mesh must fail here, before the page falls back."""
+    root = STATIC_DIR / "vendor" / "reachy-mini"
+    manifest = json.loads((root / "reachy-mini.json").read_text())
+    payload = (root / "reachy-mini.bin").read_bytes()
+    assert hashlib.sha256(payload).hexdigest() == manifest["sha256"]
+    assert set(manifest["meshes"]) == {
+        "body_foot_3dprint", "body_down_3dprint", "body_top_3dprint",
+        "head_back_3dprint", "head_front_3dprint", "head_mic_3dprint",
+    }
+    for mesh in manifest["meshes"].values():
+        assert len(mesh["source_sha256"]) == 64
+        assert mesh["position_offset"] % 2 == mesh["index_offset"] % 4 == 0
+        assert mesh["position_offset"] + mesh["vertex_count"] * 6 <= mesh["index_offset"]
+        end = mesh["index_offset"] + mesh["index_count"] * 4
+        assert end <= len(payload) and mesh["index_count"] % 3 == 0
+        indices = struct.unpack_from(f'<{mesh["index_count"]}I', payload, mesh["index_offset"])
+        assert max(indices) < mesh["vertex_count"]
+    assert "Apache License" in (root / "LICENSE").read_text()
+    for name in ("reachy-mini.bin", "reachy-mini.json"):
+        response = client.get(f"/parker/converse/static/vendor/reachy-mini/{name}")
+        assert response.status_code == 200
+        assert response.content == (root / name).read_bytes()
 
 
 def test_static_route_never_escapes_its_root():

@@ -395,6 +395,15 @@ async def converse_wake(websocket: WebSocket) -> None:
         raise
     opened = time.monotonic()
     woke_at: float | None = None
+    # Opt-in keeps older probes/clients compatible with the one-wake-frame
+    # protocol. The companion must not invite speech before model loading
+    # has finished, especially on its first power-on after launch.
+    if websocket.query_params.get("readiness") == "1":
+        try:
+            await websocket.send_json({"type": "ready"})
+        except RuntimeError:
+            authority.unregister(sid)
+            return  # power was revoked as loading finished
 
     async def _give_up() -> None:
         # The warmed model keeps failing under the lane. Say so and close
@@ -499,6 +508,12 @@ async def converse_wake(websocket: WebSocket) -> None:
                 return
     except WebSocketDisconnect:
         pass
+    except RuntimeError:
+        # Power-off can close the socket while a non-wake inference is
+        # finishing. Its next receive then raises instead of delivering a
+        # disconnect. Only a confirmed revoke is an ordinary shutdown.
+        if authority.authorize(owner, gen) is None:
+            raise
     finally:
         authority.unregister(sid)
 

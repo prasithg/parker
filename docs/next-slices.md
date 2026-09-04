@@ -6,6 +6,31 @@ Written 2026-06-09, after the architecture/eval reconciliation pass; status upda
 
 The active execution plan is [2026-09-02-parker-hermes-current-information-sprint.md](plans/2026-09-02-parker-hermes-current-information-sprint.md). It first closes the exact-revision review blockers in PRs #40/#43/#45 and preserves #46's motion contribution, then reconciles the divergent stack from live `main`. Only after that gate passes does it add the isolated local-Hermes worker, run the Parallel/Exa/Tavily direct-search bake-off, integrate deterministic current-fact routing, and test one Curiosity Continuity vertical. The four independent review artifacts live in `docs/reviews/2026-09-02-pr{40,43,45,46}-independent-review.md`.
 
+### Manual-review feedback: Reachy appearance, wake acknowledgment, conversation (2026-09-04)
+
+- Replaced the primitive body/head with six locally packaged official Pollen
+  Robotics CAD shells, licensed and reproducibly packed to 1.65 MB. Added
+  unequal reflective lenses and their connecting bridge, thin spring-mounted
+  antennae, and articulated visual neck rods. Desktop awake/rest and 390 px
+  portrait framing were checked against the supplied Reachy photograph.
+- Wake readiness now waits for the local model; a detected wake lights the
+  indicator immediately during connection. The scene lighting settles faster.
+  Local synthetic tests on three voices acknowledged wake about 0.57–0.82 s
+  after the phrase ended. Those timings do not measure household performance.
+  Catch-up batching was discarded after independent review reproduced a
+  lost wake across a window boundary; original overlap/decoder behavior stays.
+- Restored live review with the existing Anthropic search provider enabled.
+  The shared prompt now distinguishes conversational capability from action
+  execution. Lookup advertisement requires enabled search as well as a key.
+  One real Realtime probe described chat/questions and returned a sourced
+  sports result through streamed audio; the search worker took 21.3 s.
+- Independent review also found and closed a late-asset-load/page-exit race:
+  neither companion nor lab may recreate a scene after releasing the page.
+
+Next: Pras's microphone/room retest, then the already-planned current-search
+latency work. Packaged desktop rebuild/physical Reachy deployment is separate;
+this slice changes the local browser app and controls no motors or send paths.
+
 ## Slice 1: Route classifier seam + task-taxonomy evaluator — DONE (2026-06-09)
 
 Shipped: `benchmark/evaluate_tasks_v0.py` (CLI evaluator + deterministic rule-based baseline), `backend/tests/test_task_evaluator.py`, `make eval-tasks`, reports under `benchmark/reports/`. Metrics: route accuracy, action-type accuracy, escalation precision/recall, refusal recall, clarify recall, repair-choice coverage; safety-critical misses listed case-by-case. Original baseline: 80% route accuracy, 0 unsafe misses; superseded by the Night4 report-freshness cleanup below, which removed the known disfluent-but-specific false mismatches.

@@ -1,20 +1,17 @@
 /*
- * Parker's Reachy Mini v2 — "Faithful & alive".
+ * Parker's Reachy Mini — CAD shell and state-driven articulation.
  *
- * Candidate replacement renderer for the Converse companion page.
  * Downstream of ParkerExpression (expression.js): this module only READS
  * the semantic state and draws it. Every motion here derives from a real
  * controller phase, overlay, or energy — no timer-invented busy-ness.
- * Idle life (breathing, blinks, gaze saccades) runs only in awake states;
+ * Idle life (breathing and gaze) runs only in awake states;
  * offline/stopped/error are visibly inert.
  *
- * Faithful to the real Reachy Mini silhouette — white rounded body, big
- * head, two large lens-eyes, two wire antennae with tip beads — built
- * entirely from Three.js primitives and procedural textures. No external
- * models, textures, fonts, or HDRI. The effort budget goes to MOTION:
- * spring-damped everything, volume-preserving breathing, a blink/saccade
- * system, audio-reactive talking with an attack/decay envelope,
- * anticipation impulses on state changes, and antenna secondary physics.
+ * Published Pollen Robotics CAD shells are assembled by reachy-model.js,
+ * with circular optical lenses, articulated rods, and wire antennae.
+ * Assets ship locally with their source/license metadata. Existing semantic
+ * poses, speech-reactive movement, cancellation, and reduced motion remain
+ * downstream of the controller; no hardware or provider access lives here.
  *
  * Degradation contract (the page owns the fallback):
  * - createReachyScene returns null when WebGL is unavailable;
@@ -23,6 +20,7 @@
  */
 
 import * as THREE from '../vendor/three/three.module.min.js';
+import { buildReachyModel, HEAD_HEIGHT } from './reachy-model.js';
 
 // ---------------------------------------------------------------------------
 // Deterministic PRNG for idle life (blinks, saccades) so a pose sequence is
@@ -43,14 +41,10 @@ function mulberry32(seed) {
 // Palette — premium matte white body, dark glass face, cool signal glow.
 // ---------------------------------------------------------------------------
 
-const SHELL = 0xf5f2ea;      // warm off-white plastic
-const TRIM = 0xd9d4c8;       // bezel/antenna metal-ish white
-const GLASS = 0x0a0e15;      // dark glass face
 const EYE_GLOW = 0x8fd2ff;   // calm sky blue
 const AMBER = 0xffd166;      // action staged / waiting on the screen
 const CONCERN = 0xffb38a;    // guard / error warmth (never alarm-red)
 const SUCCESS = 0xa5f0bb;    // action executed
-const FLOOR_GLOW = 0x1b2434;
 
 // ---------------------------------------------------------------------------
 // Pose targets per semantic state — one readable table so a reviewer can
@@ -95,7 +89,7 @@ function poseFor(state) {
       POSE.headPitch = 0.3; POSE.headDrop = 1; POSE.eyeOpen = 0.04; POSE.eyeGlow = 0.04;
       POSE.antennaL = -1.0; POSE.antennaR = 1.0;
       POSE.breathAmp = 0; POSE.blinks = false;
-      POSE.sceneLight = 0.28;
+      POSE.sceneLight = 0.48;
       break;
     case 'dormant':   // powered but resting: same sunken sleep — with the
       // faintest eye ember as the honest "wake listening is armed" cue,
@@ -103,7 +97,7 @@ function poseFor(state) {
       POSE.headPitch = 0.3; POSE.headDrop = 1; POSE.eyeOpen = 0.06; POSE.eyeGlow = 0.14;
       POSE.antennaL = -1.0; POSE.antennaR = 1.0;
       POSE.breathRate = 0.1; POSE.breathAmp = 0.005; POSE.blinks = false;
-      POSE.sceneLight = 0.36; // the room dims with him; wake brings the light back
+      POSE.sceneLight = 0.56; // readable hardware at rest; brighter on actual wake
       break;
     case 'idle':      // present, softly alive, gaze wandering the room
       POSE.headPitch = 0.08; POSE.eyeOpen = 0.66; POSE.eyeGlow = 0.35;
@@ -240,25 +234,24 @@ function makeGroundTexture() {
 // dark glass face pick up believable living-room reflections. No HDRI file.
 function buildEnvironment(renderer) {
   const envScene = new THREE.Scene();
-  envScene.background = new THREE.Color(0x04060a);
+  envScene.background = new THREE.Color(0x222b35);
   const geoms = [];
   const mats = [];
-  function panel(color, intensity, w, h, x, y, z, ry, rx) {
+  function panel(color, intensity, w, h, x, y, z) {
     const geom = new THREE.PlaneGeometry(w, h);
     const mat = new THREE.MeshBasicMaterial({ color: color });
     mat.color.multiplyScalar(intensity);
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.set(x, y, z);
-    mesh.rotation.y = ry || 0;
-    mesh.rotation.x = rx || 0;
+    mesh.lookAt(0, 1, 0);
     envScene.add(mesh);
     geoms.push(geom); mats.push(mat);
   }
   // Warm key window (lamp-side), cool TV spill, dim ceiling bounce.
-  panel(0xffe0b8, 5.0, 3, 4, 4, 2.5, 2, -Math.PI / 3, 0);
-  panel(0x7fb2ff, 2.4, 4, 2.4, -4.5, 1.6, -1, Math.PI / 2.6, 0);
-  panel(0x36415a, 1.2, 8, 8, 0, 6, 0, 0, Math.PI / 2);
-  panel(0x1a1410, 0.8, 8, 8, 0, -3, 0, 0, -Math.PI / 2);
+  panel(0xfff5e7, 4.0, 3, 5, -3, 3, 4);
+  panel(0xb3c9e5, 2.0, 2, 4, 4, 2, 3);
+  panel(0x36415a, 1.2, 8, 8, 0, 6, 0);
+  panel(0x1a1410, 0.8, 8, 8, 0, -3, 0);
   const pmrem = new THREE.PMREMGenerator(renderer);
   const target = pmrem.fromScene(envScene, 0.08);
   pmrem.dispose();
@@ -268,200 +261,15 @@ function buildEnvironment(renderer) {
 }
 
 // ---------------------------------------------------------------------------
-// Robot construction — faithful Reachy Mini silhouette from primitives.
-// ---------------------------------------------------------------------------
-
-function buildRobot(groundTexture) {
-  const robot = new THREE.Group();
-
-  const shellMat = new THREE.MeshPhysicalMaterial({
-    color: SHELL, roughness: 0.42, metalness: 0.0,
-    clearcoat: 0.5, clearcoatRoughness: 0.4,
-  });
-  const trimMat = new THREE.MeshStandardMaterial({
-    color: TRIM, roughness: 0.35, metalness: 0.55,
-  });
-  const glassMat = new THREE.MeshPhysicalMaterial({
-    color: GLASS, roughness: 0.14, metalness: 0.1,
-    clearcoat: 1.0, clearcoatRoughness: 0.08,
-  });
-  const darkMat = new THREE.MeshStandardMaterial({
-    color: 0x161c26, roughness: 0.6, metalness: 0.25,
-  });
-
-  // Body: a rounded squat lathe profile — the little white "trunk".
-  const profile = [];
-  const BODY_STEPS = 22;
-  for (let i = 0; i <= BODY_STEPS; i++) {
-    const t = i / BODY_STEPS;               // 0 bottom -> 1 top
-    const y = t * 0.86;
-    // Rounded barrel: wide hips, gentle waist, soft shoulder.
-    const r = 0.5 * (1 - 0.28 * t * t) * Math.sqrt(Math.max(0.06, 1 - Math.pow(2 * t - 1, 4) * 0.22));
-    profile.push(new THREE.Vector2(Math.max(0.14, r), y));
-  }
-  const bodyGeom = new THREE.LatheGeometry(profile, 44);
-  const torso = new THREE.Mesh(bodyGeom, shellMat);
-  torso.position.y = 0.06;
-  robot.add(torso);
-
-  const baseRing = new THREE.Mesh(new THREE.TorusGeometry(0.485, 0.035, 12, 44), darkMat);
-  baseRing.rotation.x = Math.PI / 2;
-  baseRing.position.y = 0.07;
-  robot.add(baseRing);
-
-  // Speaker: a small dark grille dot-band low on the front of the body.
-  const speaker = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.16, 6, 12), darkMat);
-  speaker.rotation.z = Math.PI / 2;
-  speaker.position.set(0, 0.28, 0.445);
-  speaker.rotation.x = 0.18;
-  robot.add(speaker);
-
-  // Neck seam where the head floats over the body.
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.19, 0.16, 24), darkMat);
-  neck.position.y = 0.94;
-  robot.add(neck);
-
-  // Head: the star — big, wide, rounded. Pivot low so nods read naturally.
-  const head = new THREE.Group();
-  head.position.y = 1.28;
-  robot.add(head);
-
-  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.42, 44, 32), shellMat);
-  skull.scale.set(1.12, 0.88, 1.0);
-  head.add(skull);
-
-  // The face is the same white shell (research correction: the real
-  // Reachy Mini's darkness lives only in the lens rings) — each eye gets
-  // its own dark glass seat instead of one big dark window.
-
-  // Eyes: two big camera-lens eyes with emissive iris + fixed catchlight.
-  function makeEye(x) {
-    const group = new THREE.Group();
-    group.position.set(x, 0.035, 0.45);
-    const seat = new THREE.Mesh(new THREE.CircleGeometry(0.128, 36), glassMat);
-    seat.position.z = -0.004;
-    group.add(seat);
-    const bezel = new THREE.Mesh(new THREE.TorusGeometry(0.108, 0.024, 14, 36), trimMat);
-    group.add(bezel);
-    const lens = new THREE.Mesh(
-      new THREE.CircleGeometry(0.1, 36),
-      new THREE.MeshStandardMaterial({ color: 0x04070c, roughness: 0.12, metalness: 0.35 })
-    );
-    lens.position.z = 0.002;
-    group.add(lens);
-    // Gaze group: iris + halo + catchlight translate together for saccades.
-    const gaze = new THREE.Group();
-    const halo = new THREE.Mesh(
-      new THREE.CircleGeometry(0.095, 36),
-      new THREE.MeshBasicMaterial({
-        color: EYE_GLOW, transparent: true, opacity: 0.24,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-      })
-    );
-    halo.position.z = 0.004;
-    gaze.add(halo);
-    const iris = new THREE.Mesh(
-      new THREE.CircleGeometry(0.074, 32),
-      new THREE.MeshBasicMaterial({ color: EYE_GLOW, transparent: true, opacity: 0.85 })
-    );
-    iris.position.z = 0.006;
-    gaze.add(iris);
-    const catchlight = new THREE.Mesh(
-      new THREE.CircleGeometry(0.02, 16),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthWrite: false })
-    );
-    catchlight.position.set(-0.03, 0.036, 0.008);
-    gaze.add(catchlight);
-    group.add(gaze);
-    return { group: group, gaze: gaze, iris: iris, halo: halo };
-  }
-  const eyeL = makeEye(-0.165);
-  const eyeR = makeEye(0.165);
-  head.add(eyeL.group); head.add(eyeR.group);
-
-  // Voice light: the face stays mouthless (that IS the cute); Parker's
-  // REAL output energy glows from the body speaker instead, like sound
-  // coming from where the sound comes from.
-  const voice = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.014, 0.1, 6, 12),
-    new THREE.MeshBasicMaterial({
-      color: EYE_GLOW, transparent: true, opacity: 0,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    })
-  );
-  voice.rotation.z = Math.PI / 2;
-  voice.rotation.x = 0.18;
-  voice.position.set(0, 0.285, 0.452);
-  robot.add(voice);
-
-  // Antennae: gently curved wire stems with tip beads, on swing pivots so
-  // secondary physics can lag them behind head motion.
-  function makeAntenna(side) {
-    const pivot = new THREE.Group();          // physics swing lives here
-    pivot.position.set(side * 0.2, 0.3, -0.06);
-    const arm = new THREE.Group();            // pose splay lives here
-    pivot.add(arm);
-    const curve = new THREE.QuadraticBezierCurve3(
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(side * 0.05, 0.22, -0.02),
-      new THREE.Vector3(side * 0.17, 0.4, -0.05)
-    );
-    const stem = new THREE.Mesh(new THREE.TubeGeometry(curve, 16, 0.011, 8, false), trimMat);
-    arm.add(stem);
-    const tip = new THREE.Mesh(
-      new THREE.SphereGeometry(0.042, 18, 14),
-      new THREE.MeshStandardMaterial({
-        color: SHELL, roughness: 0.45, metalness: 0.05,
-        emissive: new THREE.Color(AMBER), emissiveIntensity: 0,
-      })
-    );
-    tip.position.set(side * 0.17, 0.4, -0.05);
-    arm.add(tip);
-    return { pivot: pivot, arm: arm, tip: tip };
-  }
-  const antL = makeAntenna(-1);
-  const antR = makeAntenna(1);
-  head.add(antL.pivot); head.add(antR.pivot);
-
-  // Soft procedural ground pool — no shadow maps.
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.9, 1.9),
-    groundTexture
-      ? new THREE.MeshBasicMaterial({ map: groundTexture, transparent: true, depthWrite: false })
-      : new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false })
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = 0.004;
-  robot.add(ground);
-
-  // A faint cool floor glow disc gives the dark room some grounding light.
-  const floorGlow = new THREE.Mesh(
-    new THREE.CircleGeometry(1.15, 40),
-    new THREE.MeshBasicMaterial({
-      color: FLOOR_GLOW, transparent: true, opacity: 0.35,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    })
-  );
-  floorGlow.rotation.x = -Math.PI / 2;
-  floorGlow.position.y = 0.002;
-  robot.add(floorGlow);
-
-  return {
-    robot: robot, torso: torso, head: head,
-    eyeL: eyeL, eyeR: eyeR, voice: voice, antL: antL, antR: antR,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Scene lifecycle
 // ---------------------------------------------------------------------------
 
 const SPRING_KEYS = ['headYaw', 'headPitch', 'headRoll', 'headDrop', 'eyeOpen', 'eyeGlow', 'antennaL', 'antennaR', 'voice', 'gazeX', 'gazeY', 'sceneLight'];
 const SPRING_OMEGA = {
-  headYaw: 5.5, headPitch: 5.5, headRoll: 5.5, headDrop: 3.2,
+  headYaw: 5.5, headPitch: 5.5, headRoll: 5.5, headDrop: 7,
   eyeOpen: 12, eyeGlow: 8, antennaL: 8, antennaR: 8,
   voice: 20, gazeX: 22, gazeY: 22, // saccades snap, they don't drift
-  sceneLight: 3.5, // the room brightens with the wake pop, dims gently to rest
+  sceneLight: 10, // visible wake response in the first few frames, not a 1.4 s fade
 };
 // Anticipation: a brief counter-impulse before the head commits to a new
 // pose (the classic animation beat). Applied to head springs on phase change.
@@ -554,21 +362,21 @@ export function createReachyScene(container, controller, options) {
   container.appendChild(canvas);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 20);
-  camera.position.set(0, 1.26, 3.05);
-  camera.lookAt(0, 1.04, 0);
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
+  camera.position.set(0.32, 1.8, 6.1);
+  camera.lookAt(0, 1.38, 0);
 
   // Dark-living-room lighting: dim cool ambience, one warm lamp key, one
   // cool rim so the white shell separates from the dark at 3 meters.
-  const hemi = new THREE.HemisphereLight(0x51719e, 0x1a1512, 0.85);
+  const hemi = new THREE.HemisphereLight(0xd8e2f0, 0x20232a, 1.4);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff1de, 1.9);
-  key.position.set(2.2, 2.8, 2.2);
+  const key = new THREE.DirectionalLight(0xfff6e9, 3.2);
+  key.position.set(-2.5, 4.5, 4);
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0x6fb0ff, 1.1);
-  rim.position.set(-2.6, 1.6, -2.2);
+  const rim = new THREE.DirectionalLight(0xc0d8f5, 2.1);
+  rim.position.set(3, 3, -2);
   scene.add(rim);
-  const LIGHTS = [[hemi, 0.85], [key, 1.9], [rim, 1.1]];
+  const LIGHTS = [[hemi, 1.4], [key, 3.2], [rim, 2.1]];
   function applyLights(level) {
     const l = Math.max(0.15, Math.min(1, level));
     for (let i = 0; i < LIGHTS.length; i++) LIGHTS[i][0].intensity = LIGHTS[i][1] * l;
@@ -578,7 +386,7 @@ export function createReachyScene(container, controller, options) {
   scene.environment = envTarget.texture;
 
   const groundTexture = makeGroundTexture();
-  const parts = buildRobot(groundTexture);
+  const parts = buildReachyModel(groundTexture);
   scene.add(parts.robot);
 
   // ---- Spring-tracked degrees of freedom (no per-frame allocation) ----
@@ -618,6 +426,9 @@ export function createReachyScene(container, controller, options) {
     const h = container.clientHeight || 240;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
+    // Frame the complete robot, including antennae and base, on phones too.
+    camera.position.z = Math.max(6.1, 4.5 / Math.max(camera.aspect, 0.3));
+    camera.lookAt(0, 1.38, 0);
     camera.updateProjectionMatrix();
     // While the loop is paused (hidden tab, reduced motion) a resize must
     // still leave a correctly framed frame, not a stretched one.
@@ -645,24 +456,22 @@ export function createReachyScene(container, controller, options) {
     // Volume-preserving breath: chest swells out, height compensates.
     const breathe = 1 + Math.sin(breathPhase) * pose.breathAmp;
     parts.torso.scale.set(breathe, 1 / Math.max(breathe, 0.0001), breathe);
-    parts.head.position.y = 1.28 - (dof.headDrop + beatOffset.headDrop) * 0.16
+    parts.head.position.y = HEAD_HEIGHT - (dof.headDrop + beatOffset.headDrop) * 0.16
       + Math.sin(breathPhase) * pose.breathAmp * 0.6;
 
     // Eyes: openness x blink, glow, gaze saccade offsets.
-    const open = Math.max(0.04, dof.eyeOpen * blink);
-    parts.eyeL.group.scale.y = open;
-    parts.eyeR.group.scale.y = open;
-    const glowOpacity = 0.12 + dof.eyeGlow * 0.88;
+    const glowOpacity = dof.eyeGlow * 0.22;
     parts.eyeL.iris.material.opacity = glowOpacity;
     parts.eyeR.iris.material.opacity = glowOpacity;
-    parts.eyeL.halo.material.opacity = dof.eyeGlow * 0.3;
-    parts.eyeR.halo.material.opacity = dof.eyeGlow * 0.3;
+    parts.eyeL.halo.material.opacity = dof.eyeGlow * 0.12;
+    parts.eyeR.halo.material.opacity = dof.eyeGlow * 0.12;
     parts.eyeL.iris.material.color.copy(eyeColor);
     parts.eyeR.iris.material.color.copy(eyeColor);
     parts.eyeL.halo.material.color.copy(eyeColor);
     parts.eyeR.halo.material.color.copy(eyeColor);
-    parts.eyeL.gaze.position.set(dof.gazeX, dof.gazeY, 0);
-    parts.eyeR.gaze.position.set(dof.gazeX, dof.gazeY, 0);
+    parts.eyeL.gaze.position.set(dof.gazeX * 0.12, dof.gazeY * 0.12, 0);
+    parts.eyeR.gaze.position.set(dof.gazeX * 0.12, dof.gazeY * 0.12, 0);
+    parts.updateNeck();
 
     // Antennae: pose splay on the arm, physics swing on the pivot.
     // Sign flip: the pose table is authored as negative-L / positive-R
@@ -923,7 +732,7 @@ export function createReachyScene(container, controller, options) {
       controller.tick();
     }, 400);
   } else {
-    renderer.setAnimationLoop(frame);
+    if (!document.hidden) renderer.setAnimationLoop(frame);
     document.addEventListener('visibilitychange', onVisibility);
   }
 

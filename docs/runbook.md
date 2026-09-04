@@ -210,6 +210,26 @@ for the active realtime conversation. The local wake model must also be
 installed (`make voice-deps`); if it is missing or repeatedly fails, Parker
 turns off and says so rather than streaming continuous cloud audio.
 
+General conversation and current-information lookup are separate capabilities:
+OpenAI Realtime supports conversation; scores, news, and other live facts use
+the existing Anthropic brain with `PARKER_BRAIN_WEB_SEARCH=true` (or an enabled
+research gateway). A review launch that blanks `ANTHROPIC_API_KEY` or disables
+web search will intentionally omit `look_that_up`, even while Realtime works.
+Use the normal configured credentials for a live review. The agent's action
+allowlist describes what it may execute, not what it may discuss.
+
+On a cold start, the switch says **Getting wake listening ready…** until the
+local model is ready. Say “Hey Parker” once it says **Resting**. A detected
+wake immediately lights the indicator and says **I heard you — connecting…**
+while the cloud conversation opens. Microphone frames wait for model readiness,
+preventing a cold start from building an audio backlog. The recognition model,
+overlapping windows, and wake grammar are unchanged.
+
+The virtual Reachy uses locally packaged Pollen Robotics CAD shells (source,
+Apache 2.0 license, and reproducible mesh conversion in
+`backend/app/parker/static/vendor/reachy-mini/README.md`), with optical lenses,
+wire antennae, and visual neck linkages. It does not control physical motors.
+
 `/parker/converse/lab` is the family/operator harness. It retains manual
 Start/Done capture, the transcript, source cards, browser speech synthesis,
 text fallback, and an explicit Stop/Escape action. In that lab the microphone

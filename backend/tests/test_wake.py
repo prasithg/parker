@@ -16,6 +16,7 @@ import audioop
 import base64
 import math
 import struct
+import threading
 import wave
 
 import pytest
@@ -574,6 +575,99 @@ def test_wake_lane_is_honest_without_the_local_model(monkeypatch, wake_url):
         frame = ws.receive_json()
     assert frame["type"] == "unavailable"
     assert "local voice model" in frame["text"]
+
+
+def test_wake_readiness_is_acknowledged_after_the_model_loads(monkeypatch, wake_url):
+    from app.parker import converse_router
+
+    loaded = threading.Event()
+
+    def load():
+        loaded.set()
+        return lambda path: ["hey parker"]
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", load)
+    monkeypatch.setattr("app.parker.converse.write_receipt", lambda entry: None)
+    with client.websocket_connect(wake_url + "&readiness=1") as ws:
+        assert ws.receive_json() == {"type": "ready"}
+        assert loaded.is_set()
+        ws.send_json({"type": "audio", "data": _b64(_tone(0.8))})
+        assert ws.receive_json()["type"] == "wake"
+        ws.send_json({"type": "end"})
+
+
+@pytest.mark.parametrize("revoked", [True, False])
+def test_closed_socket_runtime_error_is_normal_only_after_revocation(monkeypatch, wake_url, revoked):
+    import asyncio
+    from urllib.parse import parse_qsl, urlsplit
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+
+    class Socket:
+        query_params = dict(parse_qsl(urlsplit(wake_url).query))
+
+        async def accept(self):
+            pass
+
+        async def receive_json(self):
+            if revoked:
+                released = authority.release(lambda on: None)
+                await converse_router._revoke_all(released["revoked"], "power_off")
+            raise RuntimeError("WebSocket is not connected. Need to call accept first.")
+
+        async def send_json(self, message):
+            pass
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: (lambda path: []))
+    if revoked:
+        asyncio.run(converse_router.converse_wake(Socket()))
+    else:
+        with pytest.raises(RuntimeError, match="WebSocket is not connected"):
+            asyncio.run(converse_router.converse_wake(Socket()))
+    assert authority.snapshot()["live"]["wake"] == 0
+
+
+def test_slow_inference_preserves_wake_phrase_overlap_and_request_tail(monkeypatch, wake_url):
+    """Never merge queued hops into a whole replacement window.
+
+    The first window's sentence cannot arm the greeting latch. Its final
+    'hey' must remain available beside the following 'parker' even when
+    more speech queued during inference. Merging all 2.4 queued seconds
+    erased that overlap and silently missed this wake (fresh review).
+    """
+    from app.parker import converse_router
+
+    started, release = threading.Event(), threading.Event()
+    calls = []
+    speech = _loudness({1000: "the game is hey", 2000: "parker", 3000: "tell me the score"})
+
+    def transcribe(path):
+        lines = speech(path)
+        calls.append(lines)
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(timeout=3)
+        return lines
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: transcribe)
+    monkeypatch.setattr("app.parker.converse.write_receipt", lambda entry: None)
+    with client.websocket_connect(wake_url) as ws:
+        try:
+            ws.send_json({"type": "audio", "data": _b64(_tone(0.8, amplitude=1000))})
+            assert started.wait(timeout=2)
+            ws.send_json({"type": "audio", "data": _b64(_tone(0.8, amplitude=2000))})
+            ws.send_json({"type": "audio", "data": _b64(_tone(1.6, amplitude=3000))})
+            release.set()
+            frame = ws.receive_json()
+            assert frame["type"] == "wake"
+            assert calls[1] == ["the game is hey parker"]
+            assert ws.receive_json() == {"type": "tail", "text": "tell me the score"}
+            ws.send_json({"type": "end"})
+        finally:
+            release.set()
 
 
 def test_wake_lane_is_honest_when_the_model_files_are_missing(db, monkeypatch, wake_url):

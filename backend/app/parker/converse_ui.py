@@ -1042,6 +1042,7 @@ createSession();
     && matchMedia('(prefers-reduced-motion: reduce)').matches;
   try {
     const mod = await import('/parker/converse/static/converse/reachy.js');
+    if (pageReleased) return; // pagehide may have happened while CAD assets loaded
     const scene = mod.createReachyScene(mount, controller, {reducedMotion: !!reduced});
     if (scene) {
       document.body.classList.add('scene-active');

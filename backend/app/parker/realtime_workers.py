@@ -135,11 +135,17 @@ def _question_is_guarded(question: str) -> bool:
 
 
 def search_worker_available() -> bool:
-    """Whether a brain exists to answer look_that_up (cheap, no construction)."""
+    """Whether a configured provider can research live information.
+
+    A Claude key enables conversation, but live lookup also needs its web
+    search tool enabled. The gateway owns its own research capabilities.
+    """
 
     from app.config import settings
 
-    return bool(settings.anthropic_api_key) or bool(settings.parker_openclaw_gateway_url)
+    return bool(settings.parker_openclaw_gateway_url) or (
+        bool(settings.anthropic_api_key) and settings.parker_brain_web_search
+    )
 
 
 @dataclass(frozen=True)

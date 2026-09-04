@@ -309,6 +309,30 @@ def test_brained_session_offers_look_that_up_and_says_so(
     assert "read web addresses aloud" in session["instructions"]  # wraps lines
 
 
+@pytest.mark.parametrize("has_claude_key", [False, True])
+@pytest.mark.parametrize("web_search_enabled", [False, True])
+@pytest.mark.parametrize("has_gateway", [False, True])
+def test_live_search_advertisement_matches_configured_provider(
+    monkeypatch, has_claude_key, web_search_enabled, has_gateway
+):
+    """A conversational key alone must not promise current scores or news."""
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-key" if has_claude_key else "")
+    monkeypatch.setattr(settings, "parker_brain_web_search", web_search_enabled)
+    monkeypatch.setattr(
+        settings, "parker_openclaw_gateway_url", "http://test-gateway" if has_gateway else ""
+    )
+    session = realtime.build_session_update()["session"]
+    expected = has_gateway or (has_claude_key and web_search_enabled)
+    assert ("look_that_up" in [tool["name"] for tool in session["tools"]]) is expected
+    assert ("do NOT have web search" in session["instructions"]) is not expected
+    # Conversation is native to the live model even when research is off.
+    assert "Conversation does not require an action tool" in session["instructions"]
+    assert "not the limits of what you can talk about" in session["instructions"]
+
+
 def test_greeting_is_requested_before_any_audio_arrives(
     db, realtime_enabled, brainless, upstream
 ):
