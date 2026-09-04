@@ -8,6 +8,7 @@ message, transcript lines flowing through the real TextSession routing
 """
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,6 +51,27 @@ def test_transcribe_audio_without_dependency_explains_install(audio_file, monkey
     monkeypatch.setitem(sys.modules, "faster_whisper", None)
     with pytest.raises(RuntimeError, match="make voice-deps"):
         transcribe_audio(audio_file)
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_cached_speech_model_never_waits_for_remote_metadata(monkeypatch, tmp_path, complete):
+    from app import paths
+    from app.voice.transcribe import load_local_transcriber
+
+    observed = []
+
+    def model(size, **kwargs):
+        observed.append((size, kwargs))
+        if complete and not kwargs.get("local_files_only"):
+            raise AssertionError("cached wake startup would contact the model hub")
+        return SimpleNamespace(transcribe=lambda *args, **kw: ([], None))
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=model))
+    monkeypatch.setattr(paths, "whisper_download_root", lambda size: None)
+    monkeypatch.setattr(paths, "cached_whisper_snapshot", lambda size: tmp_path if complete else None)
+    load_local_transcriber(model_size="base", initial_prompt="")
+    assert observed[0][0] == (str(tmp_path) if complete else "base")
+    assert observed[0][1]["local_files_only"] is complete
 
 
 def test_split_utterances_on_sentence_boundaries():

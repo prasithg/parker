@@ -15,6 +15,8 @@ The active execution plan is [2026-09-02-parker-hermes-current-information-sprin
   portrait framing were checked against the supplied Reachy photograph.
 - Wake readiness now waits for the local model; a detected wake lights the
   indicator immediately during connection. The scene lighting settles faster.
+  Cached models load without remote metadata requests, fixing a multi-minute
+  model-hub wait reproduced during the final live server relaunch.
   Local synthetic tests on three voices acknowledged wake about 0.57–0.82 s
   after the phrase ended. Those timings do not measure household performance.
   Catch-up batching was discarded after independent review reproduced a

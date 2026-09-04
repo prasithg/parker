@@ -9,6 +9,8 @@ re-downloaded.
 
 from pathlib import Path
 
+import pytest
+
 from app import paths
 
 
@@ -109,3 +111,23 @@ def test_location_prefers_parker_models_then_hf_cache(monkeypatch, tmp_path):
     _fake_model(parker_models, "base")
     assert paths.whisper_model_location("base") == "parker_models"
     assert paths.whisper_download_root("base") == parker_models
+
+
+@pytest.mark.parametrize("missing", [None, "model.bin", "config.json", "tokenizer.json", "vocabulary.json", "refs/main"])
+def test_offline_whisper_snapshot_requires_selected_complete_install(monkeypatch, tmp_path, missing):
+    root = tmp_path / "cache"
+    repo = root / "models--Systran--faster-whisper-base"
+    snapshot = repo / "snapshots" / "revision1"
+    snapshot.mkdir(parents=True)
+    for name in ("model.bin", "config.json", "tokenizer.json", "vocabulary.json"):
+        if name != missing:
+            (snapshot / name).write_text("synthetic")
+    if missing != "refs/main":
+        (repo / "refs").mkdir()
+        (repo / "refs" / "main").write_text("revision1")
+    monkeypatch.setattr(paths, "models_dir", lambda: root)
+    monkeypatch.setattr(paths, "hf_cache_dir", lambda: tmp_path / "empty")
+    assert paths.cached_whisper_snapshot("base") == (snapshot if missing is None else None)
+    if missing is None:
+        (repo / "refs" / "main").write_text("incomplete-revision")
+        assert paths.cached_whisper_snapshot("base") is None

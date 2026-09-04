@@ -155,3 +155,27 @@ def whisper_download_root(model_size: str) -> Path | None:
     if location == "hf_cache":
         return None
     return models_dir()
+
+
+def cached_whisper_snapshot(model_size: str) -> Path | None:
+    """A complete default-revision snapshot that can load without any network.
+
+    model.bin alone is insufficient: faster-whisper otherwise downloads a
+    missing tokenizer separately, even with its local_files_only flag set.
+    Partial installs must retain the normal downloader's repair path.
+    """
+    for root in (models_dir(), hf_cache_dir()):
+        repo = root / _WHISPER_REPO_TEMPLATE.format(size=model_size)
+        try:
+            revision = (repo / "refs" / "main").read_text().strip()
+        except (OSError, UnicodeError):
+            continue
+        if not revision or revision in {".", ".."} or Path(revision).name != revision:
+            continue
+        snapshot = repo / "snapshots" / revision
+        required = ("model.bin", "config.json", "tokenizer.json")
+        if all((snapshot / name).is_file() for name in required) and any(
+            (snapshot / name).is_file() for name in ("vocabulary.json", "vocabulary.txt")
+        ):
+            return snapshot
+    return None

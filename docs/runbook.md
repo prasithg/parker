@@ -224,6 +224,9 @@ wake immediately lights the indicator and says **I heard you — connecting…**
 while the cloud conversation opens. Microphone frames wait for model readiness,
 preventing a cold start from building an audio backlog. The recognition model,
 overlapping windows, and wake grammar are unchanged.
+Complete cached speech models load directly from the selected snapshot with
+`local_files_only`, avoiding a model-hub metadata request on every fresh
+server process. Missing or incomplete installs retain the normal download path.
 
 The virtual Reachy uses locally packaged Pollen Robotics CAD shells (source,
 Apache 2.0 license, and reproducible mesh conversion in
