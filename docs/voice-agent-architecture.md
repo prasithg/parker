@@ -325,6 +325,31 @@ Parker should measure:
 
 The measurement point should be the person's microphone/speaker path when possible. Server TTFT alone excludes endpointing, network, encoding, buffering, TTS, playback, and device behavior.
 
+### Shipped 2026-09-07: honest browser-clock interactivity receipts
+
+The realtime relay now gives the companion a server-assigned turn id on provider speech-start/stop markers and tags relayed audio with the completed turn that caused its response. The real companion records three bounded, aggregate-only signals in the existing session journal:
+
+- `provider_stop_notice_to_first_playback_ms`: browser receipt of the provider stop marker → first matching local audio buffer scheduled;
+- `speech_start_notice_to_local_flush_ms`: browser receipt of the provider start marker → completion of local `AudioBufferSourceNode.stop()` calls;
+- `turn_reopened_before_output`: the provider declared a stop, then another start arrived before matching audio output. This is an endpoint/output-recovery candidate—not proof of a false endpoint—and also catches a response that completed without audible output.
+
+These names are intentionally narrower than “voice-to-voice latency,” “time to silence,” or “false endpoint.” They exclude provider endpoint-detection delay, network time before the marker reaches the browser, audio-device output latency, and human judgment about whether a restart was intentional. The review page repeats that boundary. Missing audio emits no zero; only the first matching audio buffer closes a stop marker; stale audio from an older provider response cannot become the next turn's metric; malformed or future-turn client frames are dropped; and accepted receipts are capped without affecting the call.
+
+This creates the first real baseline for Dad-shaped home testing. It does **not** complete the full measurement list above. Waveform/playhead instrumentation, P50/P95 aggregation, missed/spurious interruption labels, and physical mic-to-speaker measurements remain follow-on work after real sessions exist.
+
+### Primer intake decisions
+
+The 2026-09-07 reread of [Voice AI & Voice Agents](https://voiceaiandvoiceagents.com/) reinforced the current hybrid direction:
+
+- retain semantic/context-aware endpointing, interruption as a first-class state transition, streamed audio, immediate acknowledgement for slow tools, bounded context, typed tool calls, and whole-journey evals;
+- adapt generic low-latency advice for effortful speech: latency cannot be bought by cutting off pauses, and a reopened turn is a review candidate rather than an automatic failure label;
+- keep the current OpenAI Realtime front as the flagship while measuring it; benchmark cascaded STT/LLM/TTS later behind the same Parker contracts;
+- keep one speaking front and silent workers; reliability, confirmation, result truth, and user preference outrank leaderboard speed;
+- defer WebRTC/QUIC, telephony, extra model providers, fine-tuning, and distributed scaling until a measured bottleneck requires them;
+- treat WebSocket played-audio truncation as a separate P0 correctness slice: Parker still needs a client playhead receipt and provider `conversation.item.truncate` before it can claim interrupted conversation history contains only what the person heard.
+
+The complete source-to-decision map, including STT, TTS, audio processing, transport, context, tools, evals, memory, hosting, rejected guidance, and revalidation triggers, lives at `~/Knowledge/parker/2026-09-07-voice-agent-primer-parker-field-guide.md`. The implementation plan and exact metric boundaries live in [`docs/plans/2026-09-07-voice-agent-primer-interactivity-receipts.md`](plans/2026-09-07-voice-agent-primer-interactivity-receipts.md).
+
 ## Evaluation plan
 
 A front-runtime or model candidate graduates only through the same Parker scenario set and human protocol.
@@ -340,6 +365,9 @@ A front-runtime or model candidate graduates only through the same Parker scenar
 - spoken history contains only played text after interruption;
 - action status language is exactly true;
 - job/source/event correlation survives restart where the runtime claims durability.
+- provider speech markers keep stable turn identity through response creation and relayed audio;
+- reopened turns, first matching scheduled audio, and local source-stop calls produce one bounded browser proxy each without changing playback/control behavior;
+- malformed, stale/future-turn, or over-budget telemetry cannot break the line or spoof review labels.
 
 ### ParkerBench-style model bake-off
 
@@ -375,7 +403,7 @@ The winner is the experience the user wants to keep using, subject to zero false
 - make Live the primary entry when configured;
 - set and evaluate the Parker voice explicitly;
 - fix natural spoken selection such as "yes one";
-- feed browser/client latency into the session review;
+- collect and review the shipped browser-clock interactivity receipts, then add physical/playhead measurements only when device tests justify them;
 - define realtime interaction outcomes;
 - run another human session and review the trail.
 
@@ -435,7 +463,7 @@ Primary external sources, retrieved 2026-08-31:
 - [Kwindla: weights and Modal deployment follow-up](https://x.com/kwindla/status/2094491302188741045)
 - [Daily: Announcing Pipecat PhoneLLM Alpha 1](https://www.daily.co/blog/announcing-pipecat-phonellm-alpha-1/)
 - [Hugging Face: `pipecat-ai/phonellm-alpha-1` model card](https://huggingface.co/pipecat-ai/phonellm-alpha-1)
-- [Voice AI & Voice Agents: An Illustrated Primer](https://voiceaiandvoiceagents.com/)
+- [Voice AI & Voice Agents: An Illustrated Primer](https://voiceaiandvoiceagents.com/) (reread 2026-09-07; section-level Parker synthesis in `~/Knowledge/parker/2026-09-07-voice-agent-primer-parker-field-guide.md`)
 - [Modal: One-second voice-to-voice latency with Modal, Pipecat, and open models](https://modal.com/blog/low-latency-voice-bot)
 
 Parker-local sources:

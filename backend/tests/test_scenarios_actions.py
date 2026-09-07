@@ -380,7 +380,7 @@ def test_never_mind_the_songs_cancels_the_card_for_good(voice_world):
         assert_staged(ws.receive_json(), "old Hindi songs")
 
         fake.feed(speech_started())
-        assert ws.receive_json() == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)
         fake.feed(user_said("no no, never mind the songs, Anil is calling"))
         heard = ws.receive_json()
         assert heard["type"] == "user_transcript"
@@ -574,7 +574,7 @@ def test_he_speaks_up_just_as_parker_is_writing_it_down(voice_world, monkeypatch
         assert _wait_until(lambda: _response_creates(fake) == 1)
 
         fake.feed(speech_started())
-        assert ws.receive_json() == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)
         fake.feed(
             done(
                 propose_call(

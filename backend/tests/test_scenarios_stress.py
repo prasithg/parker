@@ -213,14 +213,20 @@ def test_a_barge_in_storm_flushes_every_time_and_holds_the_ladder_down(
             fake.feed(model_said(f"chunk {index} "))
             fake.feed(speech_stopped())
 
-        frames = [ws.receive_json() for _ in range(30)]
+        frames = [ws.receive_json() for _ in range(60)]
 
         clears = [frame for frame in frames if frame["type"] == "clear"]
         deltas = [frame for frame in frames if frame["type"] == "assistant_transcript_delta"]
+        speech = [frame for frame in frames if frame["type"] == "speech_state"]
         assert len(clears) == 15  # exactly one flush per barge-in
         assert [d["text"] for d in deltas] == [f"chunk {i} " for i in range(15)]
-        # strict alternation: the flush always precedes the speech after it
-        assert [f["type"] for f in frames] == ["clear", "assistant_transcript_delta"] * 15
+        assert [(f["status"], f["turn_id"]) for f in speech] == [
+            pair for i in range(1, 16) for pair in (("started", i), ("stopped", i))
+        ]
+        # strict ordering: marker, flush, streamed speech, matching stop marker
+        assert [f["type"] for f in frames] == [
+            "speech_state", "clear", "assistant_transcript_delta", "speech_state"
+        ] * 15
 
         # the storm itself never escalated the ladder and never nudged
         assert not any("anything else" in text for text in _system_items(fake))

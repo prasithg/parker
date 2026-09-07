@@ -349,7 +349,7 @@ def test_speaking_during_the_goodbye_cancels_the_end(voice_world):
         fake.feed(model_said("Goodbye for"))
         assert ws.receive_json()["type"] == "assistant_transcript_delta"
         fake.feed({"type": "input_audio_buffer.speech_started"})  # "wait —"
-        assert ws.receive_json() == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)
         fake.feed(done())
         _no_closing(ws, fake, sentinel="wait, one more thing")
         # A later "that's all" ends it after all.
@@ -401,7 +401,7 @@ def test_speaking_during_the_soft_goodbye_cancels_the_end(voice_world):
         fake.feed(model_said("Any time. Say"))
         assert ws.receive_json()["type"] == "assistant_transcript_delta"
         fake.feed({"type": "input_audio_buffer.speech_started"})  # "actually —"
-        assert ws.receive_json() == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)
         fake.feed(done())
         _no_closing(ws, fake, sentinel="actually, one more thing")
         ws.send_json({"type": "end"})

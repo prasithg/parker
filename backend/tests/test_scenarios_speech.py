@@ -75,7 +75,7 @@ def test_he_cuts_in_halfway_and_the_owed_nudge_waits_for_his_mouth(voice_world):
         )
         assert delta["text"] == "I checked — Alcaraz plays the "
         fake.feed(speech_started())  # he cuts in
-        assert ws.receive_json() == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)
 
         # The interrupted narration closes. The half sentence is the
         # exchange — checked NOW, before a later done overwrites the mirror.
@@ -141,7 +141,9 @@ def test_barge_in_over_the_wrapup_with_an_answer_already_queued(
         monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 30.0)
 
         fake.feed(speech_started())
-        browser_frame(ws, "clear", working=[("search", "started")])
+        started = browser_frame(ws, "speech_state", working=[("search", "started")])
+        assert started == {"type": "speech_state", "status": "started", "turn_id": 1}
+        browser_frame(ws, "clear")
         gate.set()  # the answer lands while he is mid-word
         assert _wait_until(lambda: len(lookup_notes(fake)) == 1)
 

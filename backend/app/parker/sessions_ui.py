@@ -145,6 +145,13 @@ function feedbackControls(sid, ev, container) {
   container.appendChild(btn);
 }
 
+const VOICE_METRIC_LABELS = {
+  provider_stop_notice_to_first_playback_ms: 'provider stop notice → first local audio scheduled',
+  speech_start_notice_to_local_flush_ms: 'speech start notice → local source-stop calls completed',
+  turn_reopened_before_output: 'turn reopened before matching output',
+};
+const VOICE_METRIC_PROXY_NOTE = 'Browser control-path proxy — not physical mic-to-speaker timing.';
+
 function eventCard(sid, ev) {
   const card = el(`<div class="card"><span class="badge ${ev.kind}">${ev.kind.replace('_', ' ')}</span>
     <span class="chip">#${ev.seq}</span><span class="chip">${(ev.detail.t_ms / 1000).toFixed(1)}s in</span>
@@ -200,6 +207,18 @@ function eventCard(sid, ev) {
       .map((k) => k + ': ' + d[k]).join(' · ');
     if (overlays) body.appendChild(text(el('<div class="meta"></div>'), overlays));
     if (d.truncated) body.appendChild(el('<div class="meta">later expression transitions were dropped (cap reached)</div>'));
+  } else if (ev.kind === 'voice_metric') {
+    body.appendChild(el('<div class="who">Realtime interaction receipt</div>'));
+    body.appendChild(text(el('<div class="speech"></div>'), VOICE_METRIC_LABELS[d.name] || 'unknown voice metric'));
+    const row = el('<div><span class="chip value"></span><span class="chip turn"></span></div>');
+    text(row.querySelector('.value'), String(d.value) + ' ' + (d.unit || ''));
+    text(row.querySelector('.turn'), 'turn ' + String(d.turn_id));
+    body.appendChild(row);
+    body.appendChild(text(el('<div class="meta"></div>'), VOICE_METRIC_PROXY_NOTE));
+  } else if (ev.kind === 'metrics_capped') {
+    body.appendChild(el('<div class="who">Realtime receipt limit reached</div>'));
+    body.appendChild(text(el('<div class="meta"></div>'),
+      'The first ' + String(d.accepted_limit) + ' valid voice metrics were kept; later metrics were dropped.'));
   } else if (ev.kind === 'proposal') {
     body.appendChild(el('<div class="who">Parker proposed</div>'));
     body.appendChild(text(el('<div class="speech"></div>'), (d.label || d.action_type || '')));

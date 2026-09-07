@@ -473,13 +473,151 @@ def test_audio_and_transcripts_flow_to_the_browser(
         ]
     )
     with client.websocket_connect(live_url()) as ws:
-        assert ws.receive_json() == {"type": "audio", "data": "UENN"}
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 0}
         assert ws.receive_json() == {
             "type": "assistant_transcript_delta",
             "text": "It's a lovely day.",
         }
         assert ws.receive_json() == {"type": "user_transcript", "text": "what's the weather"}
         ws.send_json({"type": "end"})
+
+
+def test_speech_markers_and_response_audio_keep_completed_turn_identity(
+    db, realtime_enabled, brainless, upstream
+):
+    """The browser may measure only audio mapped to the matching completed
+    user turn. Greeting audio is turn 0; duplicate stops never reopen a
+    marker; a response born while the next turn is still open belongs to
+    the most recently completed turn."""
+
+    upstream["script"](
+        [
+            {"type": "response.created", "response": {"id": "greeting"}},
+            {"type": "response.output_audio.delta", "response_id": "greeting", "delta": "UENN"},
+            {"type": "input_audio_buffer.speech_started"},
+            {"type": "input_audio_buffer.speech_stopped"},
+            {"type": "response.created", "response": {"id": "answer-1"}},
+            {"type": "response.output_audio.delta", "response_id": "answer-1", "delta": "UENN"},
+            {"type": "response.created", "response": {"id": "answer-1b"}},
+            {"type": "response.output_audio.delta", "response_id": "answer-1b", "delta": "UENN"},
+            {"type": "input_audio_buffer.speech_started"},
+            {"type": "response.created", "response": {"id": "while-speaking"}},
+            {"type": "response.output_audio.delta", "response_id": "while-speaking", "delta": "UENN"},
+            {"type": "input_audio_buffer.speech_stopped"},
+            {"type": "input_audio_buffer.speech_stopped"},  # duplicate: no frame
+            {"type": "response.created", "response": {"id": "answer-2"}},
+            {"type": "response.output_audio.delta", "response_id": "answer-2", "delta": "UENN"},
+        ]
+    )
+
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 0}
+        assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 1}
+        assert ws.receive_json() == {"type": "clear"}
+        assert ws.receive_json() == {"type": "speech_state", "status": "stopped", "turn_id": 1}
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 1}
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 1}
+        assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 2}
+        assert ws.receive_json() == {"type": "clear"}
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 1}
+        assert ws.receive_json() == {"type": "speech_state", "status": "stopped", "turn_id": 2}
+        # If the duplicate stop leaked, it would be the next frame and fail.
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 2}
+        ws.send_json({"type": "end"})
+
+
+def test_voice_metrics_are_allowlisted_bounded_and_capped(
+    db, monkeypatch, realtime_enabled, brainless, upstream
+):
+    from app.parker.session_review import RealtimeSessionEvent
+
+    monkeypatch.setattr(realtime, "MAX_VOICE_METRICS", 2)
+    upstream["script"](
+        [
+            {"type": "input_audio_buffer.speech_started"},
+            {"type": "input_audio_buffer.speech_stopped"},
+        ]
+    )
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 1}
+        assert ws.receive_json() == {"type": "clear"}
+        assert ws.receive_json() == {"type": "speech_state", "status": "stopped", "turn_id": 1}
+        # Invalid frames arrive first and must not consume the accepted-frame cap.
+        ws.send_json({"type": "voice_metric", "name": "made_up", "value": 3, "turn_id": 1})
+        ws.send_json({"type": "voice_metric", "name": "provider_stop_notice_to_first_playback_ms", "value": 3, "turn_id": 2})
+        ws.send_json({"type": "voice_metric", "name": "provider_stop_notice_to_first_playback_ms", "value": "NaN", "turn_id": 1})
+        ws.send_json({"type": "voice_metric", "name": "provider_stop_notice_to_first_playback_ms", "value": 60001, "turn_id": 1})
+        ws.send_json(
+            {
+                "type": "voice_metric",
+                "name": "provider_stop_notice_to_first_playback_ms",
+                "value": 123.4,
+                "turn_id": 1,
+                "boundary": "browser tried to spoof this",
+                "unit": "hours",
+                "source": "provider",
+            }
+        )
+        ws.send_json({"type": "voice_metric", "name": "turn_reopened_before_output", "value": 1, "turn_id": 1})
+        ws.send_json({"type": "voice_metric", "name": "speech_start_notice_to_local_flush_ms", "value": 8, "turn_id": 1})
+        ws.send_json({"type": "voice_metric", "name": "speech_start_notice_to_local_flush_ms", "value": 9, "turn_id": 1})
+        ws.send_json({"type": "end"})
+
+    assert _wait_until(lambda: realtime._active_bridges == 0 and realtime._inflight_db_threads == 0)
+    db.expire_all()
+    rows = (
+        db.query(RealtimeSessionEvent)
+        .filter(RealtimeSessionEvent.kind.in_(["voice_metric", "metrics_capped"]))
+        .order_by(RealtimeSessionEvent.seq)
+        .all()
+    )
+    assert [row.kind for row in rows] == ["voice_metric", "voice_metric", "metrics_capped"]
+    first = json.loads(rows[0].detail)
+    assert first == {
+        "boundary": "provider_stop_notice_received_to_first_local_audio_scheduled",
+        "name": "provider_stop_notice_to_first_playback_ms",
+        "source": "browser_proxy",
+        "t_ms": first["t_ms"],
+        "turn_id": 1,
+        "unit": "ms",
+        "value": 123.4,
+    }
+    second = json.loads(rows[1].detail)
+    assert second["name"] == "turn_reopened_before_output"
+    assert second["unit"] == "count"
+    assert second["boundary"] == "provider_stop_notice_reopened_before_matching_output"
+    assert json.loads(rows[2].detail)["accepted_limit"] == 2
+
+
+def test_voice_turn_counter_never_wraps_or_misattributes_audio(
+    db, monkeypatch, realtime_enabled, brainless, upstream
+):
+    from app.parker.session_review import RealtimeSessionEvent
+
+    monkeypatch.setattr(realtime, "MAX_VOICE_TURNS", 1)
+    upstream["script"](
+        [
+            {"type": "input_audio_buffer.speech_started"},
+            {"type": "input_audio_buffer.speech_stopped"},
+            {"type": "input_audio_buffer.speech_started"},
+            {"type": "response.created", "response": {"id": "after-cap"}},
+            {"type": "response.output_audio.delta", "response_id": "after-cap", "delta": "UENN"},
+        ]
+    )
+    with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 1}
+        assert ws.receive_json() == {"type": "clear"}
+        assert ws.receive_json() == {"type": "speech_state", "status": "stopped", "turn_id": 1}
+        assert ws.receive_json() == {"type": "clear"}  # no reused/wrapped start marker
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 0}
+        ws.send_json({"type": "end"})
+
+    assert _wait_until(
+        lambda: db.query(RealtimeSessionEvent)
+        .filter(RealtimeSessionEvent.kind == "turn_tracking_capped")
+        .count()
+        == 1
+    )
 
 
 def test_posthoc_guard_cancels_flushes_and_redirects(
@@ -818,6 +956,7 @@ def test_stop_cancels_upstream_and_junk_audio_never_forwards(
 def test_barge_in_flushes_playback(db, realtime_enabled, brainless, upstream):
     upstream["script"]([{"type": "input_audio_buffer.speech_started"}])
     with client.websocket_connect(live_url()) as ws:
+        assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 1}
         assert ws.receive_json() == {"type": "clear"}
         ws.send_json({"type": "end"})
 
@@ -1067,7 +1206,7 @@ def test_audio_bearing_response_gets_an_authoritative_done_frame(
         ]
     )
     with client.websocket_connect(live_url()) as ws:
-        assert ws.receive_json() == {"type": "audio", "data": "UENN"}
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 0}
         assert ws.receive_json() == {"type": "response_state", "status": "done"}
         ws.send_json({"type": "end"})
 
@@ -1087,7 +1226,7 @@ def test_audioless_responses_send_no_response_state_frame(
     )
     with client.websocket_connect(live_url()) as ws:
         # Nothing for the audioless done — the next frame is the audio.
-        assert ws.receive_json() == {"type": "audio", "data": "UENN"}
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 0}
         assert ws.receive_json() == {"type": "response_state", "status": "done"}
         ws.send_json({"type": "end"})
 
@@ -1111,7 +1250,7 @@ def test_guard_tripped_response_still_closes_its_audio_epoch(
         ]
     )
     with client.websocket_connect(live_url()) as ws:
-        assert ws.receive_json() == {"type": "audio", "data": "UENN"}
+        assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 0}
         assert ws.receive_json()["type"] == "assistant_transcript_delta"
         assert ws.receive_json() == {"type": "clear"}
         assert ws.receive_json()["type"] == "guard_redirect"
@@ -1284,11 +1423,14 @@ def test_barge_in_during_the_goodbye_aborts_the_close(
         assert _wait_until(
             lambda: any("anything else" in text for text in _system_items(fake))
         )
-        # force the goodbye immediately, then barge in over it
-        monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 0.0)
+        # Give the goodbye instruction a bounded window before the watchdog's
+        # mute-model floor can close the line; zero made those two branches
+        # race under a loaded full-suite run.
+        monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 0.2)
         assert _wait_until(lambda: any("goodbye" in t for t in _system_items(fake)))
         monkeypatch.setattr(realtime, "IDLE_GOODBYE_SECONDS", 30.0)
         fake.feed({"type": "input_audio_buffer.speech_started"})
+        assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 1}
         assert ws.receive_json() == {"type": "clear"}  # barge-in flush
         # the (cancelled) goodbye's response.done lands right after his voice
         fake.feed({"type": "response.done", "response": {"output": []}})
@@ -1324,6 +1466,7 @@ def test_a_word_from_him_stands_the_wrapup_down(
             lambda: any("anything else" in text for text in _system_items(fake))
         )
         fake.feed({"type": "input_audio_buffer.speech_started"})
+        assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 1}
         assert ws.receive_json() == {"type": "clear"}  # barge-in still flushes
         time.sleep(0.3)
         assert not any("goodbye" in text for text in _system_items(fake))
@@ -2080,11 +2223,13 @@ def test_a_vad_reply_created_after_the_tail_satisfies_its_nudge(
         ws.send_json({"type": "hello", "tail": "can you", "pending": True})
         assert _wait_until(lambda: any("his own message" in t for t in _system_items(fake)))
         fake.feed({"type": "input_audio_buffer.speech_started"})
+        assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 1}
         assert ws.receive_json() == {"type": "clear"}
         ws.send_json({"type": "tail", "text": "can you help me with the tv"})
         assert _wait_until(lambda: _user_items(fake) == ["can you help me with the tv"])
         assert _response_creates(fake) == 0  # deferred: he is speaking
         fake.feed({"type": "input_audio_buffer.speech_stopped"})
+        assert ws.receive_json() == {"type": "speech_state", "status": "stopped", "turn_id": 1}
         fake.feed({"type": "response.created"})  # the VAD answers him — after the user item
         fake.feed({"type": "response.output_audio_transcript.delta", "delta": "Sure, the TV."})
         assert ws.receive_json() == {"type": "assistant_transcript_delta", "text": "Sure, the TV."}
