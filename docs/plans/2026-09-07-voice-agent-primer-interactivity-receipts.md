@@ -1,7 +1,7 @@
 # Voice-agent primer intake: realtime interactivity receipts
 
 **Date:** 2026-09-07
-**Status:** implemented and independently reviewed; awaiting exact-SHA hosted CI
+**Status:** implemented and independently reviewed; hosted checks tracked on [PR #50](https://github.com/prasithg/parker/pull/50)
 **Source:** [Voice AI & Voice Agents — An Illustrated Primer](https://voiceaiandvoiceagents.com/)
 
 ## Goal
@@ -178,6 +178,7 @@ A third blocking code-review result stops the slice on the branch for architectu
 - Full local gate after the final reconnect and test-race corrections: `1385 passed, 1 failed, 2 warnings` out of 1386 collected. The only failure is `test_a_lock_held_past_the_default_busy_timeout_costs_a_retry_never_the_write`; it reproduces unchanged at base SHA `869eb09` in an isolated worktree because the contender does not always begin before the six-second lock is released. Its data-integrity observables still pass. No changed-area test fails.
 - Independent Fable 5.1 code review: `PASS`; focused follow-up review of the client/review-page hunk and reconnect reset: `PASS`.
 - `git diff --check`: pass. Required knowledge-guide anchors: 12/12 present. Added-lines secret-pattern scan: no finding.
+- Hosted CI passed on implementation commit `a394b90f9d554ae17c0829b70f6ed8bdd4d65d48`: runs [34156352488](https://github.com/prasithg/parker/actions/runs/34156352488) and [34156354949](https://github.com/prasithg/parker/actions/runs/34156354949), including backend tests and every configured release eval.
 
 ## Explicit next P0, not claimed here
 
