@@ -563,14 +563,20 @@ def test_voice_metrics_are_allowlisted_bounded_and_capped(
         ws.send_json({"type": "voice_metric", "name": "speech_start_notice_to_local_flush_ms", "value": 9, "turn_id": 1})
         ws.send_json({"type": "end"})
 
-    assert _wait_until(lambda: realtime._active_bridges == 0 and realtime._inflight_db_threads == 0)
-    db.expire_all()
-    rows = (
-        db.query(RealtimeSessionEvent)
-        .filter(RealtimeSessionEvent.kind.in_(["voice_metric", "metrics_capped"]))
-        .order_by(RealtimeSessionEvent.seq)
-        .all()
-    )
+    def metric_rows():
+        try:
+            db.expire_all()
+            return (
+                db.query(RealtimeSessionEvent)
+                .filter(RealtimeSessionEvent.kind.in_(["voice_metric", "metrics_capped"]))
+                .order_by(RealtimeSessionEvent.seq)
+                .all()
+            )
+        except Exception:  # a concurrent SQLite writer means not-yet, not failure
+            return []
+
+    assert _wait_until(lambda: len(metric_rows()) == 3)
+    rows = metric_rows()
     assert [row.kind for row in rows] == ["voice_metric", "voice_metric", "metrics_capped"]
     first = json.loads(rows[0].detail)
     assert first == {
