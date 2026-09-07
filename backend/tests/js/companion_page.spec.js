@@ -76,6 +76,9 @@ function scheduled(env) {
   // Every AudioBufferSourceNode the page started, across its audio contexts.
   return env.audioContexts.flatMap((c) => c.startedSources);
 }
+function voiceMetrics(ws) {
+  return ws.sent.filter((frame) => frame.type === 'voice_metric');
+}
 
 async function poweredDormant(env) {
   await env.context.powerOn();
@@ -1052,6 +1055,95 @@ async function poweredActive(env) {
     const ws = wakeSockets(env)[wakeSockets(env).length - 1];
     ws.open();
     assert.strictEqual(power(env), 'dormant');
+  });
+
+  // ------------------------------------------------------------------------
+  // Voice interactivity receipts: client-clock proxies, not end-to-end claims.
+  // ------------------------------------------------------------------------
+
+  await test('a stopped turn records first scheduled playback once, on the matching audio turn only', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    const pcm100ms = Buffer.alloc(2400 * 2).toString('base64');
+    ws.message({ type: 'speech_state', status: 'stopped', turn_id: 1 });
+    env.advance(100);
+    ws.message({ type: 'audio', data: pcm100ms, turn_id: 1 });
+    ws.message({ type: 'audio', data: pcm100ms, turn_id: 1 });
+    const rows = voiceMetrics(ws).filter((m) => m.name === 'provider_stop_notice_to_first_playback_ms');
+    assert.strictEqual(rows.length, 1, JSON.stringify(voiceMetrics(ws)));
+    assert.strictEqual(rows[0].turn_id, 1);
+    assert.strictEqual(rows[0].value, 150, '100 ms elapsed plus the 50 ms schedule lead');
+    assert.strictEqual(scheduled(env).length, 2, 'telemetry never changes playback');
+  });
+
+  await test('reopening closes the old marker; stale audio cannot become the next turn latency', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    const pcm = Buffer.alloc(2400 * 2).toString('base64');
+    ws.message({ type: 'speech_state', status: 'stopped', turn_id: 1 });
+    ws.message({ type: 'speech_state', status: 'started', turn_id: 2 });
+    ws.message({ type: 'audio', data: pcm, turn_id: 1 }); // old response after reopen
+    let rows = voiceMetrics(ws);
+    assert.deepStrictEqual(rows.map((m) => [m.name, m.turn_id, m.value]),
+      [['turn_reopened_before_output', 1, 1]]);
+    ws.message({ type: 'speech_state', status: 'stopped', turn_id: 2 });
+    ws.message({ type: 'audio', data: pcm, turn_id: 1 }); // still stale
+    ws.message({ type: 'audio', data: pcm, turn_id: 2 }); // first matching output
+    rows = voiceMetrics(ws);
+    assert.strictEqual(rows.filter((m) => m.name === 'provider_stop_notice_to_first_playback_ms').length, 1);
+    assert.strictEqual(rows.find((m) => m.name === 'provider_stop_notice_to_first_playback_ms').turn_id, 2);
+  });
+
+  await test('ordered speech-start then clear records local source-stop latency only when audio was queued', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    const pcm = Buffer.alloc(2400 * 2).toString('base64');
+    ws.message({ type: 'audio', data: pcm, turn_id: 0 });
+    const before = scheduled(env).slice();
+    assert.ok(before.length > 0 && before.some((s) => !s.stopped));
+    ws.message({ type: 'speech_state', status: 'started', turn_id: 1 });
+    env.advance(7);
+    ws.message({ type: 'clear' });
+    assert.ok(before.every((s) => s.stopped), 'the existing clear path stopped every source');
+    const rows = voiceMetrics(ws).filter((m) => m.name === 'speech_start_notice_to_local_flush_ms');
+    assert.deepStrictEqual(rows.map((m) => [m.turn_id, m.value]), [[1, 7]]);
+    ws.message({ type: 'speech_state', status: 'started', turn_id: 2 });
+    ws.message({ type: 'clear' });
+    assert.strictEqual(voiceMetrics(ws).filter((m) => m.name === 'speech_start_notice_to_local_flush_ms').length, 1,
+      'an empty queue never invents a zero-latency receipt');
+  });
+
+  await test('a telemetry send failure cannot block audio scheduling or interruption flush', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredActive(env);
+    const pcm = Buffer.alloc(2400 * 2).toString('base64');
+    ws.message({ type: 'speech_state', status: 'stopped', turn_id: 1 });
+    const originalSend = ws.send.bind(ws);
+    ws.send = () => { throw new Error('receipt transport failed'); };
+    ws.message({ type: 'audio', data: pcm, turn_id: 1 });
+    const sources = scheduled(env).slice();
+    assert.ok(sources.length > 0, 'PCM still scheduled');
+    ws.message({ type: 'speech_state', status: 'started', turn_id: 2 });
+    ws.message({ type: 'clear' });
+    assert.ok(sources.every((s) => s.stopped), 'clear still flushes the queue');
+    ws.send = originalSend;
+  });
+
+  await test('a dropped-line reconnect cannot reuse a stale timing marker', async () => {
+    const env = await bootedEnv();
+    const first = await poweredActive(env);
+    first.message({ type: 'speech_state', status: 'stopped', turn_id: 1 });
+    first.dropped();
+    env.advance(2500); // the one bounded reconnect
+    await env.flush();
+    const second = liveSockets(env)[liveSockets(env).length - 1];
+    assert.notStrictEqual(second, first);
+    second.open();
+    second.message({
+      type: 'audio', data: Buffer.alloc(2400 * 2).toString('base64'), turn_id: 1,
+    });
+    assert.strictEqual(voiceMetrics(second).length, 0,
+      'new bridge turn 1 did not match the dropped bridge marker');
   });
 
   // ------------------------------------------------------------------------

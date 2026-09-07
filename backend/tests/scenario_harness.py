@@ -61,6 +61,7 @@ __all__ = [
     "_response_creates",
     "_system_items",
     "_wait_until",
+    "assert_barge_in_frames",
     "assert_staged",
     "audio_delta",
     "browser_frame",
@@ -106,6 +107,17 @@ def assert_staged(frame: dict, label: str) -> None:
     readback = frame.pop("readback", None)
     assert isinstance(readback, str) and readback, frame
     assert frame == {"type": "proposal_staged", "label": label}, frame
+
+
+def assert_barge_in_frames(ws, turn_id: int) -> None:
+    """Provider speech-start is observable before the existing flush frame."""
+
+    assert ws.receive_json() == {
+        "type": "speech_state",
+        "status": "started",
+        "turn_id": turn_id,
+    }
+    assert ws.receive_json() == {"type": "clear"}
 
 
 def audio_delta(data: str = "UENN") -> dict:

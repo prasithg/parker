@@ -48,6 +48,7 @@ import binascii
 import hashlib
 import json
 import logging
+import math
 import threading as _threading
 import time
 from datetime import datetime
@@ -279,6 +280,26 @@ _active_bridges = 0
 # what Parker visibly presented. A cap keeps a chatty page from flooding
 # the journal; frame-by-frame animation never belongs here.
 MAX_EXPRESSION_RECEIPTS = 400
+
+# Client-clock interactivity receipts. These are intentionally narrow proxy
+# measurements: the server supplies the meaning, unit, and source so an
+# untrusted page cannot relabel a number as physical mic-to-speaker latency.
+MAX_VOICE_METRICS = 200
+MAX_VOICE_TURNS = 1_000_000
+_VOICE_METRIC_SPECS = {
+    "provider_stop_notice_to_first_playback_ms": {
+        "boundary": "provider_stop_notice_received_to_first_local_audio_scheduled",
+        "unit": "ms",
+    },
+    "speech_start_notice_to_local_flush_ms": {
+        "boundary": "provider_start_notice_received_to_local_source_stop_calls_completed",
+        "unit": "ms",
+    },
+    "turn_reopened_before_output": {
+        "boundary": "provider_stop_notice_reopened_before_matching_output",
+        "unit": "count",
+    },
+}
 
 # Orchestrator timings. Module constants, not config: one household, and
 # the tests shrink them via monkeypatch.
@@ -1044,6 +1065,15 @@ class RealtimeBridge:
         self._lookup_asked: dict[str, float] = {}
         self._pending_turn_writer: Optional[Callable[[], None]] = None
         self._expression_receipts = 0
+        self._voice_turn_id = 0
+        self._voice_turn_open = False
+        self._last_completed_voice_turn = 0
+        self._voice_turns_capped = False
+        self._response_turn_ids: dict[str, int] = {}
+        self._active_response_turn_id = 0
+        self._active_response_id = ""
+        self._voice_metrics = 0
+        self._voice_metrics_capped = False
         # One spoken confirmation at a time: {action_id, contract, label,
         # readback, offered_at}. His next transcript is parsed by the same
         # deterministic yes/no grammar the turns lane executes on; anything
@@ -1134,6 +1164,55 @@ class RealtimeBridge:
         if self._expression_receipts == MAX_EXPRESSION_RECEIPTS:
             detail["truncated"] = True  # later transitions are dropped
         self._journal_in_background("expression", detail=detail)
+
+    async def _journal_voice_metric(self, message: dict[str, Any]) -> None:
+        """Validate one browser timing proxy and journal it without blocking.
+
+        Only accepted rows consume the cap. Browser-provided labels are
+        ignored: the relay owns the boundary, unit, and source vocabulary.
+        """
+
+        name = message.get("name")
+        spec = _VOICE_METRIC_SPECS.get(name) if isinstance(name, str) else None
+        turn_id = message.get("turn_id")
+        value = message.get("value")
+        if spec is None:
+            return
+        if (
+            isinstance(turn_id, bool)
+            or not isinstance(turn_id, int)
+            or turn_id < 1
+            or turn_id > self._voice_turn_id
+            or turn_id > MAX_VOICE_TURNS
+        ):
+            return
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        numeric = float(value)
+        if not math.isfinite(numeric) or numeric < 0 or numeric > 60_000:
+            return
+        if name == "turn_reopened_before_output" and numeric != 1:
+            return
+        if self._voice_metrics >= MAX_VOICE_METRICS:
+            if not self._voice_metrics_capped:
+                self._voice_metrics_capped = True
+                self._journal_in_background(
+                    "metrics_capped", detail={"accepted_limit": MAX_VOICE_METRICS}
+                )
+            return
+
+        self._voice_metrics += 1
+        self._journal_in_background(
+            "voice_metric",
+            detail={
+                "name": name,
+                "value": value,
+                "turn_id": turn_id,
+                "boundary": spec["boundary"],
+                "unit": spec["unit"],
+                "source": "browser_proxy",
+            },
+        )
 
     def revoke(self) -> None:
         """Off, now: the synchronous first step of shutdown, callable from the
@@ -1770,6 +1849,8 @@ class RealtimeBridge:
                 await self._browser_send({"type": "clear"})
             elif kind == "expression":
                 await self._journal_expression(message)
+            elif kind == "voice_metric":
+                await self._journal_voice_metric(message)
             elif kind == "end":
                 return
 
@@ -1800,7 +1881,15 @@ class RealtimeBridge:
             self._last_activity = time.monotonic()
             if not self._guard_tripped:
                 self._audio_sent = True
-                await self._browser_send({"type": "audio", "data": event.get("delta", "")})
+                response_id = event.get("response_id")
+                turn_id = (
+                    self._response_turn_ids.get(response_id, 0)
+                    if isinstance(response_id, str) and response_id
+                    else self._active_response_turn_id
+                )
+                await self._browser_send(
+                    {"type": "audio", "data": event.get("delta", ""), "turn_id": turn_id}
+                )
         elif etype.endswith("output_audio_transcript.delta") or etype == "response.audio_transcript.delta":
             delta = str(event.get("delta", ""))
             self._assistant_transcript += delta
@@ -1842,11 +1931,38 @@ class RealtimeBridge:
                 self._goodbye_requested = False
                 self._goodbye_nudge_pending = False
                 self._session_end_kind = ""
+            if self._voice_turn_id < MAX_VOICE_TURNS:
+                self._voice_turn_id += 1
+                self._voice_turn_open = True
+                await self._browser_send(
+                    {"type": "speech_state", "status": "started", "turn_id": self._voice_turn_id}
+                )
+            elif not self._voice_turns_capped:
+                self._voice_turns_capped = True
+                self._voice_turn_open = False
+                self._journal_in_background(
+                    "turn_tracking_capped", detail={"turn_limit": MAX_VOICE_TURNS}
+                )
             await self._browser_send({"type": "clear"})
         elif etype == "input_audio_buffer.speech_stopped":
             self._user_speaking = False
             self._last_activity = time.monotonic()
+            if self._voice_turn_open and not self._voice_turns_capped:
+                self._voice_turn_open = False
+                self._last_completed_voice_turn = self._voice_turn_id
+                await self._browser_send(
+                    {"type": "speech_state", "status": "stopped", "turn_id": self._voice_turn_id}
+                )
         elif etype == "response.created":
+            response = event.get("response")
+            response_id = response.get("id") if isinstance(response, dict) else None
+            turn_id = 0 if self._voice_turns_capped else self._last_completed_voice_turn
+            self._active_response_turn_id = turn_id
+            if isinstance(response_id, str) and response_id:
+                self._response_turn_ids[response_id] = turn_id
+                self._active_response_id = response_id
+            else:
+                self._active_response_id = ""
             if not self._response_active:
                 # Server-initiated (the VAD answering his speech): it was
                 # created after everything injected so far — the tail user
@@ -1859,7 +1975,16 @@ class RealtimeBridge:
                 self._begin_result_response()
             self._response_active = True
         elif etype == "response.done":
-            await self._on_response_done(event)
+            response = event.get("response")
+            response_id = response.get("id") if isinstance(response, dict) else None
+            try:
+                await self._on_response_done(event)
+            finally:
+                if isinstance(response_id, str) and response_id:
+                    self._response_turn_ids.pop(response_id, None)
+                if not response_id or response_id == self._active_response_id:
+                    self._active_response_id = ""
+                    self._active_response_turn_id = 0
         elif etype == "error":
             error = event.get("error")
             benign, response_active = _is_benign_upstream_error(error)

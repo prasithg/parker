@@ -814,6 +814,18 @@ def test_power_off_ack_is_not_held_behind_the_durable_write(db, monkeypatch):
     write_started = threading.Event()
     release_write = threading.Event()
     response_done = threading.Event()
+    warming = threading.Event()
+    release_warming = threading.Event()
+
+    # This test exercises power acknowledgement, not optional ASR loading.
+    # Hold warm-up until OFF has sent its authoritative revoke so an
+    # `unavailable` frame cannot race it in dependency-minimal CI.
+    def held_transcriber():
+        warming.set()
+        release_warming.wait(timeout=3.0)
+        return lambda _path: []
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", held_transcriber)
     real_set = converse_router.set_companion_settings
 
     def blocked_set(session, **fields):
@@ -838,6 +850,7 @@ def test_power_off_ack_is_not_held_behind_the_durable_write(db, monkeypatch):
     acknowledged_before_write = False
     try:
         with client.websocket_connect(_wake_url(granted)) as ws:
+            assert warming.wait(timeout=1.0)
             poster = threading.Thread(target=flip_off, daemon=True)
             poster.start()
             assert ws.receive_json()["reason"] == "power_off"
@@ -846,8 +859,10 @@ def test_power_off_ack_is_not_held_behind_the_durable_write(db, monkeypatch):
             release_write.set()
             poster.join(timeout=3.0)
             assert not poster.is_alive()
+            release_warming.set()  # let the revoked route observe OFF and return
     finally:
         release_write.set()
+        release_warming.set()
     assert acknowledged_before_write
     assert response["saved"] is None
     assert response["save_state"] == "pending"

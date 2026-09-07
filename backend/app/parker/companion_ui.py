@@ -333,7 +333,23 @@ const wake = {ws: null, retried: false, head: '', tail: '', tailTimer: null, pen
 const live = {ws: null, playCtx: null, nextTime: 0, playing: [], chunkMeta: [],
               energyTimer: null, wasPlaying: false, closingSeen: false,
               responseOpen: false, guardSpeaking: 0, retries: 0, revoked: false};
+const voiceTiming = {pendingStop: null, startNotice: null};
 let startingLive = false;
+
+function sendVoiceMetric(name, value, turnId) {
+  if (!live.ws || live.ws.readyState !== 1) return;
+  if (!Number.isFinite(value) || !Number.isInteger(turnId) || turnId < 1) return;
+  try {
+    live.ws.send(JSON.stringify({
+      type: 'voice_metric', name: name, value: Math.max(0, Math.round(value)), turn_id: turnId,
+    }));
+  } catch (err) { /* telemetry is best-effort and never changes playback */ }
+}
+
+function resetVoiceTiming() {
+  voiceTiming.pendingStop = null;
+  voiceTiming.startNotice = null;
+}
 
 // Power authority lives in the ENGINE (docs/plans/2026-09-01-foundation-
 // closure-overnight.md): the page claims power, receives an owner token +
@@ -378,7 +394,7 @@ function watchLivePlayback() {
   }, 120);
 }
 
-function playLivePcm(encoded) {
+function playLivePcm(encoded, turnId) {
   try {
     if (!live.playCtx) return;
     const raw = atob(encoded);
@@ -405,6 +421,15 @@ function playLivePcm(encoded) {
       at: at, dur: buffer.duration,
       energy: Math.min(1, Math.sqrt(sum / floats.length) * 4),
     });
+    if (voiceTiming.pendingStop && voiceTiming.pendingStop.turnId === turnId) {
+      const futureMs = Math.max(0, at - live.playCtx.currentTime) * 1000;
+      sendVoiceMetric(
+        'provider_stop_notice_to_first_playback_ms',
+        performance.now() - voiceTiming.pendingStop.at + futureMs,
+        turnId,
+      );
+      voiceTiming.pendingStop = null; // later chunks can never double-count the turn
+    }
     presence('assistant_audio');
   } catch (err) { /* one bad chunk must not end the call */ }
 }
@@ -523,6 +548,7 @@ function endLine() {
   live.ws = null;
   if (live.energyTimer) { clearInterval(live.energyTimer); live.energyTimer = null; }
   flushLivePlayback();
+  resetVoiceTiming();
   try { window.speechSynthesis && speechSynthesis.cancel(); } catch (err) {}
   live.guardSpeaking = 0;
   live.responseOpen = false;
@@ -564,9 +590,21 @@ function forwardTail() {
 // ---------------------------------------------------------------------------
 
 function handleLiveEvent(event) {
-  if (event.type === 'audio') {
+  if (event.type === 'speech_state') {
+    const turnId = event.turn_id;
+    if (!Number.isInteger(turnId) || turnId < 1) return;
+    if (event.status === 'started') {
+      if (voiceTiming.pendingStop) {
+        sendVoiceMetric('turn_reopened_before_output', 1, voiceTiming.pendingStop.turnId);
+        voiceTiming.pendingStop = null;
+      }
+      voiceTiming.startNotice = {turnId: turnId, at: performance.now()};
+    } else if (event.status === 'stopped') {
+      voiceTiming.pendingStop = {turnId: turnId, at: performance.now()};
+    }
+  } else if (event.type === 'audio') {
     live.responseOpen = true;
-    playLivePcm(event.data);
+    playLivePcm(event.data, event.turn_id);
   } else if (event.type === 'response_state') {
     if (event.status === 'done') {
       live.responseOpen = false;
@@ -586,6 +624,14 @@ function handleLiveEvent(event) {
     presence(status, {kind: event.kind || 'search'});
   } else if (event.type === 'clear') {
     const flushed = flushLivePlayback();
+    if (flushed && voiceTiming.startNotice) {
+      sendVoiceMetric(
+        'speech_start_notice_to_local_flush_ms',
+        performance.now() - voiceTiming.startNotice.at,
+        voiceTiming.startNotice.turnId,
+      );
+    }
+    voiceTiming.startNotice = null;
     const thinkingCancelled = expr && expr.getState().phase === 'thinking';
     if (flushed || thinkingCancelled) presence('interrupted');
   } else if (event.type === 'guard_redirect') {
@@ -969,6 +1015,9 @@ function onWake(event) {
 
 function startActive() {
   if (live.ws) return;
+  // A reconnect is a new relay/turn-id namespace; no marker from the
+  // dropped bridge may match its turn 1.
+  resetVoiceTiming();
   // Mic frames keep feeding the wake lane's tail until the line is OPEN;
   // every other entry (drop-retry) streams live from here.
   if (!wake.ws) audio.mode = 'live';

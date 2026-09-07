@@ -399,8 +399,7 @@ def test_a_fall_reported_over_the_goodbye_keeps_the_line_open(
         )
 
         fake.feed(speech_started())
-        first = ws.receive_json()  # blocks until the stand-down has happened
-        assert first == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)  # blocks until the stand-down has happened
         monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 30.0)  # freeze the ladder
 
         fake.feed(done())  # the goodbye response completes AFTER his voice
@@ -415,7 +414,7 @@ def test_a_fall_reported_over_the_goodbye_keeps_the_line_open(
         third = ws.receive_json()
         assert third == {"type": "assistant_transcript_delta", "text": "I'm here."}
         # no {"type": "closing"} anywhere in that stream
-        assert "closing" not in {first["type"], second["type"], third["type"]}
+        assert "closing" not in {second["type"], third["type"]}
 
         fake.feed(done())
         time.sleep(0.3)
@@ -477,7 +476,7 @@ def test_a_fall_with_no_model_reply_is_still_written_down(voice_world):
     with world.connect() as ws:
         fake.feed(done())  # settle the greeting
         fake.feed(speech_started())
-        assert ws.receive_json() == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)
         fake.feed(user_said("I have fallen in the hallway and I cannot get up."))
         assert ws.receive_json() == {
             "type": "user_transcript",

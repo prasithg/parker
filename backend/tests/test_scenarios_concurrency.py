@@ -867,7 +867,7 @@ def test_a_medical_trip_on_the_old_line_does_not_carry_into_the_new_one(voice_wo
                 "text": "Dinner is at seven, then.",
             }
             fakes[1].feed(audio_delta("UENN"))  # a tripped guard would mute this
-            assert ws_b.receive_json() == {"type": "audio", "data": "UENN"}
+            assert ws_b.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 0}
             assert _cancels(fakes[1]) == []
 
             ws_b.send_json({"type": "end"})
