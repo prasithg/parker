@@ -31,8 +31,20 @@ def get_due_medications(
     now: datetime | None = None,
     window_minutes: int = 30,
 ) -> list[tuple[Medication, str]]:
-    """Return active medications due from now through the configured window."""
-    now = now or datetime.utcnow()
+    """Return medicines due in the home-local daily schedule window.
+
+    Naive explicit values are already home wall time. Aware values and the
+    production default are normalized through the named home zone so DST is
+    correct for every caller, not only the realtime context card.
+    """
+
+    from app.parker.rollup import home_timezone
+
+    home = home_timezone()
+    if now is None:
+        now = datetime.now(home).replace(tzinfo=None)
+    elif now.tzinfo is not None:
+        now = now.astimezone(home).replace(tzinfo=None)
     window_end = now + timedelta(minutes=window_minutes)
     due: list[tuple[Medication, str]] = []
 

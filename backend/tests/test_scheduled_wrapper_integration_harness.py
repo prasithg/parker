@@ -26,6 +26,15 @@ from benchmark.scheduled_wrapper_harness_v0 import (
 
 REPO = Path(__file__).resolve().parents[2]
 HARNESS = REPO / "benchmark/scheduled_wrapper_harness_v0.py"
+MAKEFILE = REPO / "Makefile"
+
+
+def test_make_target_executes_the_scheduled_wrapper_harness():
+    makefile = MAKEFILE.read_text()
+    assert (
+        "\neval-scheduled-wrapper-harness:\n"
+        "\tpython3 benchmark/scheduled_wrapper_harness_v0.py\n"
+    ) in makefile
 
 
 def test_inactive_harness_executes_scrubbed_worker_and_checks_real_layout(tmp_path, monkeypatch):

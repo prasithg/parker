@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.db.models import CallLog
@@ -65,7 +66,7 @@ def test_sessions_on_different_threads_do_not_share_a_connection(db):
     def hold() -> None:
         session = factory()
         try:
-            session.execute(__import__("sqlalchemy").text("SELECT 1"))
+            session.execute(text("SELECT 1"))
             raw = session.connection().connection.dbapi_connection
             with lock:
                 seen.append(id(raw))

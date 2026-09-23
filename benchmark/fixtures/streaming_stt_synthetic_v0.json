@@ -1,0 +1,209 @@
+{
+  "fixture_id": "streaming_stt_synthetic_v0",
+  "purpose": "Hand-labeled synthetic streaming-STT turn timelines for app.audio_harness.streaming_stt_eval. Labels pin timing/behaviour semantics (speech end, last nonempty final, explicit endpoint, failure classes); they are NOT ASR output, NOT a Parkinson's speech cohort, and NOT a provider comparison. Timestamps are seconds from the start of the (imaginary) replayed audio.",
+  "private_data": "none",
+  "asr_evidence": false,
+  "authored": "2026-09-22, independently of the implementation, from the acceptance list in the build brief",
+  "finalization_timeout_s": 3.0,
+  "speaker_split": {
+    "train": ["syn-a", "syn-b"],
+    "test": ["syn-c", "syn-d"]
+  },
+  "cases": [
+    {
+      "case_id": "pause-001",
+      "speaker": "syn-a",
+      "tags": ["pause"],
+      "truth": {
+        "transcript": "remind me to take my pills at eight",
+        "intent": "reminder",
+        "speech_end_s": 2.6
+      },
+      "observed": {
+        "intent": "reminder",
+        "events": [
+          {"type": "partial", "at_s": 0.8, "text": "remind me"},
+          {"type": "final", "at_s": 1.2, "text": "remind me to"},
+          {"type": "partial", "at_s": 2.4, "text": "take my pills"},
+          {"type": "final", "at_s": 3.0, "text": "take my pills at eight"},
+          {"type": "endpoint", "at_s": 3.2}
+        ]
+      }
+    },
+    {
+      "case_id": "pause-002-premature-endpoint",
+      "speaker": "syn-c",
+      "tags": ["pause", "premature_endpoint"],
+      "truth": {
+        "transcript": "call sarah after lunch",
+        "intent": "family_message",
+        "speech_end_s": 2.9
+      },
+      "observed": {
+        "intent": "family_message",
+        "events": [
+          {"type": "final", "at_s": 1.1, "text": "call sarah"},
+          {"type": "endpoint", "at_s": 1.9},
+          {"type": "final", "at_s": 3.3, "text": "after lunch"}
+        ]
+      }
+    },
+    {
+      "case_id": "restart-001",
+      "speaker": "syn-b",
+      "tags": ["restart"],
+      "truth": {
+        "transcript": "play play my morning playlist",
+        "intent": "play_media",
+        "speech_end_s": 2.2
+      },
+      "observed": {
+        "intent": "play_media",
+        "events": [
+          {"type": "partial", "at_s": 0.5, "text": "play"},
+          {"type": "partial", "at_s": 1.4, "text": "play play my"},
+          {"type": "final", "at_s": 2.7, "text": "play play my morning playlist"},
+          {"type": "endpoint", "at_s": 2.9}
+        ]
+      }
+    },
+    {
+      "case_id": "corr-001",
+      "speaker": "syn-d",
+      "tags": ["correction"],
+      "truth": {
+        "transcript": "remind me at eight",
+        "intent": "reminder",
+        "speech_end_s": 2.0
+      },
+      "observed": {
+        "intent": "reminder",
+        "events": [
+          {"type": "final", "at_s": 1.0, "text": "remind me at seven"},
+          {"type": "final", "at_s": 2.4, "text": "no eight"},
+          {"type": "endpoint", "at_s": 2.6}
+        ]
+      }
+    },
+    {
+      "case_id": "neg-001",
+      "speaker": "syn-a",
+      "tags": ["negation"],
+      "truth": {
+        "transcript": "don't remind me tonight",
+        "intent": "decline_reminder",
+        "speech_end_s": 1.5
+      },
+      "observed": {
+        "intent": "reminder",
+        "events": [
+          {"type": "final", "at_s": 1.9, "text": "do remind me tonight"},
+          {"type": "endpoint", "at_s": 2.0}
+        ]
+      }
+    },
+    {
+      "case_id": "name-001",
+      "speaker": "syn-c",
+      "tags": ["name"],
+      "truth": {
+        "transcript": "tell chris I am fine",
+        "intent": "family_message",
+        "speech_end_s": 1.8
+      },
+      "observed": {
+        "intent": "family_message",
+        "events": [
+          {"type": "partial", "at_s": 0.9, "text": "tell kris"},
+          {"type": "final", "at_s": 2.1, "text": "tell kris I am fine"},
+          {"type": "endpoint", "at_s": 2.3}
+        ]
+      }
+    },
+    {
+      "case_id": "cancel-001",
+      "speaker": "syn-b",
+      "tags": ["cancel"],
+      "truth": {
+        "transcript": "cancel that",
+        "intent": "cancel",
+        "speech_end_s": 0.9
+      },
+      "observed": {
+        "intent": "cancel",
+        "events": [
+          {"type": "final", "at_s": 1.1, "text": "cancel that"},
+          {"type": "endpoint", "at_s": 1.3}
+        ]
+      }
+    },
+    {
+      "case_id": "noout-001",
+      "speaker": "syn-d",
+      "tags": ["no_output"],
+      "truth": {
+        "transcript": "start my exercises",
+        "intent": "exercise_start",
+        "speech_end_s": 1.4
+      },
+      "observed": {
+        "intent": null,
+        "events": [
+          {"type": "partial", "at_s": 0.7, "text": "start"},
+          {"type": "final", "at_s": 1.6, "text": ""}
+        ]
+      }
+    },
+    {
+      "case_id": "err-001",
+      "speaker": "syn-a",
+      "tags": ["error"],
+      "truth": {
+        "transcript": "what time is it",
+        "intent": "time_query",
+        "speech_end_s": 1.0
+      },
+      "observed": {
+        "intent": null,
+        "events": [
+          {"type": "partial", "at_s": 0.6, "text": "what time"},
+          {"type": "error", "at_s": 1.1, "kind": "error", "detail": "synthetic stream closed"}
+        ]
+      }
+    },
+    {
+      "case_id": "timeout-001",
+      "speaker": "syn-c",
+      "tags": ["timeout"],
+      "truth": {
+        "transcript": "remind me to call the clinic",
+        "intent": "reminder",
+        "speech_end_s": 2.0
+      },
+      "observed": {
+        "intent": "reminder",
+        "events": [
+          {"type": "partial", "at_s": 1.2, "text": "remind me"},
+          {"type": "final", "at_s": 6.5, "text": "remind me to call the clinic"}
+        ]
+      }
+    },
+    {
+      "case_id": "invalid-001",
+      "speaker": "syn-b",
+      "tags": ["invalid_timing"],
+      "truth": {
+        "transcript": "good night parker",
+        "intent": "goodbye",
+        "speech_end_s": 1.6
+      },
+      "observed": {
+        "intent": "goodbye",
+        "events": [
+          {"type": "final", "at_s": 1.2, "text": "good night parker"},
+          {"type": "endpoint", "at_s": 1.7}
+        ]
+      }
+    }
+  ]
+}

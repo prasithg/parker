@@ -3,10 +3,11 @@
 //! The shell has no policy logic, no DB access, no send paths
 //! (docs/desktop-architecture.md, "What the shell never does"). It:
 //! spawns the bundled engine on a free port, waits for /health, opens
-//! the onboarding wizard on first run, restarts a crashed engine with
-//! backoff, mirrors the voice-loop state in the tray icon, opens the
-//! engine's own pages (voice practice / dad screen / review / digest / setup) as
-//! windows, and toggles the talk-loop sidecar.
+//! the onboarding wizard on first run (the companion otherwise), restarts
+//! a crashed engine with backoff, mirrors the voice-loop state in the tray
+//! icon, opens the engine's own pages (companion / voice practice / dad
+//! screen / review / digest / setup) as windows, and toggles the legacy
+//! talk-loop sidecar.
 
 mod sidecar;
 
@@ -30,6 +31,10 @@ const HEALTH_POLL_MS: u64 = 500;
 const TRAY_POLL_MS: u64 = 2_000;
 const FIRST_SESSION_WAIT_SECS: u64 = 15;
 const RESTART_BACKOFF_SECS: [u64; 5] = [1, 2, 4, 8, 15]; // MacClaw's curve
+/// Source revision this shell was built from (build.rs; `<sha>[-dirty]`,
+/// or `unknown` without git). Printed once at setup so a packaged probe
+/// can bind the .app it launched to a commit.
+const GIT_SHA: &str = env!("PARKER_GIT_SHA");
 
 const ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
 const ICON_LISTENING: &[u8] = include_bytes!("../icons/tray-listening.png");
@@ -96,6 +101,7 @@ struct TrayHandles {
 
 #[derive(Debug, PartialEq, Eq)]
 enum FirstSessionStartDecision {
+    BlockedByCompanion,
     BlockedByPractice,
     ReuseTalk,
     SpawnTalk,
@@ -111,10 +117,13 @@ enum FirstSessionLeaseAction {
 }
 
 fn first_session_start_decision(
+    companion_open: bool,
     voice_practice_open: bool,
     talk_running: bool,
 ) -> FirstSessionStartDecision {
-    if voice_practice_open {
+    if companion_open {
+        FirstSessionStartDecision::BlockedByCompanion
+    } else if voice_practice_open {
         FirstSessionStartDecision::BlockedByPractice
     } else if talk_running {
         FirstSessionStartDecision::ReuseTalk
@@ -322,11 +331,25 @@ fn close_engine_window_wait(app: &AppHandle, label: &'static str) -> Result<(), 
         .map_err(|_| "desktop window did not close within 5 seconds".to_string())?
 }
 
+/// The person-facing window: the companion at /parker/converse. It holds the
+/// microphone inside the webview (getUserMedia), so the legacy TALK sidecar
+/// must not keep it — the same handoff Voice Practice does. Main thread only.
+fn open_companion(app: &AppHandle) -> Result<bool, String> {
+    let state = app.state::<AppState>();
+    let _transition = state.microphone_transition.enter();
+    if state.manager.is_running(TALK) {
+        state.manager.kill(TALK);
+        set_listen_label(app, false);
+        set_tray_state(app, "idle");
+    }
+    open_engine_window(app, "companion", "/parker/converse", "Parker", true)
+}
+
 fn autostart_marker(state: &AppState) -> PathBuf {
     state.manager.home().join(".autostart-initialized")
 }
 
-/// First-boot thread: wait for /health, then decide wizard-or-quiet.
+/// First-boot thread: wait for /health, then decide wizard-or-companion.
 fn boot_thread(app: AppHandle) {
     let state = app.state::<AppState>();
     let base = state.base_url();
@@ -364,6 +387,12 @@ fn boot_thread(app: AppHandle) {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
                 let _ = open_engine_window(&handle, "setup", "/setup/ui", "Set up Parker", false);
+            });
+        } else {
+            // A living-room machine shows Parker itself on launch.
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let _ = open_companion(&handle);
             });
         }
     }
@@ -481,21 +510,26 @@ fn process_first_session_request(app: &AppHandle, request: &serde_json::Value) {
     let app_state = app.state::<AppState>();
     let base_url = app_state.base_url();
     let (owned_talk_pid, baseline_update) = {
-        // One transition gate covers Practice-open/kill and TALK check/spawn.
-        // Whichever path enters first completes ownership transfer before the
-        // other can inspect or mutate the microphone process.
+        // One transition gate covers companion/Practice-open, kill and TALK
+        // check/spawn. Whichever path enters first completes ownership
+        // transfer before the other can inspect or mutate the microphone.
         let _transition = app_state.microphone_transition.enter();
+        let companion_open = app.get_webview_window("companion").is_some();
         let practice_open = app.get_webview_window("voice-practice").is_some();
         let talk_running = app_state.manager.is_running(TALK);
-        let decision = first_session_start_decision(practice_open, talk_running);
+        let decision = first_session_start_decision(companion_open, practice_open, talk_running);
 
-        if decision == FirstSessionStartDecision::BlockedByPractice {
-            let _ = acknowledge_first_session(
-                &base_url,
-                request_id,
-                "error",
+        let blocked = match decision {
+            FirstSessionStartDecision::BlockedByCompanion => Some(
+                "Parker's companion is open and owns the microphone. Close it, then try again.",
+            ),
+            FirstSessionStartDecision::BlockedByPractice => Some(
                 "Voice Practice is using the microphone. Finish or close it, then try again.",
-            );
+            ),
+            _ => None,
+        };
+        if let Some(message) = blocked {
+            let _ = acknowledge_first_session(&base_url, request_id, "error", message);
             return;
         }
 
@@ -625,7 +659,8 @@ fn process_first_session_request(app: &AppHandle, request: &serde_json::Value) {
         return;
     }
 
-    let still_ready = app.get_webview_window("voice-practice").is_none()
+    let still_ready = app.get_webview_window("companion").is_none()
+        && app.get_webview_window("voice-practice").is_none()
         && app_state.manager.is_running(TALK)
         && loop_snapshot(&base_url)
             .map(|(state, _)| active_talk_state(&state))
@@ -638,7 +673,7 @@ fn process_first_session_request(app: &AppHandle, request: &serde_json::Value) {
             owned_talk_pid,
             opened_dad_screen,
             Some(
-                "Listening changed while the Dad Screen opened. Close Voice Practice, then try again.",
+                "Listening changed while the Dad Screen opened. Close Voice Practice or Parker's companion, then try again.",
             ),
         );
         return;
@@ -686,7 +721,7 @@ fn report_stopped_first_session(base_url: &str) {
             base_url,
             request_id,
             "error",
-            "Listening stopped. Close Voice Practice if it is open, then try again.",
+            "Listening stopped. Close Voice Practice or Parker's companion if open, then try again.",
         );
     }
 }
@@ -786,6 +821,9 @@ fn poll_thread(app: AppHandle) {
 
 fn on_menu_event(app: &AppHandle, event_id: &str) {
     match event_id {
+        "companion" => {
+            let _ = open_companion(app);
+        },
         "voice-practice" => {
             let state = app.state::<AppState>();
             let _transition = state.microphone_transition.enter();
@@ -821,6 +859,12 @@ fn on_menu_event(app: &AppHandle, event_id: &str) {
                 state.manager.kill(TALK);
                 set_listen_label(app, false);
                 set_tray_state(app, "idle");
+            } else if app.get_webview_window("companion").is_some() {
+                set_status_text(
+                    app,
+                    "Parker — the companion is open and owns the microphone; close it before listening"
+                        .into(),
+                );
             } else if app.get_webview_window("voice-practice").is_some() {
                 set_status_text(
                     app,
@@ -856,6 +900,7 @@ fn on_menu_event(app: &AppHandle, event_id: &str) {
 }
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    println!("parker-desktop {} git={GIT_SHA}", env!("CARGO_PKG_VERSION"));
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -879,8 +924,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Tray + menu.
     let status = MenuItem::with_id(app, "status", "Parker — starting…", false, None::<&str>)?;
+    let companion = MenuItem::with_id(app, "companion", "Open Parker", true, None::<&str>)?;
     let practice = MenuItem::with_id(app, "voice-practice", "Voice Practice", true, None::<&str>)?;
-    let dad = MenuItem::with_id(app, "dad-screen", "Open Dad Screen", true, None::<&str>)?;
+    let dad = MenuItem::with_id(app, "dad-screen", "Open Dad Screen (legacy)", true, None::<&str>)?;
     let review = MenuItem::with_id(app, "review", "Family Review", true, None::<&str>)?;
     let digest = MenuItem::with_id(app, "digest", "Daily Digest", true, None::<&str>)?;
     let listen = MenuItem::with_id(app, "toggle-listen", "Start Listening", true, None::<&str>)?;
@@ -895,6 +941,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         &[
             &status,
             &PredefinedMenuItem::separator(app)?,
+            &companion,
             &listen,
             &practice,
             &dad,
@@ -965,13 +1012,46 @@ mod tests {
 
     use super::{
         active_talk_state, first_session_lease_action, first_session_start_decision,
-        FirstSessionLeaseAction, FirstSessionStartDecision, MicrophoneTransition,
+        FirstSessionLeaseAction, FirstSessionStartDecision, MicrophoneTransition, GIT_SHA,
     };
+
+    #[test]
+    fn build_sha_is_embedded() {
+        // build.rs stamps the source revision into the shell so the packaged
+        // probe can bind a Parker.app to a commit; "unknown" only without git.
+        let bare = GIT_SHA.strip_suffix("-dirty").unwrap_or(GIT_SHA);
+        assert!(
+            bare == "unknown" || (bare.len() >= 7 && bare.chars().all(|c| c.is_ascii_hexdigit())),
+            "PARKER_GIT_SHA = {GIT_SHA:?}"
+        );
+    }
+
+    #[test]
+    fn companion_blocks_first_session_before_talk_spawn() {
+        assert_eq!(
+            first_session_start_decision(true, false, false),
+            FirstSessionStartDecision::BlockedByCompanion
+        );
+        // A TALK process that is somehow still alive is not reused either:
+        // the companion owns the microphone inside its webview.
+        assert_eq!(
+            first_session_start_decision(true, false, true),
+            FirstSessionStartDecision::BlockedByCompanion
+        );
+    }
+
+    #[test]
+    fn companion_outranks_voice_practice_when_both_are_open() {
+        assert_eq!(
+            first_session_start_decision(true, true, false),
+            FirstSessionStartDecision::BlockedByCompanion
+        );
+    }
 
     #[test]
     fn voice_practice_blocks_first_session_before_talk_spawn() {
         assert_eq!(
-            first_session_start_decision(true, false),
+            first_session_start_decision(false, true, false),
             FirstSessionStartDecision::BlockedByPractice
         );
     }
@@ -979,11 +1059,11 @@ mod tests {
     #[test]
     fn existing_talk_process_is_reused_instead_of_duplicated() {
         assert_eq!(
-            first_session_start_decision(false, true),
+            first_session_start_decision(false, false, true),
             FirstSessionStartDecision::ReuseTalk
         );
         assert_eq!(
-            first_session_start_decision(false, false),
+            first_session_start_decision(false, false, false),
             FirstSessionStartDecision::SpawnTalk
         );
     }

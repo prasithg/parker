@@ -156,7 +156,17 @@ def cmd_download_model(args: argparse.Namespace) -> int:
 
 
 def cmd_version(args: argparse.Namespace) -> int:
-    print(f"parker {__version__}")
+    """``parker 0.3.0 (<git sha>)`` — the first line keeps the sidecar
+    smoke contract; ``--json`` is what the packaged probe binds a bundle
+    to its source with (app/version.py)."""
+
+    from app.version import build_identity
+
+    identity = build_identity()
+    if getattr(args, "json", False):
+        print(json.dumps(identity))
+    else:
+        print(f"parker {identity['version']} ({identity['git_sha']})")
     return 0
 
 
@@ -305,7 +315,8 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("--model", default=None)
     download.set_defaults(func=cmd_download_model)
 
-    version = sub.add_parser("version", help="print the engine version")
+    version = sub.add_parser("version", help="print the engine version and source revision")
+    version.add_argument("--json", action="store_true", help="{version, git_sha, frozen}")
     version.set_defaults(func=cmd_version)
 
     selftest = sub.add_parser(

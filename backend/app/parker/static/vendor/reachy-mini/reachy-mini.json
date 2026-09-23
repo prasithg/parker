@@ -1,0 +1,49 @@
+{
+  "revision": "234a978e4426895fc88d864e7f154643aea77f53",
+  "coordinate_scale": 1e-05,
+  "meshes": {
+    "body_foot_3dprint": {
+      "position_offset": 0,
+      "vertex_count": 6379,
+      "index_offset": 38276,
+      "index_count": 38370,
+      "source_sha256": "f021859da8f2b5dd663f36b7f4dd9b5e1c52485556a106b1ad66a3fed83281b8"
+    },
+    "body_down_3dprint": {
+      "position_offset": 191756,
+      "vertex_count": 10459,
+      "index_offset": 254512,
+      "index_count": 62910,
+      "source_sha256": "737e674299655be49d6b37a196d21cf8b9fd95c2837667cf4e4ed8bc4a8e89fa"
+    },
+    "body_top_3dprint": {
+      "position_offset": 506152,
+      "vertex_count": 10482,
+      "index_offset": 569044,
+      "index_count": 62910,
+      "source_sha256": "60f406a0ff783d18bd20c0441d1e03243d11403a71e7f37ee6aa444da9110039"
+    },
+    "head_back_3dprint": {
+      "position_offset": 820684,
+      "vertex_count": 10467,
+      "index_offset": 883488,
+      "index_count": 62910,
+      "source_sha256": "724385740aee0c18d3ccfe5df1b79049ff84c736cf652b53f5625ac5cc83c95c"
+    },
+    "head_front_3dprint": {
+      "position_offset": 1135128,
+      "vertex_count": 10465,
+      "index_offset": 1197920,
+      "index_count": 62910,
+      "source_sha256": "6b4938a455866612ec3915da422d5e01037844fb3424c55200eea8e056363f81"
+    },
+    "head_mic_3dprint": {
+      "position_offset": 1449560,
+      "vertex_count": 6554,
+      "index_offset": 1488884,
+      "index_count": 39720,
+      "source_sha256": "ac3f4978f945345336481bde7b87aea91aeb97c3ce7e9433df8340923f5665bd"
+    }
+  },
+  "sha256": "8b829bc63251a593ec677c61217a4f1ea32c8cf216ade65a24ac0703472d832d"
+}

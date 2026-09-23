@@ -201,11 +201,16 @@ answered when the search lands → idle wrap-up → goodbye with a browser
 `closing` handshake → the session persisted (call log + one topic memory)
 so the *next* session's card knows about it.
 
-- **Tools: `propose_action`, plus `look_that_up` when a brain is
-  configured.** Proposals validate and stage through the same pipeline
-  (model told it's waiting for on-screen confirmation; nothing executes
-  from this lane). Lookups are read-only information through the one
-  general brain lane — still no subject lanes, still no action path.
+- **Tools: `propose_action`, `my_day`, plus `look_that_up` when live
+  research is configured.** Claude lookups need `ANTHROPIC_API_KEY` and
+  `PARKER_BRAIN_WEB_SEARCH=true` (the default); a configured OpenClaw
+  gateway supplies its own research. A key with web search off still
+  supports conversation; the realtime session omits the lookup tool and uses
+  its no-live-data instruction instead of advertising a current-information check.
+  Proposals validate and stage through the same pipeline; the proposal tool
+  cannot execute them. Clear spoken confirmation may execute an allowed action
+  through the policy gate; ambiguous replies defer. Lookups are read-only
+  information through the one general brain lane — no lookup action path.
 - **Injection contract.** Items may inject any time; `response.create`
   goes through exactly one gated emitter, so workers, proposals, the
   greeting, and the watchdog can't double-fire against the server VAD

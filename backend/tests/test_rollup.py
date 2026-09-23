@@ -20,6 +20,7 @@ from app.config import settings
 from app.conversation.outcomes import InteractionOutcome, normalize_intent
 from app.conversation.textloop import TextSession
 from app.db.models import CallLog
+from app.parker import rollup
 from app.parker.rollup import (
     build_weekly_rollup,
     render_rollup_markdown,
@@ -29,6 +30,18 @@ from app.parker.rollup import (
 
 AUCKLAND = ZoneInfo("Pacific/Auckland")  # UTC+12/+13: the sharpest date-skew case
 WEEK_OF = date(2026, 8, 10)  # a Monday
+
+
+def test_home_timezone_keeps_named_zone_dst_rules(monkeypatch):
+    new_york = ZoneInfo("America/New_York")
+    monkeypatch.setattr(rollup, "get_localzone", lambda: new_york, raising=False)
+
+    resolved = rollup.home_timezone()
+
+    winter = datetime(2026, 1, 15, 9, tzinfo=resolved).utcoffset()
+    summer = datetime(2026, 7, 15, 9, tzinfo=resolved).utcoffset()
+    assert getattr(resolved, "key", None) == "America/New_York"
+    assert winter != summer
 
 
 def _call(db) -> int:

@@ -35,6 +35,11 @@ hiddenimports = [
 datas = [
     # faster-whisper ships the silero VAD onnx as package data.
     *collect_data_files("faster_whisper"),
+    # The Converse page's presence assets: vendored Three.js + the
+    # expression/renderer modules, served at /parker/converse/static/*.
+    # Path(__file__).parent/"static" in converse_router resolves to
+    # _internal/app/parker/static in the frozen build, matching this.
+    ("app/parker/static", "app/parker/static"),
 ]
 
 binaries = [

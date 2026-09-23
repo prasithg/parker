@@ -107,10 +107,12 @@ def test_the_whole_evening_is_reviewable_the_next_morning(voice_world):
                 )
             )
         )
-        assert ws.receive_json() == {
-            "type": "proposal_staged",
-            "label": "watch Alcaraz Friday",
-        }
+        staged = browser_frame(
+            ws,
+            "proposal_staged",
+            working=[("search", "started"), ("search", "done")],
+        )
+        assert staged["label"] == "watch Alcaraz Friday"
         assert _wait_until(lambda: "proposal" in _journal_kinds(world))
         ws.send_json({"type": "end"})
     assert _wait_until(lambda: realtime._active_bridges == 0)

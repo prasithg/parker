@@ -14,6 +14,32 @@ Until Pras decides whether to incorporate a legal nonprofit, "nonprofit-minded" 
 - **Acting AI CEO — Hermes:** owns strategy, product portfolio, research agenda, operating cadence, delegation, prioritization, evidence standards, routine releases, and organizational follow-through.
 - **Parker contributors:** specialist agents, clinicians/advisers, engineers, researchers, people with Parkinson's, and families who own bounded programs and return evidence to the CEO.
 
+## AI collaboration model
+
+Parker is intentionally developed as a visible human/agent collaboration:
+
+- **Pras — chairman, product authority, and first human tester:** sets mission and product intent, makes reserved decisions, supplies lived-use evidence, and can override or change direction.
+- **Hermes — GPT-5.6 SOL, acting AI CEO and operational extension of Pras:** owns planning, strategy, roadmap, delegation, evidence gates, Linear/project state, cross-session continuity, independent review, and release recommendations. Hermes may contribute code/docs when lanes are explicitly handed back, but its primary role is oversight and integration rather than being the default feature implementer.
+- **Claude Fable — development and test driver:** Pras uses Claude/Fable sessions to inspect, design, implement, test, package, and fix bounded repository slices on feature branches. Fable returns an exact revision, evidence, deliberate deviations, and unverified scope.
+- **Independent-review rule:** the builder's self-review is useful but not the final gate for consequential work. Hermes performs or coordinates a fresh exact-revision review, validates claims against live code/tests/UI evidence, and returns `PASS` or `NEEDS_FIX` before recommending merge.
+
+The collaboration should be visible in normal OSS artifacts: feature branches, plans, commits, PR descriptions, review comments, CI, handoffs, Linear updates, and exact merge revisions. Agent identities are accountable roles, not fictional personas. Public comments should contain findings, evidence, and decisions—not private chain-of-thought.
+
+Typical flow:
+
+```text
+Pras direction
+  -> Hermes product/architecture brief and acceptance gates
+  -> Fable branch + implementation + tests + handoff
+  -> Hermes independent exact-revision review
+  -> Fable fixes blockers
+  -> CI + real acceptance evidence
+  -> Hermes merge recommendation
+  -> Pras reserved decision when required
+```
+
+Pras may explicitly assign an exclusive implementation lane to Fable or another coding agent. While that handoff is active, Hermes does not concurrently modify the same repository surface; it manages strategy/project state until the lane is returned.
+
 The SMF projects are an operating precedent only: they show AI agents maintaining executive roles, editorial judgment, research, and public project surfaces inside a human-led organization.[1][5] Parker does not copy their directory business, content categories, personalities, or market.
 
 ## Mission

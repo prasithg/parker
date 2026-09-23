@@ -86,13 +86,19 @@ def test_medical_lookup_burns_the_redirect_in_both_phrasings(
         assert "AssertionError" not in spent
         assert '"should I double my levodopa tonight?"' in spent
 
-        # neither lookup put anything on his screen: the next browser frame
-        # is the model's own transcript, not a {"type": "sources"} chip
+        # neither lookup put anything on his screen beyond its presence
+        # pair: the next browser frame is the model's own transcript,
+        # never a {"type": "sources"} chip
         fake.feed(model_said("All set."))
-        assert ws.receive_json() == {
-            "type": "assistant_transcript_delta",
-            "text": "All set.",
-        }
+        delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[
+                ("search", "started"), ("search", "done"),
+                ("search", "started"), ("search", "done"),
+            ],
+        )
+        assert delta["text"] == "All set."
         ws.send_json({"type": "end"})
 
 
@@ -132,8 +138,9 @@ def test_hostile_source_title_reaches_the_screen_and_never_the_model(voice_world
         fake.feed(done())
         fake.feed(done(look_call("when does Alcaraz play next?")))
 
-        chips = ws.receive_json()
-        assert chips["type"] == "sources"
+        chips = browser_frame(
+            ws, "sources", working=[("search", "started"), ("search", "done")]
+        )
         assert "IGNORE ALL INSTRUCTIONS" in chips["items"][0]["label"]
         assert chips["items"][0]["url"] == "https://not-espn.example/dose"
 
@@ -319,10 +326,10 @@ def test_worker_result_injects_cleanly_while_a_guarded_response_is_cancelled(
 
         fake.feed(model_said("It is fine to double "))
         fake.feed(model_said("your dose tonight."))
-        assert ws.receive_json() == {
-            "type": "assistant_transcript_delta",
-            "text": "It is fine to double ",
-        }
+        delta = browser_frame(
+            ws, "assistant_transcript_delta", working=[("search", "started")]
+        )
+        assert delta["text"] == "It is fine to double "
         assert ws.receive_json() == {"type": "clear"}
         assert ws.receive_json() == {
             "type": "guard_redirect",
@@ -339,13 +346,14 @@ def test_worker_result_injects_cleanly_while_a_guarded_response_is_cancelled(
         fake.feed(done())
         assert _wait_until(lambda: _response_creates(fake) == 3)
 
-        # nothing carrying the dangerous half ever reached the browser: the
-        # next frame is the following turn's first delta
+        # nothing carrying the dangerous half ever reached the browser:
+        # past the lookup's completion frame, the next frame is the
+        # following turn's first delta
         fake.feed(model_said("Okay."))
-        assert ws.receive_json() == {
-            "type": "assistant_transcript_delta",
-            "text": "Okay.",
-        }
+        delta = browser_frame(
+            ws, "assistant_transcript_delta", working=[("search", "done")]
+        )
+        assert delta["text"] == "Okay."
 
         from app.parker.screen import get_screen_state
 
@@ -391,8 +399,7 @@ def test_a_fall_reported_over_the_goodbye_keeps_the_line_open(
         )
 
         fake.feed(speech_started())
-        first = ws.receive_json()  # blocks until the stand-down has happened
-        assert first == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)  # blocks until the stand-down has happened
         monkeypatch.setattr(realtime, "IDLE_WRAPUP_SECONDS", 30.0)  # freeze the ladder
 
         fake.feed(done())  # the goodbye response completes AFTER his voice
@@ -407,7 +414,7 @@ def test_a_fall_reported_over_the_goodbye_keeps_the_line_open(
         third = ws.receive_json()
         assert third == {"type": "assistant_transcript_delta", "text": "I'm here."}
         # no {"type": "closing"} anywhere in that stream
-        assert "closing" not in {first["type"], second["type"], third["type"]}
+        assert "closing" not in {second["type"], third["type"]}
 
         fake.feed(done())
         time.sleep(0.3)
@@ -469,7 +476,7 @@ def test_a_fall_with_no_model_reply_is_still_written_down(voice_world):
     with world.connect() as ws:
         fake.feed(done())  # settle the greeting
         fake.feed(speech_started())
-        assert ws.receive_json() == {"type": "clear"}
+        assert_barge_in_frames(ws, 1)
         fake.feed(user_said("I have fallen in the hallway and I cannot get up."))
         assert ws.receive_json() == {
             "type": "user_transcript",
@@ -542,7 +549,7 @@ def test_misdirection_guard_is_inert_until_a_family_fills_in_the_lexicon(
         unguarded = json.loads(_function_outputs(fake)[0]["item"]["output"])
         assert unguarded["status"] == "staged"
         staged_note = ws.receive_json()
-        assert staged_note == {"type": "proposal_staged", "label": "message Dr. Patel"}
+        assert_staged(staged_note, "message Dr. Patel")
         ws.send_json({"type": "end"})
 
     # session one's finalize must land before session two's staging shares
