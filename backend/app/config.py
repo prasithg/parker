@@ -207,7 +207,16 @@ class Settings(BaseSettings):
     parker_openclaw_gateway_url: str = ""
     parker_openclaw_gateway_token: str = ""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        # Shared dotenv files may contain credentials for tools Parker does
+        # not configure. Ignore extras, not invalid values of known fields.
+        "extra": "ignore",
+        # Validation may fail before logging is configured; never echo the
+        # supplied value in a formatted boot error (it may be a credential).
+        "hide_input_in_errors": True,
+    }
 
     @classmethod
     def settings_customise_sources(

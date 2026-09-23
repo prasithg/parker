@@ -133,6 +133,17 @@ verified by the acceptance run, which reinstalled mid-onboarding and
 resumed cleanly. `tauri-plugin-updater` against GitHub Releases is the
 planned path once builds are signed.
 
+## Shared dotenv configuration
+
+A shared `.env` may contain credentials or options for tools Parker does not use.
+Unknown Settings entries are ignored rather than preventing startup; this does
+not configure another provider. Check names carefully: misspelled keys are also
+unknown and fall back to defaults. Known values still validate, and environment
+variables retain precedence over dotenv and family config. Formatted Settings
+validation errors omit supplied values. Programmatic diagnostics should request
+`ValidationError.errors(include_input=False)` rather than dumping error inputs.
+The family-config write API remains strict about writable keys and refuses secrets.
+
 ## Uninstall
 
 1. Quit Parker (tray → Quit).
