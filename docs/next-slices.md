@@ -27,6 +27,11 @@ The active execution plan is [2026-09-02-parker-hermes-current-information-sprin
   OFF remains available while connecting; cold-start disconnects unregister cleanly.
   Still deferred from the same source commit: prompt/search-gating wording and
   live-probe defaults. Native input/device checks remain separate release gates.
+- The fresh [synthetic wake soak](../benchmark/reports/wake_soak_2026-09-23_night-20260923-base.md)
+  still **FAILS**: 48/48 normal greetings, 19/24 paused positives, one false wake
+  in four minutes of deliberately confusable TV-like speech. These are generated
+  macOS voices through the real local model, not patient or room evidence. All
+  original gates and failed rows remain; unit/CI success does not waive this result.
 
 ## Slice 1: Route classifier seam + task-taxonomy evaluator — DONE (2026-06-09)
 

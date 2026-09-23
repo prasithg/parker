@@ -22,8 +22,10 @@ LAST final receipt with ``time.monotonic``):
   end.
 
 All timestamps are seconds on one monotonic timeline whose zero is the
-start of the replayed audio. Fixture labels are timing/behaviour labels,
-not ASR evidence.
+start of the replayed audio. An event list is a chronological receipt log:
+a decreasing timestamp makes the whole turn ``invalid_timing`` (no TTFS,
+unknown endpoint) and is never sorted or repaired. Fixture labels are
+timing/behaviour labels, not ASR evidence.
 
 CLI (from ``backend``)::
 
@@ -231,6 +233,25 @@ def measure_turn(
         _check_time(finalization_timeout_s, "finalization_timeout_s")
     events = list(events)
 
+    # Events are receipt events on one monotonic timeline, so they must be
+    # chronological. Validate the whole list FIRST: a decreasing timestamp
+    # means nothing on the list can be trusted (no transcript, no TTFS,
+    # unknown endpoint). Equal timestamps keep iterable order. Never sort.
+    for i in range(1, len(events)):
+        if events[i].at_s < events[i - 1].at_s:
+            return TurnMeasurement(
+                status="invalid_timing",
+                transcript="",
+                ttfs_s=None,
+                last_final_at_s=None,
+                endpoint_at_s=None,
+                premature_endpoint=None,
+                detail=(
+                    f"event {i} at {events[i].at_s:.3f}s precedes event {i - 1} at "
+                    f"{events[i - 1].at_s:.3f}s; events must be chronological"
+                ),
+            )
+
     endpoint = next((e for e in events if isinstance(e, EndpointDecision)), None)
     endpoint_at = endpoint.at_s if endpoint else None
     premature = None if endpoint is None else endpoint.at_s < speech_end
@@ -296,9 +317,14 @@ def wer(reference: str, hypothesis: str) -> float:
 
 
 def percentiles(values: Iterable[float]) -> dict[str, Any]:
-    """Nearest-rank P50/P95/P99 with the count they were computed from."""
+    """Nearest-rank P50/P95/P99 with the count they were computed from.
 
-    ordered = sorted(values)
+    Every value must be a measured, finite, non-negative number. Bad samples
+    raise ``ValueError`` rather than being filtered: the caller decides what
+    is a sample (``None`` = unmeasured, never passed here).
+    """
+
+    ordered = sorted(_check_time(v, "percentile sample") for v in values)
     if not ordered:
         return {"count": 0, "p50": None, "p95": None, "p99": None}
 
@@ -381,9 +407,67 @@ def load_fixture(path: Path | str) -> Fixture:
     )
 
 
-def evaluate_fixture(fixture: Fixture) -> dict[str, Any]:
-    """Score every case. Rates use all attempted cases; percentiles use valid timings only."""
+def _split_of(fixture: Fixture) -> Callable[[FixtureCase], str]:
+    """Derive each case's split from the declared speaker sets; reject leaks/unknowns.
 
+    Runs at ``evaluate_fixture`` entry so a directly constructed ``Fixture``
+    gets the same guarantees as a loaded one. An unknown speaker is an error,
+    never defaulted to test.
+    """
+
+    overlap = fixture.train_speakers & fixture.test_speakers
+    if overlap:
+        raise ValueError(f"speaker split leaks train speakers into test: {sorted(overlap)}")
+    for case in fixture.cases:
+        if case.speaker not in fixture.train_speakers and case.speaker not in fixture.test_speakers:
+            raise ValueError(f"case {case.case_id!r} names speaker {case.speaker!r} not in the speaker split")
+    return lambda case: "train" if case.speaker in fixture.train_speakers else "test"
+
+
+def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reduce scored rows to one summary. Reused for all-case and per-split views.
+
+    Counts are turns. Rates use all attempted turns; an empty row set yields
+    zero counts and null rates (never a divide-by-zero or an invented zero).
+    ``ttfs_s`` percentiles use measured values only: ``None`` is unmeasured
+    and stays represented in attempt/status counts, not as a sample.
+    Endpoint coverage is separate from transcript success: a failed turn can
+    still have a scored endpoint, and an ``ok`` turn can have none.
+    """
+
+    attempted = len(rows)
+    status_counts = Counter(r["status"] for r in rows)
+    usable = status_counts["ok"]
+    wers = [r["wer"] for r in rows if r["wer"] is not None]
+    intent_matches = sum(1 for r in rows if r["intent_match"] is True)
+    endpoint_scored = sum(1 for r in rows if r["premature_endpoint"] is not None)
+    premature = sum(1 for r in rows if r["premature_endpoint"] is True)
+    return {
+        "attempted": attempted,
+        "status_counts": dict(sorted(status_counts.items())),
+        "usable_output_rate": usable / attempted if attempted else None,
+        "intent_exact_matches": intent_matches,
+        "intent_exact_match_rate": intent_matches / attempted if attempted else None,
+        "mean_wer_over_usable": (sum(wers) / len(wers)) if wers else None,
+        "premature_endpoint_count": premature,
+        "ttfs_s": percentiles(r["ttfs_s"] for r in rows if r["ttfs_s"] is not None),
+        "failure_count": attempted - usable,
+        "wer_sample_count": len(wers),
+        "endpoint_scored_turns": endpoint_scored,
+        "endpoint_unknown_turns": attempted - endpoint_scored,
+        "premature_endpoint_rate_over_scored": premature / endpoint_scored if endpoint_scored else None,
+    }
+
+
+def evaluate_fixture(fixture: Fixture) -> dict[str, Any]:
+    """Score every case. Rates use all attempted cases; percentiles use measured timings only.
+
+    Rows carry an explicit ``split`` derived from the fixture's speaker sets.
+    ``by_split`` reuses the same reducer per split; it is a speaker-holdout
+    view of hand-labeled timelines, not a training or real-speech claim.
+    """
+
+    split_of = _split_of(fixture)
     rows = []
     for case in fixture.cases:
         m = measure_turn(
@@ -396,6 +480,7 @@ def evaluate_fixture(fixture: Fixture) -> dict[str, Any]:
             {
                 "case_id": case.case_id,
                 "speaker": case.speaker,
+                "split": split_of(case),
                 "tags": list(case.tags),
                 "status": m.status,
                 "ttfs_s": m.ttfs_s,
@@ -409,21 +494,11 @@ def evaluate_fixture(fixture: Fixture) -> dict[str, Any]:
             }
         )
 
-    attempted = len(rows)
-    status_counts = Counter(r["status"] for r in rows)
-    wers = [r["wer"] for r in rows if r["wer"] is not None]
-    intent_matches = sum(1 for r in rows if r["intent_match"] is True)
     return {
         "fixture_id": fixture.fixture_id,
-        "attempted": attempted,
-        "status_counts": dict(sorted(status_counts.items())),
-        "usable_output_rate": status_counts["ok"] / attempted,
-        "intent_exact_matches": intent_matches,
-        "intent_exact_match_rate": intent_matches / attempted,
-        "mean_wer_over_usable": (sum(wers) / len(wers)) if wers else None,
-        "premature_endpoint_count": sum(1 for r in rows if r["premature_endpoint"] is True),
-        "ttfs_s": percentiles(r["ttfs_s"] for r in rows if r["ttfs_s"] is not None),
+        **_summarize(rows),
         "speakers": {"train": sorted(fixture.train_speakers), "test": sorted(fixture.test_speakers)},
+        "by_split": {name: _summarize([r for r in rows if r["split"] == name]) for name in ("train", "test")},
         "cases": rows,
     }
 
