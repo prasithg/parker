@@ -285,6 +285,83 @@ def test_claims_queued_before_off_cannot_turn_power_back_on():
     assert power.snapshot()["power_on"] is False
 
 
+class _GatedPersistLock:
+    """A durable-write lock whose next entrant can be held at the door.
+
+    Lets a test decide the lock order deterministically: ``arm()`` makes
+    the next ``with`` entrant wait at ``gate`` (after signalling
+    ``arrived``) BEFORE it takes the real lock, so a later writer can win
+    the durable lock first. No sleeps, no scheduler luck.
+    """
+
+    def __init__(self) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self.arrived = threading.Event()
+        self.gate = threading.Event()
+        self._armed = False
+
+    def arm(self) -> None:
+        self._armed = True
+
+    def __enter__(self) -> None:
+        if self._armed:
+            self._armed = False
+            self.arrived.set()
+            assert self.gate.wait(timeout=3.0), "the held writer was never released"
+        self._lock.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self._lock.release()
+
+
+def test_a_stale_queued_claim_never_writes_on_after_off_won_the_durable_lock():
+    """Independent review (2026-09-22): a claim that took its ticket before
+    OFF, then lost the durable-lock race to OFF's write, still wrote
+    ``power_on=True`` and only afterwards noticed it was superseded — the
+    DB said ON after an explicit OFF, and the next engine start re-claimed.
+    The stale claim must refuse WITHOUT writing once OFF has won."""
+
+    import threading
+
+    power = CompanionPower()
+    power.claim(_persist_ok, client_id="tab-a")
+    door = _GatedPersistLock()
+    power._persist_lock = door  # type: ignore[assignment]
+    writes: list[bool] = []
+    failures: list[str] = []
+
+    def record(on: bool) -> None:
+        writes.append(on)
+
+    def stale_claim() -> None:
+        try:
+            power.claim(record, client_id="tab-a")
+        except PowerRefused as refused:
+            failures.append(refused.reason)
+
+    door.arm()
+    claimant = threading.Thread(target=stale_claim, daemon=True)
+    claimant.start()
+    try:
+        assert door.arrived.wait(timeout=1.0), "the claim never reached the durable lock"
+        # OFF lands while the claim is queued for the durable lock…
+        released = power.release()
+        assert released["power_on"] is False
+        # …and OFF's write wins the lock first.
+        assert power.persist_release(released["generation"], record) == "saved"
+        assert writes == [False]
+    finally:
+        door.gate.set()
+        claimant.join(timeout=3.0)
+    assert not claimant.is_alive()
+    assert failures == ["not_saved"]
+    assert writes == [False], "the stale claim wrote ON after OFF had landed"
+    assert power.snapshot()["power_on"] is False
+    assert power.snapshot()["save_state"] == "saved"
+
+
 def test_power_off_waits_for_a_retired_realtime_registration():
     """Handover is fast, but a later OFF includes the old provider receipt."""
 
@@ -914,6 +991,64 @@ def test_a_newer_on_claim_cannot_be_clobbered_by_an_older_off_write(db):
     settings = client.get("/parker/converse/companion/settings").json()
     assert settings["power_on"] is True
     assert converse_router.authority.authorize(newer["owner"], newer["gen"]) is None
+
+
+def test_an_older_on_claim_cannot_clobber_a_newer_off_write(db, monkeypatch):
+    """The mirror of the test above with OFF winning: a re-claim queued
+    behind the durable lock loses to OFF, and the DB must stay OFF — an
+    engine restart (fresh authority) reads the durable flag, so a stale
+    ON there would silently turn Parker back on (review, 2026-09-22)."""
+
+    import threading
+
+    from scenario_harness import _wait_until
+
+    from app.parker.companion_state import get_companion_settings
+
+    granted = _claim("tab-a").json()
+    assert get_companion_settings(db)["power_on"] is True
+    door = _GatedPersistLock()
+    converse_router.authority._persist_lock = door  # type: ignore[assignment]
+    stale: dict = {}
+
+    def stale_reclaim() -> None:
+        response = client.post(
+            "/parker/converse/companion/power",
+            json={"on": True, "client_id": "tab-a"},
+        )
+        stale["status"] = response.status_code
+        stale["body"] = response.json()
+
+    door.arm()
+    claimant = threading.Thread(target=stale_reclaim, daemon=True)
+    claimant.start()
+    try:
+        assert door.arrived.wait(timeout=1.0), "the re-claim never reached the durable lock"
+        off = client.post(
+            "/parker/converse/companion/power",
+            json={"on": False, "client_id": "tab-b"},
+        ).json()
+        assert off == {"power_on": False, "saved": None, "save_state": "pending"}
+        # OFF's write wins the durable lock while the re-claim is still queued.
+        assert _wait_until(
+            lambda: client.get("/parker/converse/companion/settings").json()[
+                "power_save_state"
+            ]
+            == "saved"
+        )
+        assert get_companion_settings(db)["power_on"] is False
+    finally:
+        door.gate.set()
+        claimant.join(timeout=3.0)
+    assert not claimant.is_alive()
+    assert stale["status"] == 503 and stale["body"]["detail"]["reason"] == "not_saved"
+    assert converse_router.authority.authorize(granted["owner"], granted["gen"]) == "power_off"
+    # Durable truth after everything settled: OFF.
+    assert get_companion_settings(db)["power_on"] is False
+    # An engine restart forgets the in-process release and trusts the DB:
+    # the booting page must still read OFF, never re-claim.
+    monkeypatch.setattr(converse_router, "authority", CompanionPower())
+    assert client.get("/parker/converse/companion/settings").json()["power_on"] is False
 
 
 def test_power_off_starts_every_socket_revoke_before_waiting_for_one(db):

@@ -125,6 +125,19 @@ class CompanionPower:
             transition = self._transition
 
         with self._persist_lock:
+            # An OFF may have won the durable lock while this claim was
+            # queued behind it. Its write is already the durable truth;
+            # writing ON now would resurrect the switch on the next engine
+            # start (independent review, 2026-09-22). Check the ticket
+            # before the write, not only after it — still never holding the
+            # state lock across I/O.
+            with self._lock:
+                if transition != self._transition:
+                    raise PowerRefused(
+                        503,
+                        "not_saved",
+                        "Parker was turned off before the switch finished — nothing is on.",
+                    )
             try:
                 persist(True)
             except Exception:  # noqa: BLE001 — the reason is logged; the page hears "not saved"
