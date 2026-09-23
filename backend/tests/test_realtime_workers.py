@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 import httpx
+import pytest
 
 from app.brain.adapter import BrainReply, ProposedAction, Source
 from app.brain.guard import MEDICAL_BOUNDARY_REDIRECT
@@ -151,6 +152,55 @@ def test_durable_facts_survive_twenty_chatty_sessions(db):
     assert "- [fact] Walks in the morning before the heat." in bullets
     assert "- [preference] Loves old Hindi songs." in bullets
     assert sum(1 for b in bullets if "topic" in b and "asked about" in b) == 2
+
+
+@pytest.mark.parametrize(
+    ("claude_key", "web_search", "gateway_url", "expected"),
+    [
+        ("", True, "", False),  # nothing configured
+        ("test-anthropic-key", True, "", True),  # Claude with its web tool (default)
+        ("test-anthropic-key", False, "", False),  # a key alone cannot research live facts
+        ("", True, "http://gateway.test", True),  # the gateway owns its own research
+        ("test-anthropic-key", False, "http://gateway.test", True),  # gateway ignores the local flag
+        ("", False, "http://gateway.test", True),
+        ("   ", True, "", False),  # whitespace is not a key
+        ("", True, "   ", False),  # whitespace is not a gateway
+    ],
+)
+def test_search_worker_available_is_a_live_research_truth_table(
+    monkeypatch, claude_key, web_search, gateway_url, expected
+):
+    """look_that_up advertises LIVE research: gateway, or Claude key AND web search."""
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_api_key", claude_key)
+    monkeypatch.setattr(settings, "parker_brain_web_search", web_search)
+    monkeypatch.setattr(settings, "parker_openclaw_gateway_url", gateway_url)
+    assert realtime_workers.search_worker_available() is expected
+
+
+def test_search_worker_availability_never_builds_a_provider(monkeypatch):
+    """Availability is a configuration read — no client, no gateway, no HTTP."""
+
+    from app.config import settings
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("availability must not construct or contact a provider")
+
+    monkeypatch.setattr("app.brain.build.build_brain_adapter", explode)
+    monkeypatch.setattr("app.brain.openclaw.build_openclaw_gateway", explode)
+    monkeypatch.setattr(httpx.Client, "request", explode)
+    monkeypatch.setattr(httpx.Client, "send", explode)
+    for key, web, gateway in (
+        ("test-anthropic-key", True, ""),
+        ("test-anthropic-key", False, ""),
+        ("", True, "http://gateway.test"),
+    ):
+        monkeypatch.setattr(settings, "anthropic_api_key", key)
+        monkeypatch.setattr(settings, "parker_brain_web_search", web)
+        monkeypatch.setattr(settings, "parker_openclaw_gateway_url", gateway)
+        assert isinstance(realtime_workers.search_worker_available(), bool)
 
 
 def test_search_worker_reports_a_missing_brain_honestly(monkeypatch):

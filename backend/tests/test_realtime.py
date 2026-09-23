@@ -310,6 +310,29 @@ def test_brained_session_offers_look_that_up_and_says_so(
     assert "read web addresses aloud" in session["instructions"]  # wraps lines
 
 
+def test_key_without_web_search_does_not_advertise_live_research(
+    db, realtime_enabled, brained, monkeypatch
+):
+    """A Claude key alone converses; it must not promise current scores or news.
+
+    With PARKER_BRAIN_WEB_SEARCH off the emitted session keeps propose_action
+    and my_day, omits look_that_up, and uses the existing no-live-data
+    paragraph. Flipping web search back on restores the research tool.
+    """
+
+    monkeypatch.setattr(brained, "parker_openclaw_gateway_url", "")
+    monkeypatch.setattr(brained, "parker_brain_web_search", False)
+    session = realtime.build_session_update()["session"]
+    assert [tool["name"] for tool in session["tools"]] == ["propose_action", "my_day"]
+    assert "do NOT have web search" in session["instructions"]
+    assert "look_that_up tool" not in session["instructions"]
+
+    monkeypatch.setattr(brained, "parker_brain_web_search", True)
+    session = realtime.build_session_update()["session"]
+    assert [tool["name"] for tool in session["tools"]] == ["propose_action", "my_day", "look_that_up"]
+    assert "do NOT have web search" not in session["instructions"]
+
+
 def test_greeting_is_requested_before_any_audio_arrives(
     db, realtime_enabled, brainless, upstream
 ):
@@ -1024,6 +1047,29 @@ def test_exchange_mirrors_to_the_live_screen(db, realtime_enabled, brainless, up
 # ---------------------------------------------------------------------------
 # The fast-voice orchestrator (2026-08-30): conversation never blocks on work
 # ---------------------------------------------------------------------------
+
+
+def test_disabled_web_research_rejects_a_stale_lookup_call(
+    db, realtime_enabled, brained, upstream, monkeypatch
+):
+    """Tool omission is not the boundary: a stale model call is refused too."""
+    monkeypatch.setattr(brained, "parker_openclaw_gateway_url", "")
+    monkeypatch.setattr(brained, "parker_brain_web_search", False)
+    calls = []
+
+    def should_not_run(question):
+        calls.append(question)
+        return WorkerResult(kind="search", question=question, speech="not a live lookup")
+
+    monkeypatch.setattr(realtime_workers, "run_search_worker", should_not_run)
+    fake = upstream["script"]([])
+    with client.websocket_connect(live_url()) as ws:
+        fake.feed(_look_done_event("what is the current weather?"))
+        assert _wait_until(lambda: _function_outputs(fake))
+        ack = json.loads(_function_outputs(fake)[0]["item"]["output"])
+        assert ack["status"] == "unavailable"
+        ws.send_json({"type": "end"})
+    assert calls == []
 
 
 def test_look_that_up_acks_instantly_and_injects_only_at_a_safe_point(
