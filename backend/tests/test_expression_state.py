@@ -60,6 +60,15 @@ def test_reachy_renderer_module_parses_as_esm():
     assert result.returncode == 0, result.stderr
 
 
+def test_reachy_model_module_parses_as_esm():
+    source = (STATIC_DIR / "converse" / "reachy-model.js").read_text()
+    result = subprocess.run(
+        ["node", "--input-type=module", "--check"], input=source,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def _extract_inline_scripts(html: str) -> list[str]:
     """Every non-empty inline script of a page, in document order: the
     conversation runtime first, then the scene boot module."""
@@ -88,9 +97,12 @@ def test_lab_page_lifecycle_spec_passes(tmp_path):
     from app.parker.converse_ui import CONVERSE_PAGE_HTML
 
     page_script = tmp_path / "lab-page.js"
-    page_script.write_text(_extract_page_script(CONVERSE_PAGE_HTML))
+    scripts = _extract_inline_scripts(CONVERSE_PAGE_HTML)
+    page_script.write_text(scripts[0])
+    scene_script = tmp_path / "lab-scene.js"
+    scene_script.write_text(scripts[1])
     result = _run_node(
-        str(TESTS_DIR / "js" / "converse_page.spec.js"), str(page_script)
+        str(TESTS_DIR / "js" / "converse_page.spec.js"), str(page_script), str(scene_script)
     )
     assert result.returncode == 0, f"\n{result.stdout}\n{result.stderr}"
     assert "FAIL" not in result.stdout

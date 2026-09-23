@@ -13,8 +13,9 @@ const { createEnv } = require('./converse_page_env');
 const { extractedPageScripts } = require('./page_script_fixture');
 
 let pageScript = process.argv[2];
+let sceneScript = process.argv[3];
 if (!pageScript) {
-  [pageScript] = extractedPageScripts('lab');
+  [pageScript, sceneScript] = extractedPageScripts('lab');
 }
 
 const results = [];
@@ -77,6 +78,21 @@ function phase(env) {
     const parsed = JSON.parse(receipt.body);
     assert.strictEqual(parsed.expression[parsed.expression.length - 1].to, 'stopped');
   });
+
+  if (sceneScript) {
+    await test('a late lab scene import cannot recreate resources after pagehide', async () => {
+      const env = await bootedEnv();
+      let resolveModule;
+      const pending = new Promise(resolve => { resolveModule = resolve; });
+      let creations = 0;
+      await env.bootScene(sceneScript, pending);
+      env.firePagehide();
+      resolveModule({createReachyScene: () => { creations++; return {dispose() {}}; }});
+      await env.flush();
+      assert.strictEqual(creations, 0);
+      assert.ok(!env.context.ParkerPresence.scene);
+    });
+  }
 
   const failed = results.filter((r) => !r.ok);
   for (const r of results) {

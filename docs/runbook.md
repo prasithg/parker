@@ -210,6 +210,21 @@ for the active realtime conversation. The local wake model must also be
 installed (`make voice-deps`); if it is missing or repeatedly fails, Parker
 turns off and says so rather than streaming continuous cloud audio.
 
+A complete cached speech model loads directly from its snapshot directory
+with `local_files_only`, so a fresh server process never waits on a model-hub
+metadata request. The offline-load diagnostic verifies zero network attempts;
+this is not a measured end-to-end voice speedup. A cache is complete when the
+revision named by its `refs/main` holds nonempty `model.bin`, `config.json`,
+`tokenizer.json`, and either `vocabulary.json` or `vocabulary.txt`;
+`PARKER_HOME/models` is checked before the Hugging Face cache, and a partial
+copy in one never hides a complete copy in the other. Missing or incomplete
+installs keep the normal download/repair path.
+
+The virtual Reachy uses locally packaged Pollen Robotics CAD shells (source,
+Apache 2.0 license, and reproducible mesh conversion in
+`backend/app/parker/static/vendor/reachy-mini/README.md`), with optical lenses,
+wire antennae, and visual neck linkages. It does not control physical motors.
+
 `/parker/converse/lab` is the family/operator harness. It retains manual
 Start/Done capture, the transcript, source cards, browser speech synthesis,
 text fallback, and an explicit Stop/Escape action. In that lab the microphone

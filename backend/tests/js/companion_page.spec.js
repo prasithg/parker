@@ -1152,6 +1152,19 @@ async function poweredActive(env) {
   if (sceneScript) {
     const receipts = (env) => env.beacons.filter((b) => b.url.includes('/receipts'));
 
+    await test('a late CAD import cannot recreate the scene after pagehide', async () => {
+      const env = await bootedEnv();
+      let resolveModule;
+      const pending = new Promise(resolve => { resolveModule = resolve; });
+      let creations = 0;
+      await env.bootScene(sceneScript, pending);
+      env.firePagehide();
+      resolveModule({createReachyScene: () => { creations++; return {dispose() {}}; }});
+      await env.flush();
+      assert.strictEqual(creations, 0);
+      assert.ok(!env.context.ParkerPresence.scene);
+    });
+
     for (const reduced of [false, true]) {
       await test(`scene boot forwards prefers-reduced-motion=${reduced} to createReachyScene`, async () => {
         const env = await bootedEnv();

@@ -1306,6 +1306,7 @@ window.addEventListener('pageshow', (event) => {
     && matchMedia('(prefers-reduced-motion: reduce)').matches;
   try {
     const mod = await import('/parker/converse/static/converse/reachy.js');
+    if (pageReleased) return; // pagehide may happen while CAD assets load
     const scene = mod.createReachyScene(mount, controller, {reducedMotion: !!reduced});
     if (scene) {
       document.getElementById('orb-fallback').hidden = true;
