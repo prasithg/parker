@@ -526,8 +526,21 @@ def test_speech_markers_and_response_audio_keep_completed_turn_identity(
         ws.send_json({"type": "end"})
 
 
+@pytest.fixture(params=[0.0, 0.2], ids=["immediate-journal", "queued-journal"])
+def journal_thread_scheduling(request, monkeypatch):
+    """Keep the CI teardown race reproducible on fast local machines."""
+    original = realtime.run_in_threadpool
+
+    async def scheduled(fn, *args, **kwargs):
+        if request.param:
+            await asyncio.sleep(request.param)
+        return await original(fn, *args, **kwargs)
+
+    monkeypatch.setattr(realtime, "run_in_threadpool", scheduled)
+
+
 def test_voice_metrics_are_allowlisted_bounded_and_capped(
-    db, monkeypatch, realtime_enabled, brainless, upstream
+    db, monkeypatch, realtime_enabled, brainless, upstream, journal_thread_scheduling
 ):
     from app.parker.session_review import RealtimeSessionEvent
 
@@ -538,6 +551,19 @@ def test_voice_metrics_are_allowlisted_bounded_and_capped(
             {"type": "input_audio_buffer.speech_stopped"},
         ]
     )
+
+    def metric_rows():
+        try:
+            db.expire_all()
+            return (
+                db.query(RealtimeSessionEvent)
+                .filter(RealtimeSessionEvent.kind.in_(["voice_metric", "metrics_capped"]))
+                .order_by(RealtimeSessionEvent.seq)
+                .all()
+            )
+        except Exception:  # a concurrent SQLite writer means not-yet, not failure
+            return []
+
     with client.websocket_connect(live_url()) as ws:
         assert ws.receive_json() == {"type": "speech_state", "status": "started", "turn_id": 1}
         assert ws.receive_json() == {"type": "clear"}
@@ -561,21 +587,15 @@ def test_voice_metrics_are_allowlisted_bounded_and_capped(
         ws.send_json({"type": "voice_metric", "name": "turn_reopened_before_output", "value": 1, "turn_id": 1})
         ws.send_json({"type": "voice_metric", "name": "speech_start_notice_to_local_flush_ms", "value": 8, "turn_id": 1})
         ws.send_json({"type": "voice_metric", "name": "speech_start_notice_to_local_flush_ms", "value": 9, "turn_id": 1})
+        # Metric receipts are journaled by background tasks so the browser
+        # pump never blocks on SQLite. Shutdown (`end` here, or the client
+        # cancelling the handler on block exit) cancels those tasks, and a
+        # job whose thread has not started yet is dropped by policy — so
+        # the receipts must be observed BEFORE the session ends, exactly as
+        # a live page keeps the socket open after reporting a metric.
+        assert _wait_until(lambda: len(metric_rows()) == 3)
         ws.send_json({"type": "end"})
 
-    def metric_rows():
-        try:
-            db.expire_all()
-            return (
-                db.query(RealtimeSessionEvent)
-                .filter(RealtimeSessionEvent.kind.in_(["voice_metric", "metrics_capped"]))
-                .order_by(RealtimeSessionEvent.seq)
-                .all()
-            )
-        except Exception:  # a concurrent SQLite writer means not-yet, not failure
-            return []
-
-    assert _wait_until(lambda: len(metric_rows()) == 3)
     rows = metric_rows()
     assert [row.kind for row in rows] == ["voice_metric", "voice_metric", "metrics_capped"]
     first = json.loads(rows[0].detail)
@@ -596,7 +616,7 @@ def test_voice_metrics_are_allowlisted_bounded_and_capped(
 
 
 def test_voice_turn_counter_never_wraps_or_misattributes_audio(
-    db, monkeypatch, realtime_enabled, brainless, upstream
+    db, monkeypatch, realtime_enabled, brainless, upstream, journal_thread_scheduling
 ):
     from app.parker.session_review import RealtimeSessionEvent
 
@@ -616,14 +636,15 @@ def test_voice_turn_counter_never_wraps_or_misattributes_audio(
         assert ws.receive_json() == {"type": "speech_state", "status": "stopped", "turn_id": 1}
         assert ws.receive_json() == {"type": "clear"}  # no reused/wrapped start marker
         assert ws.receive_json() == {"type": "audio", "data": "UENN", "turn_id": 0}
+        # This cap receipt uses the same cancellable background journal as
+        # voice metrics; observe it while the session is still live.
+        assert _wait_until(
+            lambda: db.query(RealtimeSessionEvent)
+            .filter(RealtimeSessionEvent.kind == "turn_tracking_capped")
+            .count()
+            == 1
+        )
         ws.send_json({"type": "end"})
-
-    assert _wait_until(
-        lambda: db.query(RealtimeSessionEvent)
-        .filter(RealtimeSessionEvent.kind == "turn_tracking_capped")
-        .count()
-        == 1
-    )
 
 
 def test_posthoc_guard_cancels_flushes_and_redirects(
