@@ -32,6 +32,11 @@ The active execution plan is [2026-09-02-parker-hermes-current-information-sprin
   in four minutes of deliberately confusable TV-like speech. These are generated
   macOS voices through the real local model, not patient or room evidence. All
   original gates and failed rows remain; unit/CI success does not waive this result.
+- Realtime startup now owns its first browser receive before the hello wait,
+  preserves the normal timeout-to-pump handoff, and includes an unconsumed read
+  in terminal cancellation/draining. Completed disconnect exceptions are observed
+  rather than becoming unhandled-task warnings; cancellation is not mistaken for
+  an absent hello. These are bounded software lifecycle tests, not device proof.
 
 ## Slice 1: Route classifier seam + task-taxonomy evaluator — DONE (2026-06-09)
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import json
 import queue
 import threading
@@ -2363,6 +2364,46 @@ def test_revoke_before_run_is_quiescent_and_never_connects():
     assert asyncio.run(scenario()) == 0
 
 
+class _StartupUpstream:
+    """Fake upstream that pins run() at one startup await.
+
+    ``stage`` names the send that blocks until ``release_send`` is set
+    (``entered`` is set the moment it blocks); any other stage never
+    blocks. ``sent`` keeps every frame so a test can count deliveries.
+    """
+
+    def __init__(self, stage: str, entered: asyncio.Event, release_send: asyncio.Event):
+        self.stage = stage
+        self.entered = entered
+        self.release_send = release_send
+        self.send_count = 0
+        self.closed = False
+        self.sent: list[dict] = []
+        self._never = asyncio.Event()
+
+    async def send(self, raw: str) -> None:
+        self.send_count += 1
+        frame = json.loads(raw)
+        self.sent.append(frame)
+        frame_type = frame.get("type")
+        stage = self.stage
+        blocked = (
+            (stage == "session_update" and self.send_count == 1)
+            or (stage == "greeting_injection" and self.send_count == 2)
+            or (stage == "initial_nudge" and frame_type == "response.create")
+        )
+        if blocked:
+            self.entered.set()
+            await self.release_send.wait()
+
+    async def recv(self) -> str:
+        await self._never.wait()
+        return "{}"
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 @pytest.mark.parametrize(
     "stage", ["session_update", "call_log", "greeting_injection", "initial_nudge"]
 )
@@ -2391,27 +2432,7 @@ def test_revoke_cancels_the_supervisor_during_every_startup_await(stage, monkeyp
         release_send = asyncio.Event()
         never = asyncio.Event()
 
-        class StartupUpstream:
-            def __init__(self):
-                self.send_count = 0
-                self.closed = False
-
-            async def send(self, raw: str) -> None:
-                self.send_count += 1
-                frame_type = json.loads(raw).get("type")
-                blocked = (
-                    (stage == "session_update" and self.send_count == 1)
-                    or (stage == "greeting_injection" and self.send_count == 2)
-                    or (stage == "initial_nudge" and frame_type == "response.create")
-                )
-                if blocked:
-                    entered.set()
-                    await release_send.wait()
-
-            async def close(self) -> None:
-                self.closed = True
-
-        upstream = StartupUpstream()
+        upstream = _StartupUpstream(stage, entered, release_send)
         hello_sent = False
 
         async def connect():
@@ -2456,6 +2477,330 @@ def test_revoke_cancels_the_supervisor_during_every_startup_await(stage, monkeyp
     stopped, upstream_closed = asyncio.run(scenario())
     assert stopped
     assert upstream_closed
+
+
+# ---------------------------------------------------------------------------
+# Startup first-receive ownership (phase8). The hello wait starts a browser
+# receive Task; when no hello arrives it must be handed losslessly to the
+# browser pump, yet a terminal revoke/shutdown before the pumps exist must
+# still cancel, drain and retrieve it. Each test bounds every wait and
+# cleans up its fakes even when the assertion is RED.
+# ---------------------------------------------------------------------------
+
+
+def _quiet_startup_db(monkeypatch) -> None:
+    monkeypatch.setattr(realtime, "_ensure_call_log_sync", lambda _call_sid: None)
+    monkeypatch.setattr(realtime, "_finalize_session_sync", lambda *_args: None)
+
+
+def test_cancelled_first_receive_does_not_continue_startup(monkeypatch):
+    """A receive cancelled independently of power-off is still terminal,
+    not a missing hello that should cause a greeting or new pumps."""
+    _quiet_startup_db(monkeypatch)
+
+    async def scenario():
+        entered = asyncio.Event()
+        release_send = asyncio.Event()
+        upstream = _StartupUpstream("greeting_injection", entered, release_send)
+
+        async def connect():
+            return upstream
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive():
+            raise asyncio.CancelledError
+
+        bridge = realtime.RealtimeBridge(browser_send, browser_receive, upstream_connect=connect)
+        running = asyncio.create_task(bridge.run())
+        greeted = asyncio.create_task(entered.wait())
+        try:
+            done, _ = await asyncio.wait({running, greeted}, timeout=1.0, return_when=asyncio.FIRST_COMPLETED)
+            assert done, "startup did not reach either observable boundary"
+            stopped_before_cleanup = running.done()
+            greeting_sent = entered.is_set()
+        finally:
+            bridge.revoke()
+            release_send.set()
+            if not running.done():
+                running.cancel()
+            greeted.cancel()
+            await asyncio.gather(running, greeted, return_exceptions=True)
+        return stopped_before_cleanup, greeting_sent, bridge._early_receive
+
+    stopped, greeted, owned = asyncio.run(scenario())
+    assert stopped, "cancelled input was treated as an absent hello"
+    assert not greeted, "startup sent a greeting after its first receive was cancelled"
+    assert owned is None
+
+
+def test_revoke_after_a_hello_timeout_settles_the_owned_first_receive(monkeypatch):
+    """No hello -> timeout -> OFF while the greeting send is pinned, before
+    any pump exists: shutdown must finish the first receive, not orphan it."""
+
+    monkeypatch.setattr(realtime, "HELLO_WAIT_SECONDS", 0.01)
+    _quiet_startup_db(monkeypatch)
+
+    async def scenario() -> tuple[bool, bool, bool]:
+        entered = asyncio.Event()
+        release_send = asyncio.Event()
+        never = asyncio.Event()
+        upstream = _StartupUpstream("greeting_injection", entered, release_send)
+        receive_task: dict[str, asyncio.Task] = {}
+
+        async def connect():
+            return upstream
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            receive_task["task"] = asyncio.current_task()
+            await never.wait()
+            raise AssertionError("the page never speaks in this scenario")
+
+        bridge = realtime.RealtimeBridge(
+            browser_send, browser_receive, upstream_connect=connect
+        )
+        running = asyncio.create_task(bridge.run())
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1.0)
+            early = receive_task["task"]
+            owned_before_off = bridge._early_receive is early and not early.done()
+            bridge.revoke()
+            release_send.set()
+            await asyncio.wait_for(
+                asyncio.gather(running, return_exceptions=True), timeout=2.0
+            )
+            settled = early.done()
+            released = bridge._early_receive is None
+            return owned_before_off, settled, released
+        finally:
+            release_send.set()
+            never.set()
+            if not running.done():
+                running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+            for task in receive_task.values():
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    owned_before_off, settled, released = asyncio.run(scenario())
+    assert owned_before_off, "the hello timeout did not hand the receive to the bridge"
+    assert settled, "shutdown left the first browser receive pending"
+    assert released, "ownership was not cleared after terminal shutdown"
+
+
+def test_revoke_inside_the_hello_wait_leaves_no_dangling_first_receive(monkeypatch):
+    """OFF while run() is still inside the hello wait itself: the receive
+    was created but never handed off, so the bridge must already own it."""
+
+    monkeypatch.setattr(realtime, "HELLO_WAIT_SECONDS", 5.0)  # OFF lands inside the wait
+    _quiet_startup_db(monkeypatch)
+
+    async def scenario() -> tuple[bool, bool]:
+        receive_started = asyncio.Event()
+        never = asyncio.Event()
+        upstream = _StartupUpstream("none", asyncio.Event(), asyncio.Event())
+        receive_task: dict[str, asyncio.Task] = {}
+
+        async def connect():
+            return upstream
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            receive_task["task"] = asyncio.current_task()
+            receive_started.set()
+            await never.wait()
+            raise AssertionError("the page never speaks in this scenario")
+
+        bridge = realtime.RealtimeBridge(
+            browser_send, browser_receive, upstream_connect=connect
+        )
+        running = asyncio.create_task(bridge.run())
+        try:
+            await asyncio.wait_for(receive_started.wait(), timeout=1.0)
+            await asyncio.sleep(0)  # run() is now parked in asyncio.wait
+            assert not running.done()
+            bridge.revoke()
+            await asyncio.wait_for(
+                asyncio.gather(running, return_exceptions=True), timeout=2.0
+            )
+            early = receive_task["task"]
+            return early.done(), bridge._early_receive is None
+        finally:
+            never.set()
+            if not running.done():
+                running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+            for task in receive_task.values():
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    settled, released = asyncio.run(scenario())
+    assert settled, "OFF inside the hello wait left the first receive dangling"
+    assert released
+
+
+def test_shutdown_retrieves_a_first_receive_that_disconnected_before_the_pumps(monkeypatch):
+    """The page drops after the hello timeout but before the pumps start:
+    the receive finishes with WebSocketDisconnect and shutdown must consume
+    that exception, so the loop never reports it as unretrieved."""
+
+    from starlette.websockets import WebSocketDisconnect
+
+    monkeypatch.setattr(realtime, "HELLO_WAIT_SECONDS", 0.01)
+    _quiet_startup_db(monkeypatch)
+
+    def scenario_sync() -> list[dict]:
+        loop = asyncio.new_event_loop()
+        reported: list[dict] = []
+        loop.set_exception_handler(lambda _loop, context: reported.append(context))
+        try:
+            loop.run_until_complete(scenario(loop, reported))
+        finally:
+            loop.close()
+        return reported
+
+    async def scenario(loop: asyncio.AbstractEventLoop, reported: list[dict]) -> None:
+        entered = asyncio.Event()
+        release_send = asyncio.Event()
+        gate = asyncio.Event()
+        upstream = _StartupUpstream("greeting_injection", entered, release_send)
+        refs: dict[str, Any] = {}
+
+        async def connect():
+            return upstream
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            refs["receive"] = asyncio.current_task()
+            await gate.wait()
+            raise WebSocketDisconnect(1000)
+
+        refs["bridge"] = realtime.RealtimeBridge(
+            browser_send, browser_receive, upstream_connect=connect
+        )
+        refs["running"] = asyncio.create_task(refs["bridge"].run())
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1.0)
+            gate.set()
+            for _ in range(3):
+                await asyncio.sleep(0)  # the receive finishes with the disconnect
+            assert refs["receive"].done() and not refs["receive"].cancelled()
+            refs["bridge"].revoke()
+            release_send.set()
+            await asyncio.wait_for(
+                asyncio.gather(refs["running"], return_exceptions=True), timeout=2.0
+            )
+        finally:
+            gate.set()
+            release_send.set()
+            running = refs["running"]
+            if not running.done():
+                running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+            receive = refs.get("receive")
+            if receive is not None and not receive.done():
+                receive.cancel()
+                await asyncio.gather(receive, return_exceptions=True)
+        # Deterministic observation: drop every reference to the bridge and
+        # its tasks, then force finalisation NOW, on the open loop. An
+        # unretrieved task exception reports through the handler here, not
+        # in loop teardown after the assertion.
+        refs.clear()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        gc.collect()
+        assert reported == [], reported
+
+    assert scenario_sync() == []
+
+
+def test_a_first_frame_after_the_hello_timeout_is_delivered_once_and_released(monkeypatch):
+    """The normal handoff: no hello, the wait times out, then his first audio
+    frame arrives. The browser pump takes the still-pending receive, the
+    frame goes upstream exactly once, and the bridge no longer owns that
+    receive once it has been consumed."""
+
+    monkeypatch.setattr(realtime, "HELLO_WAIT_SECONDS", 0.01)
+    _quiet_startup_db(monkeypatch)
+    monkeypatch.setattr(
+        realtime_workers,
+        "run_context_worker",
+        lambda make_db, **_: WorkerResult(kind="context", question="", speech=""),
+    )
+
+    async def scenario() -> tuple[bool, int, bool, int]:
+        first_frame = asyncio.Event()
+        never = asyncio.Event()
+        upstream = _StartupUpstream("none", asyncio.Event(), asyncio.Event())
+        receive_task: dict[str, asyncio.Task] = {}
+        calls = 0
+
+        async def connect():
+            return upstream
+
+        async def browser_send(_frame):
+            return None
+
+        async def browser_receive() -> dict[str, Any]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                receive_task["task"] = asyncio.current_task()
+                await first_frame.wait()
+                return {"type": "audio", "data": "UENN"}
+            await never.wait()
+            return {}
+
+        def appends() -> int:
+            return sum(1 for f in upstream.sent if f.get("type") == "input_audio_buffer.append")
+
+        async def until(predicate, what: str) -> None:
+            deadline = time.monotonic() + 2.0
+            while not predicate():
+                assert time.monotonic() < deadline, what
+                await asyncio.sleep(0.005)
+
+        bridge = realtime.RealtimeBridge(
+            browser_send, browser_receive, upstream_connect=connect
+        )
+        running = asyncio.create_task(bridge.run())
+        try:
+            await until(lambda: bridge._early_receive is not None, "hello wait never timed out")
+            owned_after_timeout = bridge._early_receive is receive_task["task"]
+            await until(lambda: bool(bridge._pump_tasks), "pumps never started")
+            first_frame.set()
+            await until(lambda: appends() >= 1, "first audio frame never reached upstream")
+            for _ in range(5):
+                await asyncio.sleep(0)
+            delivered = appends()
+            released = bridge._early_receive is None
+            bridge.revoke()
+            await asyncio.wait_for(
+                asyncio.gather(running, return_exceptions=True), timeout=2.0
+            )
+            return owned_after_timeout, delivered, released, appends()
+        finally:
+            first_frame.set()
+            never.set()
+            if not running.done():
+                running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+    owned_after_timeout, delivered, released, delivered_after_off = asyncio.run(scenario())
+    assert owned_after_timeout
+    assert delivered == 1, "the handed-off first frame was not delivered exactly once"
+    assert released, "the consumed first receive is still owned by the bridge"
+    assert delivered_after_off == 1
 
 
 def test_worker_timeout_does_not_claim_provider_quiescence_before_thread_exit(monkeypatch):

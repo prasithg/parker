@@ -1238,6 +1238,11 @@ class RealtimeBridge:
                 connect_task.cancel()
             for task in self._pump_tasks:
                 task.cancel()
+            # The hello wait's first browser receive, when no pump has
+            # taken it over yet (off before the pumps exist).
+            early = self._early_receive
+            if early is not None and not early.done():
+                early.cancel()
             # Delivery/background tasks are cancellable. Actual provider
             # computations live in _provider_tasks and remain observable.
             for task in self._worker_tasks:
@@ -1387,10 +1392,17 @@ class RealtimeBridge:
             | set(self._worker_tasks)
             | set(self._provider_tasks)
         )
+        early = self._early_receive
+        if early is not None:
+            draining.add(early)  # cancelled by revoke() above; same bounded drain
         if draining:
             await _await_despite_cancel(
                 asyncio.ensure_future(asyncio.wait(draining, timeout=1.0))
             )
+        if early is not None and early.done():
+            self._early_receive = None
+            if not early.cancelled():
+                early.exception()  # a receive that failed (page dropped): retrieve, never raise
         # 4. Persistence — after the boundary is closed, drained as before.
         # A turn already consumed by _on_response_done but cancelled before
         # its journal write must still reach the review timeline — the
@@ -1455,14 +1467,20 @@ class RealtimeBridge:
         the socket opens.
         """
 
-        # Never cancel a receive: a frame pulled off the socket by a
-        # cancelled await would be lost. The pending receive is handed to
-        # the browser pump instead when nothing arrives in time.
+        # Never cancel a receive on TIMEOUT: a frame pulled off the socket
+        # by a cancelled await would be lost. The pending receive is handed
+        # to the browser pump instead when nothing arrives in time. The
+        # bridge owns it from the moment it exists — before this wait can
+        # itself be cancelled — so a terminal revoke/shutdown that lands
+        # here or before the pumps start can still cancel and drain it.
         receiving = asyncio.ensure_future(self._browser_receive())
+        self._early_receive = receiving
         done, _pending = await asyncio.wait({receiving}, timeout=HELLO_WAIT_SECONDS)
         if not done:
-            self._early_receive = receiving
-            return
+            return  # still owned; the browser pump takes it over
+        self._early_receive = None
+        # Preserve cancellation/error propagation from an already-finished
+        # receive; it is not an ordinary hello timeout, even without revoke.
         message = receiving.result()
         if isinstance(message, dict) and message.get("type") == "hello":
             tail = str(message.get("tail", "") or "").strip()
