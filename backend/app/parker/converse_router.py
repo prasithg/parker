@@ -336,11 +336,6 @@ async def converse_wake(websocket: WebSocket) -> None:
     is answered with ``revoked`` and closed before any audio is read.
     """
 
-    import base64
-    import binascii
-
-    from starlette.concurrency import run_in_threadpool
-
     from app.parker import wake as wake_module
     from app.parker.converse import write_receipt
 
@@ -359,17 +354,44 @@ async def converse_wake(websocket: WebSocket) -> None:
         await _refuse(websocket, authority.authorize(owner, gen) or "not_owner")
         return
 
+    # Every exit from here on — a failed load, an unavailable model, a
+    # revoke, a socket error — drops the registration, so a power-off never
+    # waits on a lane that is already gone.
+    try:
+        await _serve_wake_lane(websocket, owner, gen, wake_module, write_receipt)
+    except WebSocketDisconnect:
+        # A page can leave while the local model warms up. Sending ready
+        # or unavailable to that closed client is normal, not a server fault.
+        pass
+    finally:
+        authority.unregister(sid)
+
+
+def _shutdown_is_expected(owner: str, gen: str) -> bool:
+    """Classify a socket ``RuntimeError`` (send/receive on a closed
+    socket) at the moment it is caught: quiet only when the captured
+    owner/generation has been revoked or superseded — the registered
+    closer closed the socket under us. Under still-valid power the same
+    error is a real fault and must surface. One check, once; a revoke
+    landing after it does not rewrite the answer."""
+
+    return authority.authorize(owner, gen) is not None
+
+
+async def _serve_wake_lane(websocket: WebSocket, owner: str, gen: str, wake_module, write_receipt) -> None:
+    import base64
+    import binascii
+
+    from starlette.concurrency import run_in_threadpool
+
     # The warm-up loads the model (and, with weights missing, may try the
     # hub) — never on the event loop, where it would stall every other
     # socket and the power switch. The store serialises the load.
-    try:
-        transcriber = await run_in_threadpool(converse_store.transcriber)
-    except BaseException:
-        authority.unregister(sid)
-        raise
+    transcriber = await run_in_threadpool(converse_store.transcriber)
     if authority.authorize(owner, gen) is not None:
-        # The registered closer already sent the authoritative revoke.
-        authority.unregister(sid)
+        # Revoked while loading: the registered closer already sent the
+        # authoritative `revoked` frame and closed. Nothing more is said —
+        # no `ready`, no `unavailable`.
         return
     if transcriber is None:
         await websocket.send_json(
@@ -382,19 +404,27 @@ async def converse_wake(websocket: WebSocket) -> None:
             }
         )
         await websocket.close()
-        authority.unregister(sid)
         return
     from app.config import settings as app_settings
 
-    try:
-        detector = wake_module.WakeDetector(
-            transcriber, relative_gate=app_settings.parker_wake_relative_gate
-        )
-    except BaseException:
-        authority.unregister(sid)
-        raise
+    detector = wake_module.WakeDetector(
+        transcriber, relative_gate=app_settings.parker_wake_relative_gate
+    )
     opened = time.monotonic()
     woke_at: float | None = None
+    # Negotiated readiness (`?readiness=1`): the companion must not invite
+    # "Hey Parker" — or stream room audio — before the model is loaded,
+    # especially on its first power-on after launch. `ready` goes out once,
+    # here, AFTER construction and the power check; the wake/tail protocol
+    # that follows is unchanged. Clients that do not ask keep the old
+    # first-frame protocol (older probes stay compatible).
+    if websocket.query_params.get("readiness") == "1":
+        try:
+            await websocket.send_json({"type": "ready"})
+        except RuntimeError:
+            if _shutdown_is_expected(owner, gen):
+                return  # power was revoked as loading finished
+            raise
 
     async def _give_up() -> None:
         # The warmed model keeps failing under the lane. Say so and close
@@ -499,8 +529,13 @@ async def converse_wake(websocket: WebSocket) -> None:
                 return
     except WebSocketDisconnect:
         pass
-    finally:
-        authority.unregister(sid)
+    except RuntimeError:
+        # Power-off can close the socket while a non-wake inference is
+        # finishing; the next receive then raises instead of delivering a
+        # disconnect. Only a confirmed revoke makes that an ordinary
+        # shutdown — under valid power it is a real error.
+        if not _shutdown_is_expected(owner, gen):
+            raise
 
 
 @router.post("/converse/sessions")

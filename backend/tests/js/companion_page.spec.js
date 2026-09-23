@@ -136,6 +136,9 @@ async function poweredActive(env) {
     const wakeWs = await poweredDormant(env);
     wakeWs.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker', tail: '' });
     assert.strictEqual(phase(env), 'connecting', 'the pop begins immediately');
+    assert.strictEqual(power(env), 'connecting', 'the lamp and fallback light before the live socket opens');
+    assert.ok(/I heard you/.test(env.element('power-label').textContent));
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'true');
     await env.flush();
     const live = liveSockets(env)[0];
     assert.ok(live, 'the realtime line opens');
@@ -157,6 +160,118 @@ async function poweredActive(env) {
     const transitions = receiptsAfterOff();
     const popped = transitions.find((t) => t.from === 'dormant' && t.to === 'connecting');
     assert.ok(popped && popped.reason === 'wake_detected', JSON.stringify(transitions));
+  });
+
+  // -------------------------------------------------------------------
+  // Negotiated readiness: the page asks the wake route for `ready`
+  // (`?readiness=1`) and invites "Hey Parker" — and streams room audio —
+  // only after it lands. The fake route sends `ready` on open by default;
+  // `env.holdWakeReady` lets these tests drive the loading state.
+  // -------------------------------------------------------------------
+
+  await test('the wake lane asks for the ready handshake', async () => {
+    const env = await bootedEnv();
+    const ws = await poweredDormant(env);
+    assert.strictEqual(query(ws.url).readiness, '1');
+    assert.ok(ws.readySent, 'precondition: the fake route answered a negotiated client');
+  });
+
+  await test('cold start invites the wake phrase only after the local model is ready', async () => {
+    const env = await bootedEnv();
+    env.holdWakeReady = true;
+    await env.context.powerOn();
+    await env.flush();
+    const ws = wakeSockets(env)[0];
+    ws.open();
+    assert.strictEqual(power(env), 'dormant', 'powered: OFF works during loading');
+    assert.strictEqual(env.element('power').getAttribute('aria-checked'), 'true');
+    assert.ok(/getting wake listening ready/i.test(env.element('power-label').textContent),
+      env.element('power-label').textContent);
+    assert.ok(!/hey parker/i.test(env.element('sr-status').textContent), 'no invitation yet');
+    assert.ok(/getting wake listening ready/i.test(env.element('sr-status').textContent));
+    assert.strictEqual(liveSockets(env).length, 0);
+    assert.ok(env.micFrame(0.2));
+    assert.strictEqual(ws.sent.filter((frame) => frame.type === 'audio').length, 0,
+      'model loading cannot build a backlog of stale room audio');
+    ws.ready();
+    assert.ok(/say.*Hey Parker/.test(env.element('power-label').textContent));
+    assert.ok(/hey parker/i.test(env.element('sr-status').textContent));
+    assert.strictEqual(phase(env), 'dormant');
+    assert.strictEqual(power(env), 'dormant');
+    env.micFrame(0.2);
+    assert.strictEqual(ws.sent.filter((frame) => frame.type === 'audio').length, 1, 'audio flows once ready');
+  });
+
+  await test('a ready frame after power-off changes nothing and opens nothing', async () => {
+    const env = await bootedEnv();
+    env.holdWakeReady = true;
+    const ws = await poweredDormant(env);
+    await poweredOff(env);
+    const sockets = env.sockets.length;
+    const streams = env.streams.length;
+    ws.ready(); // the engine's late answer to a lane that is already gone
+    await env.flush();
+    assert.strictEqual(power(env), 'off');
+    assert.strictEqual(env.element('power-label').textContent, 'Turn Parker on');
+    assert.ok(/off/i.test(env.element('sr-status').textContent));
+    assert.strictEqual(env.sockets.length, sockets, 'no new socket');
+    assert.strictEqual(env.streams.length, streams, 'no new microphone');
+    assert.ok(env.streams[0].track.stopped);
+    assert.strictEqual(env.audioContexts.filter((c) => !c.closed).length, 0);
+  });
+
+  await test('a stale ready from a dropped lane cannot arm its quiet retry', async () => {
+    const env = await bootedEnv();
+    env.holdWakeReady = true;
+    const first = await poweredDormant(env);
+    first.dropped();
+    env.advance(1600);
+    const second = wakeSockets(env)[wakeSockets(env).length - 1];
+    assert.notStrictEqual(second, first, 'one quiet retry');
+    second.open();
+    first.ready(); // late frame from the dead lane
+    assert.ok(/getting wake listening ready/i.test(env.element('power-label').textContent),
+      'the retry lane is still loading');
+    env.micFrame(0.2);
+    assert.strictEqual(second.sent.filter((f) => f.type === 'audio').length, 0, 'nothing streams on a stale ready');
+    second.ready();
+    assert.ok(/say.*Hey Parker/.test(env.element('power-label').textContent));
+    env.micFrame(0.2);
+    assert.strictEqual(second.sent.filter((f) => f.type === 'audio').length, 1);
+    assert.strictEqual(power(env), 'dormant');
+  });
+
+  await test('a ready frame after page hide creates no resources', async () => {
+    const env = await bootedEnv();
+    env.holdWakeReady = true;
+    const ws = await poweredDormant(env);
+    env.firePagehide();
+    const sockets = env.sockets.length;
+    ws.ready();
+    await env.flush();
+    assert.strictEqual(env.sockets.length, sockets);
+    for (const stream of env.streams) assert.ok(stream.track.stopped);
+    assert.strictEqual(env.intervalCount(), 0);
+  });
+
+  await test('OFF while connecting (heard, line not yet open) turns everything off', async () => {
+    const env = await bootedEnv();
+    const wakeWs = await poweredDormant(env);
+    wakeWs.message({ type: 'wake', heard: 'hey parker', matched: 'hey parker', tail: '' });
+    await env.flush();
+    assert.strictEqual(power(env), 'connecting');
+    const live = liveSockets(env)[0];
+    assert.ok(live && !live.closed, 'precondition: the line is opening');
+    click(env, 'power'); // the switch reads ON while connecting, so this is OFF
+    await env.flush();
+    assert.strictEqual(power(env), 'off');
+    assert.strictEqual(env.powerReleases.length, 1, 'one off request');
+    assert.strictEqual(env.powerClaims.length, 1, 'not a retry claim');
+    assert.ok(live.closed && wakeWs.closed);
+    assert.ok(env.streams[0].track.stopped, 'microphone released');
+    live.open(); // a stale open must not restore anything
+    assert.strictEqual(power(env), 'off');
+    assert.strictEqual(live.sent.filter((f) => f.type === 'hello').length, 0);
   });
 
   await test('the gentle wind-down returns to dormancy, wake re-armed', async () => {

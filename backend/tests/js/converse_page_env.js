@@ -34,6 +34,7 @@ function createEnv() {
     reloads: 0,
     getUserMediaMode: 'grant', // or 'deny'
     reducedMotion: false, // what matchMedia('(prefers-reduced-motion: reduce)') reports
+    holdWakeReady: false, // true: the fake wake route does NOT auto-send `ready` on open
   };
 
   // ---------------------------------------------------------------- DOM
@@ -178,7 +179,20 @@ function createEnv() {
     }
     close() { this.closed = true; }
     // test drivers
-    open() { this.readyState = 1; if (this.onopen) this.onopen(); }
+    open() {
+      this.readyState = 1;
+      if (this.onopen) this.onopen();
+      // The real wake route answers a `?readiness=1` client with one
+      // `ready` frame once the local model is constructed — modelled here
+      // as "immediately on open" unless a test holds it back
+      // (`env.holdWakeReady`) to drive the loading state itself. Legacy
+      // clients (no readiness=1) get nothing, as on the server.
+      if (this.negotiatesReady() && !env.holdWakeReady) this.ready();
+    }
+    negotiatesReady() {
+      return this.url.includes('/converse/wake') && /[?&]readiness=1(&|$)/.test(this.url);
+    }
+    ready() { this.readySent = true; this.message({ type: 'ready' }); }
     message(obj) { if (this.onmessage) this.onmessage({ data: JSON.stringify(obj) }); }
     dropped() { if (this.onclose) this.onclose(); }
   }

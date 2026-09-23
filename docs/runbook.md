@@ -210,6 +210,13 @@ for the active realtime conversation. The local wake model must also be
 installed (`make voice-deps`); if it is missing or repeatedly fails, Parker
 turns off and says so rather than streaming continuous cloud audio.
 
+On a cold start the switch says **Getting wake listening ready…** until the
+local model is loaded; say "Hey Parker" once it says **Resting**. No
+microphone audio leaves the page before that. A detected wake lights the
+indicator and says **I heard you — connecting…** while the cloud line opens;
+the switch still turns Parker off during that moment. The recognition
+model, windows, and wake grammar are unchanged by this handshake.
+
 A complete cached speech model loads directly from its snapshot directory
 with `local_files_only`, so a fresh server process never waits on a model-hub
 metadata request. The offline-load diagnostic verifies zero network attempts;

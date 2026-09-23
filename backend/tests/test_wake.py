@@ -16,6 +16,7 @@ import audioop
 import base64
 import math
 import struct
+import threading
 import wave
 
 import pytest
@@ -641,3 +642,301 @@ def test_wake_lane_gives_up_after_repeated_inference_failures(monkeypatch, wake_
             ws.send_json({"type": "audio", "data": _b64(_tone(0.8))})
         assert ws.receive_json()["type"] == "wake"
         ws.send_json({"type": "end"})
+
+
+# ---------------------------------------------------------------------------
+# Negotiated readiness: `?readiness=1` clients get one `ready` frame AFTER
+# the model is constructed and power is still theirs — never before, never
+# after a revoke, never on a failed load. Legacy clients keep the old
+# first-frame protocol untouched.
+# ---------------------------------------------------------------------------
+
+
+def _blocked_load(transcriber):
+    """A model load the test can hold open and release."""
+
+    started, release = threading.Event(), threading.Event()
+
+    def load():
+        started.set()
+        assert release.wait(timeout=3)
+        return transcriber
+
+    return load, started, release
+
+
+def test_wake_readiness_is_acknowledged_only_after_the_model_loads(monkeypatch, wake_url):
+    from app.parker import converse_router
+
+    load, started, release = _blocked_load(lambda path: ["hey parker"])
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", load)
+    monkeypatch.setattr("app.parker.converse.write_receipt", lambda entry: None)
+    with client.websocket_connect(wake_url + "&readiness=1") as ws:
+        assert started.wait(timeout=2)
+        # Queue PCM while loading. Without the new handshake an old server
+        # returns wake first, so this regresses as an assertion, not a hang.
+        ws.send_json({"type": "audio", "data": _b64(_tone(0.8))})
+        release.set()
+        assert ws.receive_json() == {"type": "ready"}
+        # ...and the unchanged wake/tail protocol follows the handshake.
+        frame = ws.receive_json()
+        assert frame["type"] == "wake" and frame["matched"] == "hey parker"
+        ws.send_json({"type": "end"})
+
+
+def test_legacy_wake_clients_never_receive_a_ready_frame(monkeypatch, wake_url):
+    from app.parker import converse_router
+
+    load, started, release = _blocked_load(lambda path: ["hey parker"])
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", load)
+    monkeypatch.setattr("app.parker.converse.write_receipt", lambda entry: None)
+    with client.websocket_connect(wake_url) as ws:
+        assert started.wait(timeout=2)
+        release.set()
+        ws.send_json({"type": "audio", "data": _b64(_tone(0.8))})
+        frame = ws.receive_json()
+        assert frame["type"] == "wake", frame  # the first frame is still the wake
+        ws.send_json({"type": "end"})
+
+
+def test_a_failed_load_is_unavailable_without_any_ready_frame(monkeypatch, wake_url):
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+    from starlette.websockets import WebSocketDisconnect
+
+    load, started, release = _blocked_load(None)
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", load)
+    with client.websocket_connect(wake_url + "&readiness=1") as ws:
+        assert started.wait(timeout=2)
+        release.set()
+        frame = ws.receive_json()
+        assert frame["type"] == "unavailable" and "local voice model" in frame["text"]
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()  # closed: no `ready` ever followed
+    assert authority.snapshot()["live"]["wake"] == 0
+
+
+def test_revoked_during_load_gets_revoked_then_close_and_never_ready(monkeypatch, wake_url):
+    """OFF from another screen while the first load is blocked: the
+    registered closer speaks (the authoritative `revoked`, reason
+    power_off) and closes; once the load returns the lane says nothing
+    more — no `ready`, no `unavailable` — and leaves no registration."""
+
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+    from starlette.websockets import WebSocketDisconnect
+
+    load, started, release = _blocked_load(lambda path: ["hey parker"])
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", load)
+    with client.websocket_connect(wake_url + "&readiness=1") as ws:
+        assert started.wait(timeout=2)
+        assert authority.snapshot()["live"]["wake"] == 1  # registered before warm-up
+        off = client.post(
+            "/parker/converse/companion/power", json={"on": False, "client_id": "tab-b"}
+        )
+        assert off.status_code == 200
+        assert ws.receive_json() == {"type": "revoked", "reason": "power_off"}
+        release.set()
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+    assert authority.snapshot()["live"]["wake"] == 0
+
+
+class _Socket:
+    """A minimal wake socket whose send/receive the test scripts."""
+
+    def __init__(self, wake_url: str, *, on_send=None, on_receive=None, readiness=True):
+        from urllib.parse import parse_qsl, urlsplit
+
+        self.query_params = dict(parse_qsl(urlsplit(wake_url).query))
+        if readiness:
+            self.query_params["readiness"] = "1"
+        self.on_send = on_send
+        self.on_receive = on_receive
+        self.sent: list = []
+
+    async def accept(self):
+        pass
+
+    async def receive_json(self) -> dict[str, str]:
+        if self.on_receive is not None:
+            self.on_receive()
+        raise RuntimeError("WebSocket is not connected. Need to call accept first.")
+
+    async def send_json(self, message):
+        if self.on_send is not None:
+            self.on_send(message)
+        self.sent.append(message)
+
+    async def close(self):
+        pass
+
+
+def test_no_ready_frame_exists_while_construction_is_blocked(monkeypatch, wake_url):
+    import asyncio
+    from typing import cast
+    from fastapi import WebSocket
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+
+    class EndSocket(_Socket):
+        async def receive_json(self):
+            return {"type": "end"}
+
+    socket = EndSocket(wake_url)
+    load, started, release = _blocked_load(lambda path: [])
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", load)
+
+    async def check():
+        task = asyncio.create_task(converse_router.converse_wake(cast(WebSocket, socket)))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            assert socket.sent == [], "ready must not be queued during model construction"
+        finally:
+            release.set()
+            await asyncio.wait_for(task, timeout=3)
+        assert socket.sent == [{"type": "ready"}]
+
+    asyncio.run(check())
+    assert authority.snapshot()["live"]["wake"] == 0
+
+
+@pytest.mark.parametrize("model_available", [True, False])
+def test_client_disconnect_during_startup_is_quiet_and_unregisters(monkeypatch, wake_url, model_available):
+    import asyncio
+    from typing import cast
+    from fastapi import WebSocket
+    from starlette.websockets import WebSocketDisconnect
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+
+    def disconnected(message):
+        expected = "ready" if model_available else "unavailable"
+        assert message["type"] == expected
+        raise WebSocketDisconnect(code=1000)
+
+    socket = _Socket(wake_url, on_send=disconnected)
+    transcriber = (lambda path: []) if model_available else None
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: transcriber)
+    asyncio.run(converse_router.converse_wake(cast(WebSocket, socket)))
+    assert authority.snapshot()["live"]["wake"] == 0
+
+
+def _revoke_now():
+    from app.parker.companion_power import authority
+
+    authority.release(lambda on: None)  # the state flip is what classification sees
+
+
+@pytest.mark.parametrize("revoked", [True, False])
+def test_receive_runtime_error_is_quiet_only_after_confirmed_revocation(monkeypatch, wake_url, revoked):
+    import asyncio
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: (lambda path: []))
+    socket = _Socket(wake_url, on_receive=_revoke_now if revoked else None)
+    if revoked:
+        asyncio.run(converse_router.converse_wake(socket))
+    else:
+        with pytest.raises(RuntimeError, match="WebSocket is not connected"):
+            asyncio.run(converse_router.converse_wake(socket))
+    assert socket.sent == [{"type": "ready"}]
+    assert authority.snapshot()["live"]["wake"] == 0
+
+
+@pytest.mark.parametrize("revoked", [True, False])
+def test_ready_send_runtime_error_is_quiet_only_after_confirmed_revocation(monkeypatch, wake_url, revoked):
+    """The closer may close the socket between the post-load power check
+    and the `ready` send. Only a confirmed revoke makes that quiet; a
+    closed socket under valid power is a real error and must surface —
+    and either way the registration goes."""
+
+    import asyncio
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+
+    def broken_send(message):
+        if revoked:
+            _revoke_now()
+        raise RuntimeError('Cannot call "send" once a close message has been sent.')
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: (lambda path: []))
+    socket = _Socket(wake_url, on_send=broken_send)
+    if revoked:
+        asyncio.run(converse_router.converse_wake(socket))
+    else:
+        with pytest.raises(RuntimeError, match="close message"):
+            asyncio.run(converse_router.converse_wake(socket))
+    assert socket.sent == []
+    assert authority.snapshot()["live"]["wake"] == 0
+
+
+def test_a_revoke_after_classification_cannot_suppress_a_valid_error(monkeypatch, wake_url):
+    """Classification is one authority check at the moment the error is
+    caught. A revoke that lands right after that check must not turn an
+    already-valid error into a quiet close."""
+
+    import asyncio
+    from app.parker import converse_router
+    from app.parker.companion_power import authority
+
+    armed = {"on": False}
+    original = authority.authorize
+
+    def authorize(token, gen):
+        result = original(token, gen)
+        if armed["on"] and result is None:
+            armed["on"] = False
+            _revoke_now()  # lands the instant after the valid classification
+        return result
+
+    def arm():
+        armed["on"] = True
+
+    monkeypatch.setattr(authority, "authorize", authorize)
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: (lambda path: []))
+    socket = _Socket(wake_url, on_receive=arm)
+    with pytest.raises(RuntimeError, match="WebSocket is not connected"):
+        asyncio.run(converse_router.converse_wake(socket))
+    assert authority.snapshot()["live"]["wake"] == 0
+
+
+def test_slow_inference_preserves_wake_phrase_overlap_and_request_tail(monkeypatch, wake_url):
+    """Never merge queued hops into a whole replacement window.
+
+    The first window's sentence cannot arm the greeting latch. Its final
+    'hey' must remain available beside the following 'parker' even when
+    more speech queued during inference. Merging all 2.4 queued seconds
+    erased that overlap and silently missed this wake (fresh review).
+    """
+    from app.parker import converse_router
+
+    started, release = threading.Event(), threading.Event()
+    calls = []
+    speech = _loudness({1000: "the game is hey", 2000: "parker", 3000: "tell me the score"})
+
+    def transcribe(path):
+        lines = speech(path)
+        calls.append(lines)
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(timeout=3)
+        return lines
+
+    monkeypatch.setattr(converse_router.converse_store, "transcriber", lambda: transcribe)
+    monkeypatch.setattr("app.parker.converse.write_receipt", lambda entry: None)
+    with client.websocket_connect(wake_url) as ws:
+        try:
+            ws.send_json({"type": "audio", "data": _b64(_tone(0.8, amplitude=1000))})
+            assert started.wait(timeout=2)
+            ws.send_json({"type": "audio", "data": _b64(_tone(0.8, amplitude=2000))})
+            ws.send_json({"type": "audio", "data": _b64(_tone(1.6, amplitude=3000))})
+            release.set()
+            frame = ws.receive_json()
+            assert frame["type"] == "wake"
+            assert calls[1] == ["the game is hey parker"]
+            assert ws.receive_json() == {"type": "tail", "text": "tell me the score"}
+            ws.send_json({"type": "end"})
+        finally:
+            release.set()

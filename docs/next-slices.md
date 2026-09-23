@@ -22,8 +22,11 @@ The active execution plan is [2026-09-02-parker-hermes-current-information-sprin
   `reachy-model.js`; poses, cancellation, and reduced motion stay downstream
   of the controller. Both pages guard the awaited module import so a late
   load cannot recreate a scene after `pagehide`; executable page tests pin it.
-  Deferred from the same source commit: the wake-readiness handshake, the
-  `connecting` power visual, prompt/search-gating wording, and live-probe defaults.
+  The companion now negotiates local-wake readiness before inviting speech or
+  sending PCM, and distinguishes loading from a cloud connection in progress.
+  OFF remains available while connecting; cold-start disconnects unregister cleanly.
+  Still deferred from the same source commit: prompt/search-gating wording and
+  live-probe defaults. Native input/device checks remain separate release gates.
 
 ## Slice 1: Route classifier seam + task-taxonomy evaluator — DONE (2026-06-09)
 
