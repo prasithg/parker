@@ -1,6 +1,6 @@
 # Parker audio repair Autodata eval v0
 
-- Date: 2026-07-22
+- Date: 2026-09-03
 - Provenance: metadata-only public/synthetic audio-derived fixtures; no private family/patient data; raw audio not committed.
 - Purpose: keep Parker's Autodata lane tied to audio -> ASR -> repair/confirm -> safe action/no-action data units.
 - Caveat: pipeline fixture coverage only; not clinical, patient, real-world, or population evidence.

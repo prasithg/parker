@@ -114,10 +114,14 @@ def test_twelve_gated_lookups_release_in_a_burst_behind_one_nudge(voice_world):
             assert _response_creates(fake) <= dones + 1
 
             fake.feed(model_said("Right, quite a list."))
-            assert ws.receive_json() == {
-                "type": "assistant_transcript_delta",
-                "text": "Right, quite a list.",
-            }
+            # twelve dispatch frames, then twelve completion frames from
+            # the burst, then the delta — every claim of work paired off.
+            delta = browser_frame(
+                ws,
+                "assistant_transcript_delta",
+                working=[("search", "started")] * 12 + [("search", "done")] * 12,
+            )
+            assert delta["text"] == "Right, quite a list."
             ws.send_json({"type": "end"})
     finally:
         gate.set()
@@ -158,6 +162,14 @@ def test_the_same_question_asked_after_it_finished_really_runs_again(voice_world
         assert _wait_until(lambda: len(lookup_notes(fake)) == 1)
         fake.feed(done())  # the deferred note nudge fires here
         assert _wait_until(lambda: _response_creates(fake) == 3)
+        fake.feed(model_said("Alcaraz plays the semifinal Friday night."))
+        first_delta = browser_frame(
+            ws,
+            "assistant_transcript_delta",
+            working=[("search", "started"), ("search", "done")],
+        )
+        assert "Alcaraz" in first_delta["text"]
+        fake.feed(done())
 
         # the identical question, once the first one is provably done
         fake.feed(done(look_call(question, call_id="look-2")))
@@ -487,7 +499,11 @@ def test_three_queued_results_collapse_to_one_nudge_and_the_goodbye_still_lands(
                 lambda: any("goodbye" in text for text in _system_items(fake))
             )
             fake.feed(done())  # the goodbye finishes streaming
-            assert ws.receive_json() == {"type": "closing"}
+            browser_frame(
+                ws,
+                "closing",
+                working=[("search", "started")] * 3 + [("search", "done")] * 3,
+            )
     finally:
         gate.set()
 

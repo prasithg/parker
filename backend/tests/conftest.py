@@ -56,6 +56,20 @@ def db(tmp_path_factory):
         engine.dispose()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _discard_test_databases(tmp_path_factory):
+    """Each test writes a ~0.5 MB database; pytest keeps three basetemps.
+    Delete ours at session end (never per test, where a straggling thread
+    could still be writing) so a busy day does not hold gigabytes."""
+
+    yield
+    import shutil
+
+    root = tmp_path_factory.getbasetemp()
+    for path in root.glob("parker-db*"):
+        shutil.rmtree(path, ignore_errors=True)
+
+
 @pytest.fixture(autouse=True)
 def override_get_db(db):
     """Route tests use the same in-memory session fixture."""

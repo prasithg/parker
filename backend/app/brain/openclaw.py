@@ -274,8 +274,12 @@ class FallbackBrain:
             return reply
 
 
-def build_openclaw_gateway() -> Optional[OpenClawGateway]:
-    """The configured gateway client, or None (zero-config default)."""
+def build_openclaw_gateway(client: Optional[httpx.Client] = None) -> Optional[OpenClawGateway]:
+    """The configured gateway client, or None (zero-config default).
+
+    ``client`` is a worker's cancellable ``httpx.Client`` (app/brain/
+    transport.py); None keeps the gateway's own 30 s client.
+    """
 
     from app.config import settings
 
@@ -284,4 +288,5 @@ def build_openclaw_gateway() -> Optional[OpenClawGateway]:
     return OpenClawGateway(
         settings.parker_openclaw_gateway_url,
         token=settings.parker_openclaw_gateway_token,
+        client=client,
     )

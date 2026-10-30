@@ -765,7 +765,7 @@
       "weak_current_result": "answer_with_corrupted_place_slot_no_repair"
     }
   ],
-  "date": "2026-07-22",
+  "date": "2026-09-03",
   "eval": "audio_repair_autodata_v0",
   "gate": {
     "blocking_failures": [],

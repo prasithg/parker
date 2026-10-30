@@ -42,8 +42,21 @@ logger = logging.getLogger("parker.session_review")
 # `guard_trip` records what the medical guard cancelled mid-word;
 # `lookup_ack` is the instant answer to look_that_up; `injection` is a
 # worker result landing mid-conversation; `proposal` is a propose_action
-# outcome (the StagedAction rows themselves live in the normal pipeline).
-EVENT_KINDS = ("turn", "guard_trip", "lookup_ack", "injection", "proposal")
+# outcome (the StagedAction rows themselves live in the normal pipeline);
+# `expression` is one browser-reported semantic presence transition
+# (from/to phase + overlays + reason), bounded and allowlisted by the
+# bridge, so review can see what Parker visibly presented. `action_result`
+# is the terminal truth of one spoken-confirmation offer: executed,
+# failed, cancelled, expired, or replaced.
+EVENT_KINDS = (
+    "turn",
+    "guard_trip",
+    "lookup_ack",
+    "injection",
+    "proposal",
+    "expression",
+    "action_result",
+)
 
 MAX_FEEDBACK_NOTE_CHARS = 2000
 

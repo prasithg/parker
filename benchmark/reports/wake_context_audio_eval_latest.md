@@ -1,6 +1,6 @@
 # Parker wake-context audio eval v0
 
-- Date: 2026-08-17
+- Date: 2026-09-03
 - Provenance: metadata-only public/synthetic audio-derived ASR hypotheses; raw audio not committed.
 - Purpose: verify explicit addressed-to-Parker context before repair/capture/answer routing.
 - Caveat: pipeline fixture coverage only; not wake-word accuracy, clinical evidence, or real-world deployment proof.

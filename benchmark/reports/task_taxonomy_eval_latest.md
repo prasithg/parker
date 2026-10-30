@@ -1,6 +1,6 @@
 # Parker task-taxonomy eval v0
 
-- Date: 2026-08-31
+- Date: 2026-09-03
 - Predictions: rule-based baseline
 - Fixtures: 24
 

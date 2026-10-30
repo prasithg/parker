@@ -57,6 +57,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.brain.claude import PROPOSE_ACTION_TOOL, _system_prompt
 from app.brain.guard import MEDICAL_BOUNDARY_REDIRECT, speech_violates_medical_boundary
+from app.brain.transport import CancelToken
 from app.parker import realtime_workers
 from app.parker.realtime_workers import LOOK_THAT_UP_TOOL, WorkerResult
 
@@ -83,11 +84,17 @@ like lookup, note, card, or research assistant — just talk. It is fine to
 explain in plain, general terms what a medicine or treatment is and how
 it works — that is education, not advice; doses, changes, and whether
 something applies to him go to his doctor or family. When you call
-propose_action, tell {patient_name} the action is written on the screen
-waiting for him to confirm — he taps it there, and nothing happens until
-he does — never that it is done, and if Parker replies that it could not
-be saved, say so honestly. If anything sounds urgent, say to call
-emergency services or get a family member right away.
+propose_action and it stages, Parker's reply hands you the exact
+readback: say it back to him in one short sentence and ask him to say
+yes to do it or no to cancel — then ask NOTHING else until he answers.
+For anything about HIS OWN day — his schedule, appointments, reminders,
+or when his medicines are — call my_day (Parker's own notes and
+reminders; there is no calendar) and never look_that_up.
+Never tell him to tap, touch, or press anything; his voice is the whole
+interface. Never say it is done before Parker reports the outcome, and
+if Parker replies that it could not be saved or did not work, say so
+honestly. If anything sounds urgent, say to call emergency services or
+get a family member right away.
 Right now it is {clock_line} (when this call began)."""
 
 _NO_SEARCH_PARAGRAPH = """In this live mode you do NOT have web search or any live data —
@@ -101,7 +108,7 @@ here. Ask it one clear, self-contained question in your own words, tell
 {patient_name} you're checking, and keep the conversation going — never
 sit silent waiting, never call it twice for the same question, and never
 claim to have looked something up before its background note arrives.
-Sources appear on his screen; never read web addresses aloud."""
+Never read web addresses aloud. If he asks where something came from, name the source in plain words (the tournament site, the news) — that is the only place sources are promised."""
 
 _GREETING_INSTRUCTION = (
     "The line just opened. Greet {patient_name} in one short, plain sentence "
@@ -115,6 +122,132 @@ _WRAPUP_INSTRUCTION = (
     "clear there's no rush and staying quiet is fine too."
 )
 
+# Spoken session end (docs/plans/2026-09-02-spoken-session-end.md): he
+# said he is done — hard ("that's all", "goodbye Parker") or the soft
+# closer (a compound closer like "OK, thanks" after a real answer, nothing
+# pending). Parker says one short goodbye, then the line winds down to
+# dormancy.
+_SESSION_END_INSTRUCTION = (
+    "{patient_name} just said he is done for now. Say one short, warm "
+    "goodbye (under ten words, no question), mentioning he can say "
+    "\u201cHey Parker\u201d any time. Do not ask anything else."
+)
+_SOFT_CLOSE_INSTRUCTION = (
+    "{patient_name} thanked you and sounds finished. Say one short, warm "
+    "goodbye (under ten words, no question), mentioning he can say "
+    "\u201cHey Parker\u201d any time. Do not ask anything else."
+)
+
+# Deterministic enders on HIS transcript — never the model's judgment.
+# Bare "stop", "thanks", "bye", "ok" are not enders: they occur mid-
+# conversation or mean "stop talking" (Hermes review, 2026-09-01).
+_HARD_ENDERS = (
+    "goodbye parker", "bye parker", "good night parker", "goodnight parker",
+    "goodbye", "good night", "goodnight",
+    "that's all", "that's all parker", "that is all", "that's all for today",
+    "that's all for tonight", "that's it for now", "that's it thanks",
+    "that's it thank you", "i'm done", "i am done", "we're done", "i'm finished",
+    "go back to sleep", "go to sleep", "you can go to sleep", "stop listening",
+    "you can rest now", "that's everything", "nothing else thanks",
+    "nothing else thank you", "see you later parker", "bye bye parker", "bye bye",
+    "that's it for tonight", "that's it for today", "see you tomorrow parker",
+)
+# What may come BEFORE an ender at the end of an utterance ("ok that's
+# all", "no thanks, I'm done", "hey parker go to sleep") — a bounded
+# whitelist of PHRASES like the confirmation grammar's, never free text:
+# "should I go to sleep", "I can't go to sleep", "you said that's all",
+# and a first-person report like "and I go to sleep" are not exits.
+_ENDER_LEADS = frozenset(
+    ["ok", "okay", "no", "yes", "yeah", "yep", "alright", "all right", "right", "well",
+     "fine", "great", "thanks", "thank you", "no thanks", "i think", "parker", "hey",
+     "hey parker", "um", "uh", "so", "and", "ok so", "okay so", "um okay", "um ok",
+     "okay thanks", "ok thanks", "and now", "right then"]
+)
+# What may come AFTER an ender ("that's all, thanks Parker", "I'm done now").
+# Longest first, so "for now" is stripped as a whole, never as "now".
+_ENDER_TRAILERS = tuple(sorted((
+    "thanks parker", "thank you parker", "thanks", "thank you", "parker", "now",
+    "for now", "for today", "for tonight", "please",
+), key=len, reverse=True))
+# Gratitude in any form \u2014 used ONLY as a lead before a hard ender ("thank
+# you so much Parker, that's all"). Bare gratitude is never an exit.
+_GRATITUDE_RE = __import__("re").compile(
+    r"^(?:(?:ok|okay|alright|all right|great|perfect|good|wonderful|lovely|fine|"
+    r"right) ?)*(?:that's helpful|that helps|thanks|thank you)"
+    r"(?: (?:so much|very much|a lot|a bunch|again))?(?: (?:thanks|thank you))?(?: parker)?$"
+)
+# The soft closer is a COMPOUND closer only \u2014 the evidence-backed forms:
+# an acknowledgment lead plus thanks ("OK, thanks" \u2014 Pras's call 41), or
+# "that's helpful, thanks" (the PR #43 review's cited form). Bare "thanks"
+# / "thank you" / "thanks Parker" stay conversation: a Parkinsonian pause
+# after an acknowledgment must never read as completion (PR #43 review,
+# 2026-09-02) \u2014 a missed closer costs the idle ladder, a false one hangs
+# up on him mid-thought.
+_SOFT_CLOSER_RE = __import__("re").compile(
+    r"^(?:(?:(?:ok|okay|alright|all right|great|perfect|good|wonderful|lovely|fine|"
+    r"right) )+(?:thanks|thank you)(?: (?:so much|very much|a lot))?"
+    r"|(?:that's helpful|that helps) (?:thanks|thank you))(?: parker)?$"
+)
+
+
+def spoken_session_end(transcript: str) -> Optional[str]:
+    """``"hard"`` for an explicit ender, ``"gratitude"`` for a compound
+    closer that may be a soft close (the bridge decides with context),
+    else None.
+
+    A question is never an exit ("should I go to sleep?"); an ender counts
+    as the whole utterance, or its ending after a bounded lead
+    ("ok that's all"), optionally followed by a bounded trailer ("that's
+    all, thanks Parker"). Free text before an ender ("I can't go to
+    sleep", "you said that's all") is conversation, and so is bare
+    gratitude ("thanks", "thank you Parker").
+    """
+
+    import re as _re
+
+    raw = (transcript or "").strip()
+    if raw.endswith("?"):
+        return None
+    normalized = _re.sub(r"[,.!;:]+", " ", raw.lower())
+    normalized = " ".join(normalized.replace("\u2019", "'").split())
+    if not normalized:
+        return None
+    if _SOFT_CLOSER_RE.match(normalized):
+        return "gratitude"
+    # Every way of peeling up to two trailers off the end ("that's it,
+    # thanks Parker" must still find "that's it thanks" as well as "that's it").
+    candidates = [normalized]
+    frontier = [normalized]
+    for _ in range(2):
+        peeled = []
+        for text in frontier:
+            for trailer in _ENDER_TRAILERS:
+                if text.endswith(" " + trailer):
+                    shorter = text[: -len(trailer) - 1].strip()
+                    if shorter and shorter not in candidates:
+                        candidates.append(shorter)
+                        peeled.append(shorter)
+        frontier = peeled
+    for core in candidates:  # the full utterance first ("bye parker"), then peeled forms
+        for phrase in _HARD_ENDERS:
+            if core == phrase:
+                return "hard"
+            if core.endswith(" " + phrase):
+                lead = core[: -len(phrase)].strip()
+                # A whitelisted lead, a thank-you ("thank you so much Parker,
+                # that's all"), or an ender before an ender ("that's all. goodbye.").
+                if lead in _ENDER_LEADS or _GRATITUDE_RE.match(lead) or _ender_after_ender(lead):
+                    return "hard"
+    return None
+
+
+def _ender_after_ender(lead: str) -> bool:
+    """"that's all. goodbye." — an ender followed by an ender is an exit."""
+
+    return any(lead == phrase or lead.endswith(" " + phrase) and lead[: -len(phrase)].strip() in _ENDER_LEADS
+               for phrase in _HARD_ENDERS)
+
+
 _GOODBYE_INSTRUCTION = (
     "Still quiet — the line closes on its own now. Say one short, warm "
     "goodbye to {patient_name} (no questions, under ten words so it finishes "
@@ -122,19 +255,64 @@ _GOODBYE_INSTRUCTION = (
     "Never say it timed out and never remark that he went quiet."
 )
 
+# The wake-tail instruction carries NO transcript: what he said after
+# "Hey Parker" is his own words \u2014 untrusted user content \u2014 and arrives as
+# a user-role item (never interpolated into a system message; PR #40
+# review blocker 2, 2026-09-02).
+_WAKE_INSTRUCTION = (
+    "{patient_name} just woke you by saying \u201cHey Parker\u201d and went "
+    "straight on; what he said arrives next as his own message (transcribed "
+    "locally \u2014 it may be a fragment). Skip the standalone greeting \u2014 "
+    "answer or act on it directly in one short, warm reply (a two-word hello "
+    "at most). If it was only a fragment, or nothing followed, ask what he "
+    "needs in one short question. If it needs an action, use propose_action "
+    "as usual."
+)
+
 # A small cap on simultaneous live lines: this is a single-household
 # surface, and each bridge holds an upstream (billed) OpenAI socket.
 MAX_LIVE_BRIDGES = 2
 _active_bridges = 0
 
+# Bounded semantic-presence journaling: the browser reports expression
+# transitions (from/to phase, overlays, reason) so session review can show
+# what Parker visibly presented. A cap keeps a chatty page from flooding
+# the journal; frame-by-frame animation never belongs here.
+MAX_EXPRESSION_RECEIPTS = 400
+
 # Orchestrator timings. Module constants, not config: one household, and
 # the tests shrink them via monkeypatch.
 WORKER_TIMEOUT_SECONDS = 30.0
+_MY_DAY_RESULT_KEY = "my_day:"
+_SEARCH_RESULT_PREFIX = "search:"
 IDLE_WRAPUP_SECONDS = 90.0
 IDLE_GOODBYE_SECONDS = 30.0
 CLOSING_DRAIN_SECONDS = 10.0
+# A staged action waits this long for his spoken yes/no before the offer
+# quietly expires (the action stays staged on the family review surface;
+# nothing executes). Short on purpose: a stray "yes" to some LATER
+# question must not execute an old offer (companion take 2, 2026-09-01).
+CONFIRM_WINDOW_SECONDS = 60.0
 _WATCHDOG_TICK_SECONDS = 1.0
 _MAX_TRACKED_EXCHANGES = 50
+# The page's first frame after connect is an optional `hello` carrying the
+# wake tail — the words he said right after "Hey Parker" while the line
+# was still connecting. The bridge waits this long for it before the
+# greeting so the first response can answer the request instead of
+# greeting him and losing it (independent review, 2026-09-01).
+HELLO_WAIT_SECONDS = 0.35
+MAX_WAKE_TAIL_CHARS = 200
+# A hello marked `pending` means the local wake lane is still finishing
+# his same-breath words (one last inference after the line opened). The
+# bridge waits this long for the page's final `tail` frame before it
+# delivers what the hello carried and asks for the first reply — the
+# ordered handoff that stops a delayed tail from being lost (PR #40
+# review blocker 2).
+TAIL_WAIT_SECONDS = 1.5
+
+
+def _search_result_key(question: str) -> str:
+    return _SEARCH_RESULT_PREFIX + " ".join(question.lower().split())
 
 
 def try_acquire_bridge_slot() -> bool:
@@ -212,6 +390,14 @@ def build_session_update() -> dict[str, Any]:
             "parameters": propose_schema,
         }
     ]
+    tools.append(
+        {
+            "type": "function",
+            "name": realtime_workers.MY_DAY_TOOL["name"],
+            "description": realtime_workers.MY_DAY_TOOL["description"],
+            "parameters": realtime_workers.MY_DAY_TOOL["parameters"],
+        }
+    )
     if search_available:
         tools.append(
             {
@@ -629,13 +815,121 @@ def _stage_proposal_sync(arguments: dict[str, Any], call_sid: str) -> dict[str, 
                         "waiting there, and offer to try again."
                     ),
                 }
+            contract = _action_contract(staged)
+            readback = _action_readback(contract)
             return {
                 "status": "staged",
                 "detail": (
-                    "Staged and shown on the screen for confirmation. Nothing runs "
-                    "until it is confirmed there."
+                    f"Staged and shown on the screen for spoken confirmation. "
+                    f"Read it back to him now — {readback} — and ask him to say "
+                    "yes to do it or no to cancel. Ask nothing else until he "
+                    "answers. Nothing runs until he says yes."
                 ),
+                "action_id": staged.id,
+                "contract": contract,
+                "readback": readback,
             }
+        finally:
+            db.close()
+
+
+def _action_contract(action: Any) -> dict[str, str]:
+    """Fields read back to him that must still match before spoken execution.
+
+    Mirrors the turns lane's confirmation contract exactly — the spoken
+    "yes" binds to what was offered, never to whatever the row says later.
+    """
+
+    try:
+        payload = json.loads(action.action_payload or "{}")
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "action_type": str(action.action_type or "").strip(),
+        "recipient": str(payload.get("recipient") or "").strip(),
+        "subject": str(payload.get("subject") or "").strip(),
+        "intent_text": str(payload.get("intent_text") or "").strip(),
+    }
+
+
+def _action_readback(contract: dict[str, str]) -> str:
+    """One plain speakable line describing exactly what would run."""
+
+    subject = contract.get("subject") or "that"
+    kind = contract.get("action_type")
+    if kind == "family_message":
+        recipient = contract.get("recipient") or "family"
+        body = contract.get("intent_text") or subject
+        return f"a message to {recipient} saying “{body}”"
+    if kind == "exercise_start":
+        return f"starting {subject}"
+    if kind == "reminder":
+        return f"a reminder about “{subject}”"
+    return f"{kind or 'an action'}: {subject}"
+
+
+def _confirm_execute_sync(action_id: int, offered_contract: dict[str, str]) -> dict[str, Any]:
+    """His spoken yes: re-verify the offered contract, confirm, execute.
+
+    The same deterministic gate the turns lane ships: the action must
+    still exist, still be staged, and still match every field that was
+    read back — a row mutated between offer and yes is cancelled and
+    reported as a mismatch, never executed.
+    """
+
+    from app.parker.pipeline import (
+        cancel_staged_action,
+        confirm_staged_action,
+        execute_staged_action,
+    )
+
+    with _db_write_lock:
+        db = _make_db()
+        try:
+            from app.db.models import StagedAction
+
+            action = db.get(StagedAction, action_id)
+            if (
+                action is None
+                or action.status != "staged"
+                or _action_contract(action) != offered_contract
+            ):
+                if action is not None and action.status in {"staged", "confirmed"}:
+                    cancel_staged_action(
+                        db, action_id, cancelled_by="confirmation_contract_mismatch"
+                    )
+                return {"status": "failed", "detail": "it changed before he confirmed"}
+            confirmed = confirm_staged_action(db, action_id, confirmed_by="patient")
+            if (
+                confirmed.status != "confirmed"
+                or _action_contract(confirmed) != offered_contract
+            ):
+                cancel_staged_action(
+                    db, action_id, cancelled_by="confirmation_contract_mismatch"
+                )
+                return {"status": "failed", "detail": "it changed before he confirmed"}
+            executed = execute_staged_action(db, action_id)
+            if executed.status == "executed":
+                return {"status": "executed", "detail": str(executed.execution_result or "")[:200]}
+            return {
+                "status": "failed",
+                "detail": str(executed.execution_result or executed.status)[:200],
+            }
+        finally:
+            db.close()
+
+
+def _cancel_staged_sync(action_id: int) -> None:
+    """His spoken no: cancel the staged action (idempotent, best-effort)."""
+
+    from app.parker.pipeline import cancel_staged_action
+
+    with _db_write_lock:
+        db = _make_db()
+        try:
+            cancel_staged_action(db, action_id, cancelled_by="patient")
         finally:
             db.close()
 
@@ -671,6 +965,25 @@ class RealtimeBridge:
     ) -> None:
         self._browser_send = browser_send
         self._browser_receive = browser_receive
+        self._wake_tail = ""
+        # The same-breath handoff: `pending` on the hello means one final
+        # tail frame may follow; the tail is delivered exactly once (as a
+        # user item), by the frame or by the deadline.
+        self._tail_pending = False
+        self._tail_delivered = False
+        self._tail_task: Optional[asyncio.Task] = None
+        # Off means off: once shutdown begins nothing is forwarded, injected,
+        # or nudged (distinct from `_closing_sent`, the page's audio drain
+        # while the bridge is still alive), and the cancel token reaches
+        # every provider call this bridge started.
+        self._closed = False
+        self._cancel = CancelToken()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._run_task: Optional[asyncio.Task] = None
+        self._connect_task: Optional[asyncio.Task] = None
+        self._pump_tasks: set[asyncio.Task] = set()
+        self._early_frames: list[Any] = []
+        self._early_receive: Optional["asyncio.Future[Any]"] = None
         # Resolved at run time through the module so tests can monkeypatch
         # connect_openai without touching every construction site.
         self._upstream_connect = upstream_connect
@@ -688,10 +1001,26 @@ class RealtimeBridge:
         # workers, proposals, the greeting, and the watchdog can never
         # double-fire against each other or the server VAD.
         self._response_active = False
+        # True once this response's audio actually reached the browser:
+        # those responses get an authoritative `response_state: done` frame
+        # so the page never has to infer "Parker finished" from a gap in
+        # its local playback queue (independent review, 2026-09-01).
+        self._audio_sent = False
         self._user_speaking = False
+        self._response_stopped = False
         self._pending_nudge_count = 0
         self._inflight_lookups: set[str] = set()
+        self._pending_result_keys: set[str] = set()
+        self._active_result_keys: set[str] = set()
         self._worker_tasks: set[asyncio.Task] = set()
+        # Provider computations are separate from their cancellable result
+        # delivery runners. OFF cancels delivery immediately, but waits for
+        # the actual computation task (and therefore its thread) to finish.
+        self._provider_tasks: set[asyncio.Task] = set()
+        self._providers_quiesced = _threading.Event()
+        self._providers_quiesced.set()
+        self._transport_quiesced = _threading.Event()
+        self._transport_quiesced.set()  # no connect/socket exists before run()
         self._exchanges: list[tuple[str, str]] = []
         self._last_activity = time.monotonic()
         self._last_user_activity = 0.0  # only his voice stands the close down
@@ -699,7 +1028,14 @@ class RealtimeBridge:
         self._goodbye_at = 0.0
         self._wrapup_asked = False
         self._goodbye_requested = False
+        # A goodbye was injected but its nudge has not gone upstream yet
+        # (a response was active / he was speaking). `closing` may ride
+        # only the goodbye's OWN done — never the done of the server's
+        # auto-reply to his closer (fresh review, 2026-09-02).
+        self._goodbye_nudge_pending = False
         self._closing_sent = False
+        self._last_assistant_speech = ""  # the soft closer needs a real answer before it
+        self._session_end_kind = ""  # "hard" | "soft" once he ended it
         # Session journal (the human-testing flywheel): every turn,
         # injection, ack, and proposal lands in realtime_session_events so
         # the review surface can show the finished session back to a human.
@@ -707,6 +1043,12 @@ class RealtimeBridge:
         self._opened_mono = time.monotonic()
         self._lookup_asked: dict[str, float] = {}
         self._pending_turn_writer: Optional[Callable[[], None]] = None
+        self._expression_receipts = 0
+        # One spoken confirmation at a time: {action_id, contract, label,
+        # readback, offered_at}. His next transcript is parsed by the same
+        # deterministic yes/no grammar the turns lane executes on; anything
+        # else defers, and the offer expires after CONFIRM_WINDOW_SECONDS.
+        self._pending_confirm: Optional[dict[str, Any]] = None
 
     def _event_writer(
         self,
@@ -742,31 +1084,184 @@ class RealtimeBridge:
         writer = self._event_writer(kind, heard=heard, said=said, detail=detail)
         await _tracked_thread(lambda: _with_local_write_retries("session event", writer))
 
+    def _journal_in_background(
+        self,
+        kind: str,
+        heard: str = "",
+        said: str = "",
+        detail: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Journal without holding the caller: the browser pump forwards his
+        audio and must never queue behind a SQLite lock/retry (Hermes
+        review, blocker 7). The write is a tracked task: shutdown drains
+        it like a worker, and the thread counter still covers the thread."""
+
+        writer = self._event_writer(kind, heard=heard, said=said, detail=detail)
+
+        async def run() -> None:
+            try:
+                await _tracked_thread(lambda: _with_local_write_retries("session event", writer))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — evidence never breaks the call
+                logger.debug("background journal write failed", exc_info=True)
+
+        task = asyncio.create_task(run())
+        self._worker_tasks.add(task)
+        task.add_done_callback(self._worker_tasks.discard)
+
+    async def _journal_expression(self, message: dict[str, Any]) -> None:
+        """Journal one browser-reported semantic expression transition.
+
+        The page is untrusted input: every field is allowlisted, typed, and
+        truncated, and the per-session count is capped — session review
+        needs "listening became talking when the audio arrived", never a
+        frame-by-frame animation log (independent review, 2026-09-01).
+        """
+
+        if self._expression_receipts >= MAX_EXPRESSION_RECEIPTS:
+            return
+        self._expression_receipts += 1
+        detail: dict[str, Any] = {}
+        for field in ("from", "to", "action", "guard", "attention", "reason", "work"):
+            value = message.get(field)
+            if isinstance(value, str):
+                detail[field] = value[:32]
+        for field in ("at_ms", "gen"):
+            value = message.get(field)
+            if isinstance(value, (int, float)):
+                detail[field] = int(value)
+        if self._expression_receipts == MAX_EXPRESSION_RECEIPTS:
+            detail["truncated"] = True  # later transitions are dropped
+        self._journal_in_background("expression", detail=detail)
+
+    def revoke(self) -> None:
+        """Off, now: the synchronous first step of shutdown, callable from the
+        route the instant power moves (before the page's socket is even
+        closed). Idempotent. Nothing is forwarded, injected, or nudged from
+        here on; the pumps and workers are cancelled; every provider socket
+        this bridge opened is shut down. ``_shutdown`` (run()'s finally)
+        does the awaits: upstream close, drain, persistence."""
+
+        self._closed = True
+        self._cancel.cancel()  # provider sockets: thread-safe and immediate
+
+        def cancel_async_tasks() -> None:
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            run_task = self._run_task
+            if run_task is not None and run_task is not current and not run_task.done():
+                run_task.cancel()
+            connect_task = self._connect_task
+            if connect_task is not None and not connect_task.done():
+                connect_task.cancel()
+            for task in self._pump_tasks:
+                task.cancel()
+            # Delivery/background tasks are cancellable. Actual provider
+            # computations live in _provider_tasks and remain observable.
+            for task in self._worker_tasks:
+                task.cancel()
+
+        loop = self._loop
+        if loop is None:
+            cancel_async_tasks()
+        else:
+            try:
+                on_owner_loop = asyncio.get_running_loop() is loop
+            except RuntimeError:
+                on_owner_loop = False
+            if on_owner_loop:
+                cancel_async_tasks()
+            else:
+                loop.call_soon_threadsafe(cancel_async_tasks)
+
+    async def wait_quiesced(self) -> None:
+        """Wait until this bridge owns no transport or provider work."""
+
+        await run_in_threadpool(self._transport_quiesced.wait)
+        await run_in_threadpool(self._providers_quiesced.wait)
+
+    @property
+    def revoked(self) -> bool:
+        return self._closed
+
     async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._run_task = asyncio.current_task()
+        if self._closed:
+            self._run_task = None
+            return
+        self._transport_quiesced.clear()
         connect = self._upstream_connect or globals()["connect_openai"]
-        self._upstream = await connect()
+        self._connect_task = asyncio.ensure_future(connect())
+        # revoke() can race between the closed check and task creation. Its
+        # first cancel sees no task in that window, so close it here too.
+        if self._closed:
+            self._connect_task.cancel()
         try:
+            try:
+                self._upstream = await self._connect_task
+            except asyncio.CancelledError:
+                if self._closed:
+                    return
+                raise
+            if self._closed:
+                return  # revoked while connecting: shutdown closes what opened
             await self._upstream.send(json.dumps(build_session_update()))
             await _tracked_thread(lambda: _ensure_call_log_sync(self._call_sid))
+            await self._await_hello()
+            if self._closed:
+                return
             # The greeting never waits for context: speak first, load behind.
-            await self._send_system_item(self._greeting_instruction())
-            await self._request_nudge()
+            if self._wake_tail or self._tail_pending:
+                # He woke Parker and went straight on: the instruction goes
+                # up now (no transcript in it); his words follow as a user
+                # item — from the hello, or from the lane's final tail — and
+                # THAT delivery is the one nudge (never two per wake).
+                await self._send_system_item(self._wake_instruction())
+                if self._tail_pending:
+                    self._tail_task = asyncio.create_task(self._tail_deadline())
+                    self._worker_tasks.add(self._tail_task)
+                    self._tail_task.add_done_callback(self._worker_tasks.discard)
+                else:
+                    await self._deliver_tail(self._wake_tail)
+            else:
+                # No wake handoff opened: a stray `tail` frame later must not
+                # mint a user item (the handoff delivers exactly once, and only
+                # when a wake hello started it).
+                self._tail_delivered = True
+                await self._send_system_item(
+                    _GREETING_INSTRUCTION.format(patient_name=self._patient_name())
+                )
+                await self._request_nudge()
+            if self._closed:
+                return
             self._spawn_context_worker()
             browser_task = asyncio.create_task(self._pump_browser())
             upstream_task = asyncio.create_task(self._pump_upstream())
             watchdog_task = asyncio.create_task(self._watchdog())
+            # Kept on the bridge: when the handler itself is cancelled,
+            # asyncio.wait leaves these running — shutdown cancels them.
+            self._pump_tasks = {browser_task, upstream_task, watchdog_task}
             done, pending = await asyncio.wait(
-                {browser_task, upstream_task, watchdog_task},
-                return_when=asyncio.FIRST_COMPLETED,
+                self._pump_tasks, return_when=asyncio.FIRST_COMPLETED
             )
             for task in pending:
                 task.cancel()
             for task in done:
+                if task.cancelled():
+                    continue
                 exc = task.exception()
                 if exc is not None and not isinstance(exc, asyncio.CancelledError):
                     raise exc
         finally:
-            await self._shutdown()
+            self._connect_task = None
+            try:
+                await self._shutdown()
+            finally:
+                self._run_task = None
 
     async def _shutdown(self) -> None:
         """Persist and close even when the whole handler is being cancelled.
@@ -782,8 +1277,42 @@ class RealtimeBridge:
         worker results are dropped by policy (Pras, 2026-08-30): tasks are
         cancelled, and the bounded wait just lets in-flight threadpool
         threads finish so shutdown never races them.
+
+        Order is the privacy boundary (PR #40 review blocker 1): the line is
+        revoked and the billed upstream socket closed FIRST, the provider
+        calls this bridge started are cancelled at their socket, and only
+        then does the slow local persistence drain — it may never hold the
+        boundary open.
         """
 
+        # 1. Revoke, synchronously, before any await (idempotent: the route
+        #    may already have done it the instant power moved).
+        self.revoke()
+        # 2. Close the upstream FIRST — bounded: a wedged socket must never
+        #    pin the bridge slot open.
+        close = getattr(self._upstream, "close", None)
+        try:
+            if close is not None:
+                closing = asyncio.ensure_future(asyncio.wait_for(close(), timeout=5.0))
+                await _await_despite_cancel(closing)
+                if not closing.cancelled():
+                    closing.exception()  # best-effort close; retrieve, never raise
+        finally:
+            # Connection setup has been cancelled or the opened upstream has
+            # completed its bounded close. The power route may now wait only
+            # on provider runners, never on session persistence below.
+            self._transport_quiesced.set()
+        # 3. Let the pumps and the (now cancelled) worker threads unwind.
+        draining = (
+            set(self._pump_tasks)
+            | set(self._worker_tasks)
+            | set(self._provider_tasks)
+        )
+        if draining:
+            await _await_despite_cancel(
+                asyncio.ensure_future(asyncio.wait(draining, timeout=1.0))
+            )
+        # 4. Persistence — after the boundary is closed, drained as before.
         # A turn already consumed by _on_response_done but cancelled before
         # its journal write must still reach the review timeline — the
         # summary will count it, so the journal must too.
@@ -816,14 +1345,6 @@ class RealtimeBridge:
                     )
                 )
             )
-        for task in self._worker_tasks:
-            task.cancel()
-        if self._worker_tasks:
-            await _await_despite_cancel(
-                asyncio.ensure_future(
-                    asyncio.wait(set(self._worker_tasks), timeout=1.0)
-                )
-            )
         exchanges = list(self._exchanges)
         finalize = asyncio.ensure_future(
             _tracked_thread(lambda: _finalize_session_sync(self._call_sid, exchanges))
@@ -831,13 +1352,6 @@ class RealtimeBridge:
         await _await_despite_cancel(finalize)
         if not finalize.cancelled() and finalize.exception() is not None:
             logger.debug("realtime finalize failed", exc_info=finalize.exception())
-        close = getattr(self._upstream, "close", None)
-        if close is not None:
-            # Bounded: a wedged socket must never pin the bridge slot open.
-            closing = asyncio.ensure_future(asyncio.wait_for(close(), timeout=5.0))
-            await _await_despite_cancel(closing)
-            if not closing.cancelled():
-                closing.exception()  # best-effort close; retrieve, never raise
 
     # ------------------------------------------------------------------
     # Instruction text (patient name resolved once per bridge)
@@ -849,14 +1363,71 @@ class RealtimeBridge:
 
         return settings.patient_name
 
-    def _greeting_instruction(self) -> str:
-        return _GREETING_INSTRUCTION.format(patient_name=self._patient_name())
+    def _wake_instruction(self) -> str:
+        return _WAKE_INSTRUCTION.format(patient_name=self._patient_name())
+
+    async def _await_hello(self) -> None:
+        """Read the page's optional first frame (bounded wait).
+
+        A `hello` frame carries the wake tail (and `pending` when the lane
+        is still finishing his words); anything else is put back for the
+        browser pump. Waiting costs the greeting a fraction of a second
+        only when the page sends nothing — it sends the hello the instant
+        the socket opens.
+        """
+
+        # Never cancel a receive: a frame pulled off the socket by a
+        # cancelled await would be lost. The pending receive is handed to
+        # the browser pump instead when nothing arrives in time.
+        receiving = asyncio.ensure_future(self._browser_receive())
+        done, _pending = await asyncio.wait({receiving}, timeout=HELLO_WAIT_SECONDS)
+        if not done:
+            self._early_receive = receiving
+            return
+        message = receiving.result()
+        if isinstance(message, dict) and message.get("type") == "hello":
+            tail = str(message.get("tail", "") or "").strip()
+            tail = " ".join(tail.split())[:MAX_WAKE_TAIL_CHARS]
+            self._wake_tail = tail
+            self._tail_pending = bool(message.get("pending"))
+            return
+        self._early_frames.append(message)
+
+    async def _deliver_tail(self, text: str) -> None:
+        """Hand the model his same-breath words, exactly once, as HIS message.
+
+        The text is the page's final tail (or, at the deadline, whatever the
+        hello carried). It is user content: a user-role item, never part
+        of an instruction. Then the one nudge for the first reply.
+        """
+
+        if self._tail_delivered or self._closed:
+            return
+        self._tail_delivered = True
+        self._tail_pending = False
+        deadline = self._tail_task
+        if deadline is not None and deadline is not asyncio.current_task() and not deadline.done():
+            deadline.cancel()
+        tail = " ".join(str(text or "").split())[:MAX_WAKE_TAIL_CHARS] or self._wake_tail
+        if tail:
+            self._wake_tail = tail
+            await self._send_user_item(tail)
+            self._journal_in_background("wake_tail", heard=tail)
+        await self._request_nudge()
+
+    async def _tail_deadline(self) -> None:
+        """The lane's final tail never came: go with what the hello carried."""
+
+        await asyncio.sleep(TAIL_WAIT_SECONDS)
+        await self._deliver_tail("")
 
     # ------------------------------------------------------------------
     # The injection mechanics: items any time, exactly one nudge emitter.
     # ------------------------------------------------------------------
 
     async def _send_system_item(self, text: str) -> None:
+        if self._closed:
+            return
         await self._upstream.send(
             json.dumps(
                 {
@@ -870,18 +1441,46 @@ class RealtimeBridge:
             )
         )
 
-    async def _request_nudge(self) -> None:
+    async def _send_user_item(self, text: str) -> None:
+        """His own words, injected as user content (locally transcribed)."""
+
+        if self._closed:
+            return
+        await self._upstream.send(
+            json.dumps(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": text}],
+                    },
+                }
+            )
+        )
+
+    async def _request_nudge(self, *, result_key: str = "") -> None:
         """Ask for a model response covering everything injected so far."""
 
+        if result_key:
+            self._pending_result_keys.add(result_key)
         self._pending_nudge_count += 1
         await self._try_nudge()
 
+    def _begin_result_response(self) -> None:
+        """Bind every injected result waiting for speech to this response."""
+
+        self._active_result_keys.update(self._pending_result_keys)
+        self._pending_result_keys.clear()
+
     async def _try_nudge(self) -> None:
-        if self._pending_nudge_count <= 0 or self._closing_sent:
+        if self._pending_nudge_count <= 0 or self._closing_sent or self._closed:
             return
         if self._response_active or self._user_speaking:
             return  # deferred; response.done retries
         self._pending_nudge_count = 0
+        self._goodbye_nudge_pending = False  # the goodbye (if owed) rides THIS response
+        self._begin_result_response()
         self._response_active = True  # optimistic — response.created confirms
         await self._upstream.send(json.dumps({"type": "response.create"}))
 
@@ -904,12 +1503,43 @@ class RealtimeBridge:
         inflight_key: str = "",
         question: str = "",
     ) -> None:
+        cancel = self._cancel
+
+        def work_with_cancel() -> WorkerResult:
+            # The bridge's cancel token rides the worker's context: a
+            # provider call registers its socket abort on it, so power off
+            # reaches the provider boundary instead of only dropping the
+            # result (PR #40 review blocker 1).
+            token = realtime_workers.CURRENT_CANCEL.set(cancel)
+            try:
+                return work()
+            finally:
+                realtime_workers.CURRENT_CANCEL.reset(token)
+
+        # Keep the actual computation distinct from its delivery coroutine.
+        # wait_for() may time out/cancel the delivery await, but shield keeps
+        # this task—and therefore the underlying thread—observable until it
+        # truly exits.
+        self._providers_quiesced.clear()
+        provider_task = asyncio.create_task(_tracked_thread(work_with_cancel))
+        self._provider_tasks.add(provider_task)
+
+        def provider_finished(done: asyncio.Task) -> None:
+            self._provider_tasks.discard(done)
+            if not done.cancelled():
+                done.exception()  # retrieve a late failure after timeout/revoke
+            if not self._provider_tasks:
+                self._providers_quiesced.set()
+
+        provider_task.add_done_callback(provider_finished)
+
         async def runner() -> None:
             requested = time.monotonic()
+            delivered = False
             try:
                 try:
                     result = await asyncio.wait_for(
-                        _tracked_thread(work), WORKER_TIMEOUT_SECONDS
+                        asyncio.shield(provider_task), WORKER_TIMEOUT_SECONDS
                     )
                 except asyncio.TimeoutError:
                     result = WorkerResult(kind=kind, question=question, error="it took too long")
@@ -920,20 +1550,33 @@ class RealtimeBridge:
                     result = WorkerResult(
                         kind=kind, question=question, error="it hit a problem partway"
                     )
-                finally:
-                    if inflight_key:
-                        self._inflight_lookups.discard(inflight_key)
-                await self._deliver_result(result, requested)
+                await self._deliver_result(
+                    result, requested, result_key=inflight_key
+                )
+                delivered = True
             except asyncio.CancelledError:
                 raise  # session over — the late result is dropped by policy
             except Exception:  # noqa: BLE001 — a worker must never end the call
                 logger.warning("realtime %s result delivery failed", kind, exc_info=True)
+            finally:
+                if inflight_key and (not delivered or self._closed):
+                    self._inflight_lookups.discard(inflight_key)
+                    self._pending_result_keys.discard(inflight_key)
+                    self._active_result_keys.discard(inflight_key)
 
         task = asyncio.create_task(runner())
         self._worker_tasks.add(task)
-        task.add_done_callback(self._worker_tasks.discard)
 
-    async def _deliver_result(self, result: WorkerResult, requested: float) -> None:
+        def finished(done: asyncio.Task) -> None:
+            self._worker_tasks.discard(done)
+
+        task.add_done_callback(finished)
+
+    async def _deliver_result(
+        self, result: WorkerResult, requested: float, *, result_key: str = ""
+    ) -> None:
+        if self._closed:
+            return  # off: a late result is dropped, never injected or nudged
         worker_ms = int((time.monotonic() - requested) * 1000)
         if result.kind == "context":
             if not result.speech:
@@ -941,6 +1584,8 @@ class RealtimeBridge:
             # Context steers the *next* thing said; it never triggers speech
             # of its own (the model must not narrate the card).
             await self._send_system_item(realtime_workers.render_context_item(result))
+            if self._closed:
+                return
             logger.info("realtime receipt kind=context worker_ms=%d", worker_ms)
             await self._journal(
                 "injection",
@@ -948,10 +1593,44 @@ class RealtimeBridge:
                 detail={"worker": "context", "worker_ms": worker_ms},
             )
             return
+        if result.kind == "my_day":
+            await self._send_system_item(realtime_workers.render_my_day_item(result))
+            if self._closed:
+                return
+            await self._browser_send(
+                {"type": "working", "kind": "my_day", "status": "failed" if result.error else "done"}
+            )
+            if self._closed:
+                return
+            await self._request_nudge(result_key=result_key)
+            if self._closed:
+                return
+            await self._journal(
+                "injection",
+                said=result.speech,
+                detail={"worker": "my_day", "worker_ms": worker_ms},
+            )
+            return
         age_seconds = max(0.0, time.time() - result.started_at)
         await self._send_system_item(
             realtime_workers.render_search_item(result, age_seconds=age_seconds)
         )
+        if self._closed:
+            return
+        # Presence truth for the page (2026-08-31 Reachy brief): the lookup
+        # that `working` started is now finished — done or honestly failed.
+        # Paired with the `started` frame sent at dispatch; the page's
+        # expression state also expires stale work on its own, so a lost
+        # frame can never claim eternal work.
+        await self._browser_send(
+            {
+                "type": "working",
+                "kind": "search",
+                "status": "failed" if result.error else "done",
+            }
+        )
+        if self._closed:
+            return
         if result.sources:
             await self._browser_send(
                 {
@@ -962,6 +1641,8 @@ class RealtimeBridge:
                     ],
                 }
             )
+            if self._closed:
+                return
         logger.info(
             "realtime receipt kind=search worker_ms=%d age_s=%d guard_tripped=%s error=%s",
             worker_ms,
@@ -969,8 +1650,11 @@ class RealtimeBridge:
             result.guard_tripped,
             result.error or "none",
         )
-        await self._request_nudge()
-        asked = self._lookup_asked.pop(" ".join(result.question.lower().split()), None)
+        await self._request_nudge(result_key=result_key)
+        if self._closed:
+            return
+        lookup_key = result_key or _search_result_key(result.question)
+        asked = self._lookup_asked.pop(lookup_key, None)
         await self._journal(
             "injection",
             said=result.speech,
@@ -997,6 +1681,13 @@ class RealtimeBridge:
             await asyncio.sleep(_WATCHDOG_TICK_SECONDS)
             now = time.monotonic()
             idle = now - self._last_activity
+            if (
+                self._pending_confirm is not None
+                and now - self._pending_confirm["offered_at"] > CONFIRM_WINDOW_SECONDS
+            ):
+                # The offer quietly lapses: the card clears, the action
+                # stays staged on the family review surface, nothing runs.
+                await self._expire_confirmation("no spoken answer in the window")
             if self._closing_sent:
                 # Goodbye fully sent; give the browser time to drain audio
                 # and hang up itself, then close from this side regardless.
@@ -1009,6 +1700,8 @@ class RealtimeBridge:
                 # speech must not stand itself down) — back to normal.
                 self._wrapup_asked = False
                 self._goodbye_requested = False
+                self._goodbye_nudge_pending = False
+                self._session_end_kind = ""
                 continue
             if not self._wrapup_asked and idle >= IDLE_WRAPUP_SECONDS:
                 self._wrapup_asked = True
@@ -1028,6 +1721,7 @@ class RealtimeBridge:
                 await self._send_system_item(
                     _GOODBYE_INSTRUCTION.format(patient_name=self._patient_name())
                 )
+                self._goodbye_nudge_pending = True
                 await self._request_nudge()
             elif (
                 self._goodbye_requested
@@ -1046,11 +1740,22 @@ class RealtimeBridge:
 
     async def _pump_browser(self) -> None:
         while True:
-            message = await self._browser_receive()
+            if self._early_frames:
+                message = self._early_frames.pop(0)  # read during the hello wait
+            elif self._early_receive is not None:
+                receiving, self._early_receive = self._early_receive, None
+                message = await receiving  # the hello wait's still-pending read
+            else:
+                message = await self._browser_receive()
+            if self._closed:
+                return  # off: nothing from the page goes anywhere
             if not isinstance(message, dict):
                 continue  # a junk frame must not kill the call
             kind = message.get("type")
-            if kind == "audio":
+            if kind == "tail":
+                # The lane's final same-breath words (once; a repeat is ignored).
+                await self._deliver_tail(str(message.get("text", "")))
+            elif kind == "audio":
                 encoded = str(message.get("data", ""))
                 try:
                     base64.b64decode(encoded.encode("ascii"), validate=True)
@@ -1060,8 +1765,11 @@ class RealtimeBridge:
                     json.dumps({"type": "input_audio_buffer.append", "audio": encoded})
                 )
             elif kind == "stop":
+                self._response_stopped = True
                 await self._upstream.send(json.dumps({"type": "response.cancel"}))
                 await self._browser_send({"type": "clear"})
+            elif kind == "expression":
+                await self._journal_expression(message)
             elif kind == "end":
                 return
 
@@ -1084,11 +1792,14 @@ class RealtimeBridge:
                 logger.warning("realtime event handling failed", exc_info=True)
 
     async def _handle_upstream_event(self, event: dict[str, Any]) -> None:
+        if self._closed:
+            return  # off: a late upstream event is never forwarded or acted on
         etype = str(event.get("type", ""))
 
         if etype.endswith("output_audio.delta") or etype == "response.audio.delta":
             self._last_activity = time.monotonic()
             if not self._guard_tripped:
+                self._audio_sent = True
                 await self._browser_send({"type": "audio", "data": event.get("delta", "")})
         elif etype.endswith("output_audio_transcript.delta") or etype == "response.audio_transcript.delta":
             delta = str(event.get("delta", ""))
@@ -1116,6 +1827,8 @@ class RealtimeBridge:
             self._last_activity = self._last_user_activity = time.monotonic()
             if transcript:
                 await self._browser_send({"type": "user_transcript", "text": transcript})
+                await self._maybe_resolve_confirmation(transcript)
+                await self._maybe_end_session(transcript)
         elif etype == "input_audio_buffer.speech_started":
             # Barge-in: he started talking — whatever is queued goes silent.
             self._user_speaking = True
@@ -1124,13 +1837,26 @@ class RealtimeBridge:
                 # His voice stands the wrap-up/goodbye down HERE, not on the
                 # next watchdog tick — the goodbye's response.done otherwise
                 # wins the race and hangs up on him mid-word (verifier find).
+                # A spoken end he interrupts is cancelled the same way.
                 self._wrapup_asked = False
                 self._goodbye_requested = False
+                self._goodbye_nudge_pending = False
+                self._session_end_kind = ""
             await self._browser_send({"type": "clear"})
         elif etype == "input_audio_buffer.speech_stopped":
             self._user_speaking = False
             self._last_activity = time.monotonic()
         elif etype == "response.created":
+            if not self._response_active:
+                # Server-initiated (the VAD answering his speech): it was
+                # created after everything injected so far — the tail user
+                # item, a lookup note, even a goodbye — so it IS the response
+                # those nudges asked for. A second one would make him hear
+                # two replies for one wake (fresh review, 2026-09-02). Items
+                # injected from here on count again and nudge at its done.
+                self._pending_nudge_count = 0
+                self._goodbye_nudge_pending = False
+                self._begin_result_response()
             self._response_active = True
         elif etype == "response.done":
             await self._on_response_done(event)
@@ -1144,6 +1870,16 @@ class RealtimeBridge:
                 if response_active:
                     self._response_active = True
                     self._pending_nudge_count = max(self._pending_nudge_count, 1)
+                    # Our optimistic response.create lost a race to an older
+                    # server response, so its result obligations are still
+                    # pending; that older response must not clear them.
+                    self._pending_result_keys.update(self._active_result_keys)
+                    self._active_result_keys.clear()
+                    if self._goodbye_requested and not self._closing_sent:
+                        # Our goodbye nudge collided with a server response
+                        # that was already running (created before the
+                        # goodbye went in): the goodbye is still owed.
+                        self._goodbye_nudge_pending = True
                 return
             detail = error.get("message", "") if isinstance(error, dict) else str(error)
             logger.warning("realtime upstream error: %s", detail)
@@ -1156,18 +1892,47 @@ class RealtimeBridge:
         if not isinstance(response, dict):
             response = {}
         self._response_active = False
+        active_results = set(self._active_result_keys)
+        self._active_result_keys.clear()
         self._last_activity = time.monotonic()
+        had_audio = self._audio_sent
         speech = (
             self._assistant_transcript
             if not self._guard_tripped
             else MEDICAL_BOUNDARY_REDIRECT
         )
+        response_status = str(response.get("status") or "completed").lower()
+        result_spoken = self._guard_tripped or (
+            response_status == "completed" and (had_audio or bool(speech.strip()))
+        )
+        if active_results:
+            if result_spoken:
+                # Only a completed response with observable speech retires
+                # the lookup. A guard redirect is also a spoken safe outcome.
+                self._inflight_lookups.difference_update(active_results)
+            else:
+                # Cancellation, failure, interruption, or a silent completion
+                # cannot make gratitude close the line. The next response
+                # owns these results; retry now unless the person pressed Stop.
+                self._pending_result_keys.update(active_results)
+                if not self._response_stopped:
+                    self._pending_nudge_count = max(self._pending_nudge_count, 1)
+        self._response_stopped = False
+        if had_audio:
+            # The authoritative end of an audio-bearing response, in-order
+            # after its last audio frame: the page may claim "listening"
+            # only after this AND its scheduled playback truly drained —
+            # an inter-chunk network gap alone proves nothing.
+            self._audio_sent = False
+            await self._browser_send({"type": "response_state", "status": "done"})
         # Consume the turn synchronously BEFORE any await: cancellation can
         # land on any await below, and a turn that is mid-recording must not
         # still look unanswered to shutdown's dangling-turn capture (S09) —
         # that double-counts the exchange.
         heard_now = self._user_transcript
         guard_tripped = self._guard_tripped
+        if speech:
+            self._last_assistant_speech = speech
         self._assistant_transcript = ""
         self._guard_tripped = False
         self._user_transcript = ""
@@ -1204,8 +1969,17 @@ class RealtimeBridge:
                 await self._handle_propose_action(item, arguments)
             elif name == LOOK_THAT_UP_TOOL["name"]:
                 await self._handle_look_that_up(item, arguments)
+            elif name == realtime_workers.MY_DAY_TOOL["name"]:
+                await self._handle_my_day(item, arguments)
 
         if self._goodbye_requested and not self._closing_sent:
+            if self._goodbye_nudge_pending:
+                # The response that just ended was the server's own reply
+                # to his closer (the VAD had it running before the goodbye
+                # went in); the goodbye is still to be spoken — nudge it now
+                # and hang up on ITS done, never on this one.
+                await self._try_nudge()
+                return
             # The goodbye just finished streaming; hand the browser the
             # hang-up so the audio tail plays out before the line drops.
             self._closing_sent = True
@@ -1235,15 +2009,41 @@ class RealtimeBridge:
                     "item": {
                         "type": "function_call_output",
                         "call_id": item.get("call_id", ""),
-                        "output": json.dumps(outcome),
+                        # The model gets status + instructions only — never
+                        # ids or contract internals it could parrot aloud.
+                        "output": json.dumps(
+                            {
+                                "status": outcome.get("status", ""),
+                                "detail": outcome.get("detail", ""),
+                            }
+                        ),
                     },
                 }
             )
         )
         await self._request_nudge()
         if outcome.get("status") == "staged":
+            label = str(arguments.get("label", ""))[:80] or str(outcome.get("readback", ""))
+            if self._pending_confirm is not None:
+                # A newer offer replaces the old one — "yes" must never be
+                # ambiguous about which action it executes.
+                await self._journal(
+                    "action_result",
+                    detail={"label": self._pending_confirm["label"], "status": "replaced"},
+                )
+            self._pending_confirm = {
+                "action_id": outcome["action_id"],
+                "contract": outcome["contract"],
+                "label": label,
+                "readback": str(outcome.get("readback", "")),
+                "offered_at": time.monotonic(),
+            }
             await self._browser_send(
-                {"type": "proposal_staged", "label": str(arguments.get("label", ""))[:80]}
+                {
+                    "type": "proposal_staged",
+                    "label": label,
+                    "readback": str(outcome.get("readback", ""))[:200],
+                }
             )
         await self._journal(
             "proposal",
@@ -1255,6 +2055,196 @@ class RealtimeBridge:
             },
         )
 
+    async def _maybe_end_session(self, transcript: str) -> None:
+        """His words end the session — deterministically for a hard ender,
+        and for gratitude only when the conversation has nothing open:
+        a substantive answer just landed (not a question), no offer is
+        waiting for his yes/no, no lookup is in flight, no wind-down is
+        already underway. Otherwise "thanks" is just conversation."""
+
+        if self._closing_sent or self._session_end_kind:
+            return
+        kind = spoken_session_end(transcript)
+        if kind is None:
+            return
+        if kind == "gratitude":
+            last = self._last_assistant_speech.strip()
+            substantive = len(last.split()) >= 6 and not last.endswith("?")
+            if (
+                not substantive
+                or self._pending_confirm is not None
+                or self._inflight_lookups
+                or self._wrapup_asked
+                or self._goodbye_requested
+            ):
+                return
+            kind = "soft"
+        pending_offer = self._pending_confirm is not None
+        if pending_offer:
+            # Nothing runs after he says he is done: the offer lapses (it
+            # stays staged on the family review surface) before the goodbye.
+            await self._expire_confirmation("he ended the session")
+        self._session_end_kind = kind
+        now = time.monotonic()
+        self._wrapup_asked = True
+        self._goodbye_requested = True
+        self._goodbye_at = now
+        self._escalation_at = now
+        instruction = _SESSION_END_INSTRUCTION if kind == "hard" else _SOFT_CLOSE_INSTRUCTION
+        await self._send_system_item(instruction.format(patient_name=self._patient_name()))
+        # Under the real VAD order the server's auto-reply to his closer is
+        # already running: the nudge defers, and `closing` must wait for
+        # the goodbye's own done (see _on_response_done).
+        self._goodbye_nudge_pending = True
+        await self._request_nudge()
+        await self._journal(
+            "session_end",
+            heard=transcript,
+            detail={
+                "kind": kind,
+                "pending_offer_expired": pending_offer,
+                "lookups_in_flight": len(self._inflight_lookups),
+            },
+        )
+
+    async def _expire_confirmation(self, reason: str) -> None:
+        expired = self._pending_confirm
+        self._pending_confirm = None
+        if expired is None:
+            return
+        await self._browser_send(
+            {"type": "action_result", "status": "expired", "label": expired["label"]}
+        )
+        await self._journal(
+            "action_result",
+            detail={"label": expired["label"], "status": "expired", "reason": reason},
+        )
+
+    async def _maybe_resolve_confirmation(self, transcript: str) -> None:
+        """His spoken answer to a staged offer — the same deterministic
+        yes/no grammar the turns lane executes on (companion take 2,
+        2026-09-01: no taps; voice is the whole interface).
+
+        Anything that is not a clear yes/no DEFERS: the offer stays open
+        for its window and the conversation continues — never cancel,
+        never execute on ambiguity. The model is instructed to ask
+        nothing else while the offer is open, and the short window bounds
+        the stray-"yes" risk.
+        """
+
+        pending = self._pending_confirm
+        if pending is None:
+            return
+        if time.monotonic() - pending["offered_at"] > CONFIRM_WINDOW_SECONDS:
+            await self._expire_confirmation("answer arrived after the window")
+            return
+        import re as _re
+
+        from app.conversation.textloop import _confirmation_reply_kind
+
+        normalized = _re.sub(r"[,.!?]+", " ", transcript).strip().lower()
+        normalized = _re.sub(r"\s+", " ", normalized)
+        reply = _confirmation_reply_kind(normalized)
+        if reply is None:
+            return
+        self._pending_confirm = None
+        label = pending["label"]
+        asked = time.monotonic()
+        if reply == "no":
+            try:
+                await _tracked_thread(lambda: _cancel_staged_sync(pending["action_id"]))
+            except Exception:  # noqa: BLE001 — the cancel row is best-effort
+                logger.warning("realtime spoken-no cancel failed", exc_info=True)
+            await self._browser_send(
+                {"type": "action_result", "status": "cancelled", "label": label}
+            )
+            await self._send_system_item(
+                "He said no — the action is cancelled and nothing will run. "
+                "Acknowledge in one short sentence."
+            )
+            await self._request_nudge()
+            await self._journal(
+                "action_result", heard=transcript, detail={"label": label, "status": "cancelled"}
+            )
+            return
+        try:
+            outcome = await _tracked_thread(
+                lambda: _confirm_execute_sync(pending["action_id"], pending["contract"])
+            )
+        except Exception:  # noqa: BLE001 — an execution crash must be reported, not hidden
+            logger.warning("realtime spoken-yes execution crashed", exc_info=True)
+            outcome = {"status": "failed", "detail": "it hit a problem partway"}
+        status = "executed" if outcome.get("status") == "executed" else "failed"
+        await self._browser_send(
+            {"type": "action_result", "status": status, "label": label}
+        )
+        if status == "executed":
+            await self._send_system_item(
+                "The action executed exactly as read back. Tell him it's done, "
+                "in one short sentence — no extra promises."
+            )
+        else:
+            await self._send_system_item(
+                "The action did NOT run — "
+                + str(outcome.get("detail", ""))[:160]
+                + ". Tell him plainly it didn't go through and that it's on the "
+                "family review page; never claim it worked."
+            )
+        await self._request_nudge()
+        await self._journal(
+            "action_result",
+            heard=transcript,
+            detail={
+                "label": label,
+                "status": status,
+                "note": str(outcome.get("detail", ""))[:200],
+                "decide_ms": int((time.monotonic() - asked) * 1000),
+            },
+        )
+
+    async def _handle_my_day(self, item: dict[str, Any], arguments: dict[str, Any]) -> None:
+        """His day from Parker's own records — local, always available."""
+
+        asked = time.monotonic()
+        about = str(arguments.get("about", "")).strip()[:80]
+        if _MY_DAY_RESULT_KEY in self._inflight_lookups:
+            ack = {"status": "already_working", "detail": "Still gathering that — keep chatting."}
+        else:
+            self._inflight_lookups.add(_MY_DAY_RESULT_KEY)
+            await self._browser_send({"type": "working", "kind": "my_day", "status": "started"})
+            self._spawn_worker(
+                "my_day",
+                lambda: realtime_workers.run_my_day_worker(_make_db),
+                inflight_key=_MY_DAY_RESULT_KEY,
+                question=about,
+            )
+            ack = {
+                "status": "working",
+                "detail": (
+                    "Started — his day arrives shortly as a background note from "
+                    "Parker's own records. Tell him you're checking his notes, in "
+                    "your own words, and keep talking."
+                ),
+            }
+        await self._upstream.send(
+            json.dumps(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": item.get("call_id", ""),
+                        "output": json.dumps(ack),
+                    },
+                }
+            )
+        )
+        await self._request_nudge()
+        await self._journal(
+            "lookup_ack",
+            detail={"question": about, "worker": "my_day", "status": ack["status"],
+                    "ack_ms": int((time.monotonic() - asked) * 1000)},
+        )
+
     async def _handle_look_that_up(
         self, item: dict[str, Any], arguments: dict[str, Any]
     ) -> None:
@@ -1262,7 +2252,7 @@ class RealtimeBridge:
         question = str(arguments.get("question", "")).strip()[
             : realtime_workers.MAX_QUESTION_LENGTH
         ]
-        key = " ".join(question.lower().split())
+        key = _search_result_key(question)
         if not question:
             ack = {"status": "rejected", "detail": "The lookup needs one clear question."}
         elif key in self._inflight_lookups:
@@ -1282,6 +2272,14 @@ class RealtimeBridge:
         else:
             self._inflight_lookups.add(key)
             self._lookup_asked[key] = asked
+            # The smallest truthful presence event: real work was just
+            # dispatched. Committed to the browser BEFORE the worker can
+            # possibly finish — spawning first let an instant result's
+            # `done` frame overtake `started` and leave the scene claiming
+            # work after it ended (independent review, 2026-09-01).
+            await self._browser_send(
+                {"type": "working", "kind": "search", "status": "started"}
+            )
             self._spawn_search_worker(question, key)
             ack = {
                 "status": "working",

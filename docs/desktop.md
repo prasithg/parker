@@ -48,7 +48,9 @@ browser). The wizard walks the family administrator through:
 - the one-time speech-model download (~150 MB to Parker's own folder;
   a machine that already has the model in a Hugging Face cache skips
   the download);
-- done → one keyboard-operable **Start first session** action. Parker.app
+- done → one keyboard-operable **Start first session** action. This is the
+  legacy Dad Screen + TALK loop (the companion below is the person-facing
+  window on every later launch). Parker.app
   starts the existing TALK sidecar and opens the existing Dad Screen as one
   shell-owned operation. Setup says Parker is listening only after the model
   and microphone preflight passes, TALK remains alive in an active loop state,
@@ -65,9 +67,18 @@ is switched on once automatically (toggle it any time in the tray menu).
 
 ## Daily use
 
+Once onboarding is done, Parker.app opens the **companion** on launch: the
+full-screen virtual Reachy at `/parker/converse` with one power switch and
+one captions toggle. It is the person-facing window. The companion holds
+the microphone inside its own webview (local wake word, realtime line), so
+opening it pauses the legacy talk loop; while it is open, Start Listening
+and the setup wizard's first session refuse rather than contend for the mic.
+
 The tray menu is the whole interface for the family:
 
-- **Start/Pause Listening** — runs Parker's ears (the talk loop). The
+- **Open Parker** — (re)opens the companion.
+- **Start/Pause Listening** — the legacy/lab talk loop (a separate TALK
+  sidecar with the Dad Screen as its display). The
   tray icon mirrors the loop: outline = idle, filled = listening,
   filled + waves = speaking.
 - **Voice Practice** — opens the patient-paced practice app: manual
@@ -78,9 +89,9 @@ The tray menu is the whole interface for the family:
   First-session startup also refuses while the Practice window exists. Closing
   Practice does not invent background auto-resume; **Try again** / **Start
   Listening** is the explicit one-click handoff.
-- **Open Dad Screen** — the big-type live window for the TV/monitor by
-  the chair: what Parker heard, what it said, numbered choices. Voice
-  stays the only input.
+- **Open Dad Screen (legacy)** — the big-type live window for the talk
+  loop: what Parker heard, what it said, numbered choices. Voice
+  stays the only input. Kept as a lab surface; the companion replaces it.
 - **Family Review** — everything waiting on a human decision.
 - **Daily Digest** — what happened, what needs a look, all local.
 - **Settings / Setup…** — re-opens the wizard page.
@@ -133,17 +144,29 @@ planned path once builds are signed.
 ## Developer corner
 
 ```bash
-make sidecar                      # PyInstaller onedir → backend/dist/parker/
+make sidecar                      # PyInstaller onedir → backend/dist/parker/ (stamps app/_build_info.py: git sha)
 scripts/sidecar_smoke.sh          # clean-shell gate: selftest+natives, /health, doctor
-cd desktop/src-tauri && cargo tauri build   # → Parker.app + .dmg
+cd desktop/src-tauri && cargo tauri build   # → Parker.app + .dmg (build.rs stamps the shell's git sha)
+cd ../.. && scripts/packaged_companion_probe.sh --expect-sha "$(git rev-parse HEAD)"
+    # headless, AFTER the build: the .app's engine (`parker version --json`) and shell
+    # (`parker-desktop <ver> git=…` on stdout) must both be that revision; then the
+    # companion opens in WKWebView, renders the scene (webgl_ready receipt), the engine
+    # sees no power claim / wake socket, and the sidecar exits with the shell.
+    # Mic/TCC state is not observed; the power/wake click stays the human gate.
 ```
+
+Build order matters: the probe binds the .app to a commit, so run it on
+the bundle you just built, at a clean tree (a `-dirty` expectation fails
+unless `--allow-dirty`). Provenance is visible on any engine as
+`parker version --json` → `{version, git_sha, frozen}` and on `/health`.
 
 Rust via rustup (this repo built with rustc 1.96.1, tauri-cli 2.11.4,
 Tauri 2.x). The shell finds the engine via bundle resources; `cargo
 tauri dev` falls back to `backend/dist/parker/parker`, and
-`PARKER_ENGINE_BIN` overrides both. Dev flows (`make run`,
-`make talk-loop`, tests) are unaffected by the app: in a repo checkout
-`PARKER_HOME` defaults to `backend/`, so nothing moves.
+`PARKER_ENGINE_BIN` overrides both (the probe unsets it for its own
+run). Dev flows (`make run`, `make talk-loop`, tests) are unaffected by
+the app: in a repo checkout `PARKER_HOME` defaults to `backend/`, so
+nothing moves.
 
 Known quirks, honestly held:
 
