@@ -180,6 +180,18 @@ function eventCard(sid, ev) {
     if (d.sources) chips.appendChild(el(`<span class="chip">${d.sources} source(s)</span>`));
     if (d.error) chips.appendChild(text(el('<span class="chip"></span>'), 'error: ' + d.error));
     body.appendChild(chips);
+  } else if (ev.kind === 'expression') {
+    body.appendChild(el('<div class="who">Reachy showed</div>'));
+    const row = el('<div><span class="chip from"></span><span class="chip to"></span><span class="chip why"></span></div>');
+    text(row.querySelector('.from'), (d.from || '?') + ' →');
+    text(row.querySelector('.to'), d.to || '?');
+    text(row.querySelector('.why'), d.reason ? 'on ' + d.reason : '');
+    body.appendChild(row);
+    const overlays = ['work', 'action', 'guard', 'attention']
+      .filter((k) => d[k] && d[k] !== 'none')
+      .map((k) => k + ': ' + d[k]).join(' · ');
+    if (overlays) body.appendChild(text(el('<div class="meta"></div>'), overlays));
+    if (d.truncated) body.appendChild(el('<div class="meta">later expression transitions were dropped (cap reached)</div>'));
   } else if (ev.kind === 'proposal') {
     body.appendChild(el('<div class="who">Parker proposed</div>'));
     body.appendChild(text(el('<div class="speech"></div>'), (d.label || d.action_type || '')));

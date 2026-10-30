@@ -864,6 +864,68 @@ def test_streamed_speech_is_always_a_prefix_of_the_final_speech(db):
     assert len(streamed) <= 360  # the trim cap holds on the streamed path too
 
 
+def test_converse_page_mounts_the_reachy_presence_scene(db):
+    """The 3D Reachy Mini scene (2026-08-31 brief): mounted as enhancement,
+    orb + full text experience kept as the fallback."""
+
+    html = client.get("/parker/converse").text
+    assert 'id="reachy-mount"' in html
+    assert "/parker/converse/static/converse/expression.js" in html
+    assert "createReachyScene" in html
+    assert "scene-active" in html
+    assert 'aria-live="polite"' in html
+    # The renderer boots as an independent module — the microphone never
+    # waits for it — and the orb stays in the markup as the fallback.
+    assert 'type="module"' in html
+    assert 'id="orb"' in html
+
+
+def test_converse_page_forwards_real_signals_to_the_expression_state(db):
+    """Motion tells the truth: every presence input is a real signal."""
+
+    html = client.get("/parker/converse").text
+    assert "ParkerExpression.createController" in html
+    assert "presence('connect', {mode: 'live'})" in html
+    assert "'work_start'" in html and "'work_failed'" in html
+    assert "assistant_audio_drained" in html
+    assert "micEnergy(" in html  # hearing derives from actual mic level
+    # `clear` yields the scene only on a real flush or a cancelled think.
+    assert "flushLivePlayback();" in html
+    assert "if (flushed || thinkingCancelled) presence('interrupted')" in html
+    # The PAGE owns truth housekeeping: overlay TTLs and the interrupt
+    # dwell keep expiring with no WebGL renderer at all (review find).
+    assert "expr.tick()" in html
+    # Waiting posture rides the real awaiting state of a finished turn:
+    # choices are the asking/repair posture, yes_no is an authoritative
+    # confirmation offer (staged state), neither means resolved.
+    assert "presence('choices_offered')" in html
+    assert "presence('yes_no_offered')" in html
+    assert "presence('attention_resolved')" in html
+
+
+def test_converse_page_separates_stop_from_failure_outcomes(db):
+    """'Stopped' is his; a dropped line is an error he can retry — the
+    page never presents a failure as something he did (review find)."""
+
+    html = client.get("/parker/converse").text
+    assert "endLive('The live line dropped.', 'error')" in html
+    assert "endLive('The live line closed.', 'error')" in html
+    assert "live.closingSeen" in html  # a post-goodbye close stays a normal end
+    assert "presence('offline')" in html  # unavailable is neither stop nor error
+    # a stale goodbye-drain timer can never end a NEW session
+    assert "live.ws === wsAtClosing" in html
+
+
+def test_converse_page_makes_live_primary_when_available(db):
+    """The Live lane is the lane you meet (first tester finding): the page
+    carries the live-primary styling and the live control leads the row."""
+
+    html = client.get("/parker/converse").text
+    assert "live-primary" in html
+    assert html.index('id="btn-live"') < html.index('id="btn-start"')
+    assert "Start listening is the push-button way" in html
+
+
 def test_converse_page_speaks_the_final_remainder_and_live_redirect(db):
     html = client.get("/parker/converse").text
     # the confirmation question / 'Want more detail?' remainder is spoken

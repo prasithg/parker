@@ -112,6 +112,32 @@ def _response_creates(fake) -> int:
     return sum(1 for e in fake.sent if e["type"] == "response.create")
 
 
+def browser_frame(ws, expected_type: str, *, working=()) -> dict:
+    """Receive the next *expected_type* browser frame, consuming presence
+    frames along the way — deliberately.
+
+    The lookup dispatch/finish presence frames (``{"type": "working"}``,
+    2026-08-31 Reachy brief) interleave with the frames scenarios pin.
+    The deck stays the authority on browser traffic: every consumed
+    presence frame must be declared by the caller as a ``(kind, status)``
+    pair, so an unexpected frame — presence or otherwise — still fails
+    loudly instead of being skipped in a helper.
+    """
+
+    expected_working = list(working)
+    while True:
+        frame = ws.receive_json()
+        if frame.get("type") != "working":
+            assert frame.get("type") == expected_type, frame
+            assert not expected_working, (
+                f"expected working frames {expected_working} before {expected_type}"
+            )
+            return frame
+        assert expected_working, f"undeclared working frame: {frame}"
+        kind, status = expected_working.pop(0)
+        assert (frame.get("kind"), frame.get("status")) == (kind, status), frame
+
+
 @pytest.fixture
 def realtime_enabled(monkeypatch):
     from app.config import settings
@@ -471,6 +497,11 @@ def test_look_that_up_acks_instantly_and_injects_only_at_a_safe_point(
         ack = json.loads(_function_outputs(fake)[0]["item"]["output"])
         assert ack["status"] == "working"
         assert "keep the conversation going" in ack["detail"].lower()
+        # The page hears about the dispatch the moment it is real — the
+        # presence frame the Reachy scene animates "checking" from.
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
         creates_after_ack = _response_creates(fake)  # greeting + ack nudge
         assert creates_after_ack >= 2
 
@@ -487,7 +518,11 @@ def test_look_that_up_acks_instantly_and_injects_only_at_a_safe_point(
         assert "US Open schedule" not in item  # sources are browser-only
         assert _response_creates(fake) == creates_after_ack
 
-        # The browser gets the evidence chips.
+        # The finished lookup closes its presence pair, then the browser
+        # gets the evidence chips.
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "done"
+        }
         chips = ws.receive_json()
         assert chips["type"] == "sources"
         assert chips["items"][0]["label"] == "US Open schedule"
@@ -523,7 +558,16 @@ def test_duplicate_lookup_never_spawns_a_second_worker(
         # the single spawned worker may not have STARTED on its thread yet
         assert _wait_until(lambda: calls)
         assert calls == ["What's the weather?"]
+        # One worker, one presence pair: the duplicate ask must not have
+        # queued a second `started` claim — the frames arrive strictly as
+        # started (dispatch) then done (delivery), nothing between.
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
         release.set()
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "done"
+        }
         ws.send_json({"type": "end"})
 
 
@@ -543,7 +587,218 @@ def test_failed_lookup_injects_an_honest_note(
         note = next(text for text in _system_items(fake) if "could not finish" in text)
         assert "what's on at the cinema?" in note
         assert "offer to try again" in note
+        # The presence pair is honest too: started, then FAILED — the scene
+        # must never keep claiming work, and must never claim it succeeded.
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "failed"
+        }
         ws.send_json({"type": "end"})
+
+
+def test_working_started_commits_before_an_instant_result(
+    db, realtime_enabled, brained, upstream, monkeypatch
+):
+    """The reviewer reproduced `done` overtaking `started` with a worker
+    that finishes instantly (independent review, 2026-09-01): dispatch must
+    COMMIT the started frame to the browser before the worker is spawned,
+    so start-before-terminal holds for instant success too."""
+
+    def instant_search(question):
+        return WorkerResult(kind="search", question=question, speech="knew it already")
+
+    monkeypatch.setattr(realtime_workers, "run_search_worker", instant_search)
+    upstream["script"]([])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        ws.send_json({"type": "audio", "data": "QUJD"})  # prove the line is up
+        fake = upstream["fake"]
+        fake.feed(_look_done_event("instant one?"))
+        first = ws.receive_json()
+        second = ws.receive_json()
+        assert (first["type"], first["status"]) == ("working", "started")
+        assert (second["type"], second["status"]) == ("working", "done")
+        ws.send_json({"type": "end"})
+
+
+def test_working_started_commits_before_an_instant_failure(
+    db, realtime_enabled, brained, upstream, monkeypatch
+):
+    def exploding_search(question):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(realtime_workers, "run_search_worker", exploding_search)
+    upstream["script"]([])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        upstream["fake"].feed(_look_done_event("doomed one?"))
+        first = ws.receive_json()
+        second = ws.receive_json()
+        assert (first["type"], first["status"]) == ("working", "started")
+        assert (second["type"], second["status"]) == ("working", "failed")
+        ws.send_json({"type": "end"})
+
+
+def test_lookup_cancelled_by_close_never_reports_a_late_result(
+    db, realtime_enabled, brained, upstream, monkeypatch
+):
+    """Close cancels in-flight workers: `started` was honestly sent, and
+    nothing may claim done/inject after the session is over (the page's
+    own work TTL clears the stale claim; late results drop by policy)."""
+
+    release = threading.Event()
+
+    def gated_search(question):
+        release.wait(timeout=3)
+        return WorkerResult(kind="search", question=question, speech="too late")
+
+    monkeypatch.setattr(realtime_workers, "run_search_worker", gated_search)
+    fake = upstream["script"]([])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        fake.feed(_look_done_event("slow one?"))
+        assert ws.receive_json() == {
+            "type": "working", "kind": "search", "status": "started"
+        }
+        ws.send_json({"type": "end"})
+    release.set()
+    assert _wait_until(lambda: realtime._active_bridges == 0)
+    assert not any("LOOKUP RESULT" in text for text in _system_items(fake))
+
+
+def test_audio_bearing_response_gets_an_authoritative_done_frame(
+    db, realtime_enabled, brainless, upstream
+):
+    """The page may claim listening only after the provider response is
+    done AND its scheduled playback drained — never from a gap in the
+    local chunk queue (independent review, 2026-09-01). The done frame
+    arrives in-order after the response's last forwarded audio chunk."""
+
+    upstream["script"](
+        [
+            {"type": "response.output_audio.delta", "delta": "UENN"},
+            {"type": "response.done", "response": {"output": []}},
+        ]
+    )
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        assert ws.receive_json() == {"type": "audio", "data": "UENN"}
+        assert ws.receive_json() == {"type": "response_state", "status": "done"}
+        ws.send_json({"type": "end"})
+
+
+def test_audioless_responses_send_no_response_state_frame(
+    db, realtime_enabled, brainless, upstream
+):
+    """Function-call/empty responses never opened an audio epoch page-side;
+    a done frame for them would be undeclared noise for the deck."""
+
+    upstream["script"](
+        [
+            {"type": "response.done", "response": {"output": []}},  # audioless
+            {"type": "response.output_audio.delta", "delta": "UENN"},
+            {"type": "response.done", "response": {"output": []}},
+        ]
+    )
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        # Nothing for the audioless done — the next frame is the audio.
+        assert ws.receive_json() == {"type": "audio", "data": "UENN"}
+        assert ws.receive_json() == {"type": "response_state", "status": "done"}
+        ws.send_json({"type": "end"})
+
+
+def test_guard_tripped_response_still_closes_its_audio_epoch(
+    db, realtime_enabled, brainless, upstream
+):
+    """Audio reached the browser before the guard tripped: the cancelled
+    response's done still closes the epoch, so guard TTS draining can
+    hand the scene back to listening truthfully."""
+
+    upstream["script"](
+        [
+            {"type": "response.output_audio.delta", "delta": "UENN"},
+            {"type": "response.output_audio_transcript.delta", "delta": "Maybe try "},
+            {
+                "type": "response.output_audio_transcript.delta",
+                "delta": "taking an extra 50 mg tonight.",
+            },
+            {"type": "response.done", "response": {"output": []}},
+        ]
+    )
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        assert ws.receive_json() == {"type": "audio", "data": "UENN"}
+        assert ws.receive_json()["type"] == "assistant_transcript_delta"
+        assert ws.receive_json() == {"type": "clear"}
+        assert ws.receive_json()["type"] == "guard_redirect"
+        assert ws.receive_json() == {"type": "response_state", "status": "done"}
+        ws.send_json({"type": "end"})
+
+
+def test_expression_transitions_journal_bounded_and_allowlisted(
+    db, realtime_enabled, brainless, upstream, monkeypatch
+):
+    """The page reports what Reachy showed; the bridge journals it for
+    session review — allowlisted fields only, typed, truncated, capped
+    (independent review, 2026-09-01)."""
+
+    from app.parker.session_review import RealtimeSessionEvent
+
+    monkeypatch.setattr(realtime, "MAX_EXPRESSION_RECEIPTS", 3)
+
+    def journaled() -> int:
+        # Polled from the test thread while bridge threads may hold the
+        # shared harness connection — a transient refusal reads as
+        # not-yet, never as a failure.
+        try:
+            db.expire_all()
+            return (
+                db.query(RealtimeSessionEvent)
+                .filter(RealtimeSessionEvent.kind == "expression")
+                .count()
+            )
+        except Exception:  # noqa: BLE001
+            return -1
+
+    upstream["script"]([])
+    with client.websocket_connect("/parker/converse/realtime") as ws:
+        for i in range(5):
+            ws.send_json(
+                {
+                    "type": "expression",
+                    "at_ms": 100.5 + i,
+                    "gen": 1,
+                    "from": "listening",
+                    "to": "talking",
+                    "reason": "assistant_audio",
+                    "work": "",
+                    "action": "none",
+                    "guard": "none",
+                    "attention": "x" * 100,  # truncated, never stored raw
+                    "junk": "y" * 500,  # never journaled
+                    "nested": {"a": 1},  # never journaled
+                }
+            )
+        # Receipts are best-effort by design: an abrupt hang-up may drop
+        # the in-flight tail (the page's beacon lane carries it instead).
+        # Wait for the cap to land BEFORE closing — the CI runner caught
+        # this test hanging up mid-write (2026-09-01).
+        assert _wait_until(lambda: journaled() >= 3)
+        ws.send_json({"type": "end"})
+    assert _wait_until(
+        lambda: realtime._active_bridges == 0 and realtime._inflight_db_threads == 0
+    )
+    db.expire_all()
+    rows = (
+        db.query(RealtimeSessionEvent)
+        .filter(RealtimeSessionEvent.kind == "expression")
+        .order_by(RealtimeSessionEvent.seq)
+        .all()
+    )
+    assert len(rows) == 3  # capped, later transitions dropped
+    details = [json.loads(row.detail) for row in rows]
+    assert details[0]["from"] == "listening" and details[0]["to"] == "talking"
+    assert details[0]["at_ms"] == 100 and details[0]["gen"] == 1
+    assert len(details[0]["attention"]) == 32
+    assert "junk" not in details[0] and "nested" not in details[0]
+    assert details[-1].get("truncated") is True  # the cap is visible to review
 
 
 def test_lookup_without_a_brain_is_honestly_unavailable(

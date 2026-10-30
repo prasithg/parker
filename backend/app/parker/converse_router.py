@@ -16,8 +16,10 @@ from typing import Any, Literal, Optional
 
 import logging
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.parker import realtime as realtime_lane
@@ -59,6 +61,27 @@ def converse_page() -> str:
     """The Patient Curiosity Loop page: Start, take your time, Done, Stop."""
 
     return CONVERSE_PAGE_HTML
+
+
+# Presence assets for the Converse page: the expression state module, the
+# Reachy renderer, and vendored Three.js. Same-origin only — the patient
+# surface never fetches runtime code from a CDN. Works identically from
+# the repo and the PyInstaller sidecar (the spec ships this directory as
+# package data next to the frozen module).
+_STATIC_ROOT = (Path(__file__).parent / "static").resolve()
+_STATIC_MEDIA_TYPES = {".js": "text/javascript", ".md": "text/markdown", "": "text/plain"}
+
+
+@router.get("/converse/static/{asset_path:path}", include_in_schema=False)
+def converse_static(asset_path: str) -> FileResponse:
+    candidate = (_STATIC_ROOT / asset_path).resolve()
+    if not candidate.is_relative_to(_STATIC_ROOT) or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="No such asset.")
+    return FileResponse(
+        candidate,
+        media_type=_STATIC_MEDIA_TYPES.get(candidate.suffix, "application/octet-stream"),
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.post("/converse/sessions")
