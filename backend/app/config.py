@@ -193,7 +193,9 @@ class Settings(BaseSettings):
     parker_openclaw_gateway_url: str = ""
     parker_openclaw_gateway_token: str = ""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # extra="ignore": a .env shared with other tools (e.g. EXA_API_KEY) must
+    # not crash import. Declared fields are still validated strictly.
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @classmethod
     def settings_customise_sources(
