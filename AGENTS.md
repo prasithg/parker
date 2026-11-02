@@ -91,3 +91,15 @@ Several agent sessions (Claude Code sessions plus a Hermes agent) may share this
 ## Reporting
 
 Lead final responses with a TLDR, then files changed, tests/evals run, and the next recommended implementation slice.
+
+## Agent skills
+
+Shared skills (Matt Pocock's "Skills For Real Engineers", installed at `~/.agents/skills`, same files for Hermes, Claude Code and Codex). Parker runs the full chain because stakes are high:
+
+- Vague idea or open design: `grill-with-docs` (writes/updates `GLOSSARY.md` and ADRs under `docs/adr/`).
+- Clear idea, about to build: `to-spec`, then `to-tickets`.
+- Starting a ticket: `tdd` when behaviour is testable, otherwise `implement`.
+- Cause unclear: `diagnosing-bugs`.
+- Before a PR: `code-review` (Standards + Spec axes), then `pr`.
+
+Issue tracker: local Markdown under `docs/agents/tickets/` (never GitHub issues; family details stay out of public trackers). Builders must drive the real path (`make test`, `make repl`/`make demo`, or the UI) and return inspectable evidence; a passing unit test alone is not done. Hermes owns planning, independent review and release gates; these skills do not authorize pushes to `main`, merges or releases.
