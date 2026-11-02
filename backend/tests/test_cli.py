@@ -217,3 +217,98 @@ def test_terminal_onboarding_defaults_keep_consent_off(home, restore_settings):
     assert config["parker_address_mode"] == "wake"
     assert config["parker_wake_name"] == "parker"
     assert config["repair_event_capture_consented"] is False  # opt-IN stays off
+
+
+# --- build identity (F8: a packaged binary must say which source built it) ---
+
+
+def test_version_plain_output_keeps_the_sidecar_smoke_contract(capsys):
+    assert cli.main(["version"]) == 0
+    first_line = capsys.readouterr().out.splitlines()[0]
+    assert first_line.startswith(f"parker {__version__}")
+
+
+def _is_sha(value: str) -> bool:
+    bare = value[: -len("-dirty")] if value.endswith("-dirty") else value
+    return bare == "unknown" or (len(bare) == 40 and all(c in "0123456789abcdef" for c in bare))
+
+
+def test_version_json_carries_git_sha(capsys):
+    assert cli.main(["version", "--json"]) == 0
+    identity = json.loads(capsys.readouterr().out)
+    assert identity["version"] == __version__
+    assert _is_sha(identity["git_sha"]), identity
+    assert identity["frozen"] is False
+
+
+def test_health_reports_version_and_git_sha():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    body = TestClient(app).get("/health").json()
+    assert body["status"] == "ok"
+    assert body["version"] == __version__
+    assert _is_sha(body["git_sha"]), body
+
+
+def test_git_sha_prefers_build_info_when_frozen(monkeypatch):
+    import subprocess
+    import sys
+    import types
+
+    from app import version
+
+    def never(*args, **kwargs):
+        raise AssertionError("a frozen binary must not shell out to git")
+
+    monkeypatch.setattr(subprocess, "run", never)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    stamped = types.ModuleType("app._build_info")
+    stamped.GIT_SHA = "abcdef0123456789abcdef0123456789abcdef01-dirty"
+    stamped.BUILT_AT = "2026-09-02T00:00:00Z"
+    monkeypatch.setitem(sys.modules, "app._build_info", stamped)
+    assert version.git_sha() == stamped.GIT_SHA
+
+    monkeypatch.setitem(sys.modules, "app._build_info", None)  # import fails → no build info
+    assert version.git_sha() == "unknown"
+
+
+def test_git_sha_in_a_checkout_comes_from_git_and_marks_dirty_trees(monkeypatch):
+    import subprocess
+    import sys
+
+    from app import version
+
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.setitem(sys.modules, "app._build_info", None)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0123456789abcdef0123456789abcdef01234567\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=" M backend/app/cli.py\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert version.git_sha() == "0123456789abcdef0123456789abcdef01234567-dirty"
+    assert all(kwargs_free[0] == "git" for kwargs_free in calls)
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("git")))
+    assert version.git_sha() == "unknown"
+
+
+def test_write_build_info_generates_the_module_make_sidecar_bundles(tmp_path, monkeypatch):
+    import importlib.util
+
+    from app import version
+
+    monkeypatch.setattr(version, "git_sha", lambda: "0123456789abcdef0123456789abcdef01234567")
+    target = tmp_path / "_build_info.py"
+    assert version.write_build_info(target) == target
+    spec = importlib.util.spec_from_file_location("stamped", target)
+    stamped = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stamped)
+    assert stamped.GIT_SHA == "0123456789abcdef0123456789abcdef01234567"
+    assert stamped.BUILT_AT.endswith("Z") and "T" in stamped.BUILT_AT

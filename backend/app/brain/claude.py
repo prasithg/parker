@@ -14,6 +14,7 @@ on the network in the suite.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Optional
 
@@ -25,6 +26,8 @@ from app.brain.adapter import (
     ProposedAction,
     Source,
 )
+
+logger = logging.getLogger("parker.brain.claude")
 
 PROPOSE_ACTION_TOOL: dict[str, Any] = {
     "name": "propose_action",
@@ -320,8 +323,12 @@ class ClaudeBrainAdapter:
         return self._merge_messages(responses)
 
 
-def build_brain_adapter() -> Optional[ClaudeBrainAdapter]:
-    """A configured brain, or None so callers keep the deterministic stub."""
+def build_brain_adapter(http_client: Any = None) -> Optional[ClaudeBrainAdapter]:
+    """A configured brain, or None so callers keep the deterministic stub.
+
+    ``http_client`` (an ``httpx.Client``) is a worker's cancellable client;
+    the SDK adopts its timeout. None keeps the SDK's own client.
+    """
 
     from app.config import settings
 
@@ -330,8 +337,16 @@ def build_brain_adapter() -> Optional[ClaudeBrainAdapter]:
     try:
         import anthropic
 
-        return ClaudeBrainAdapter(anthropic.Anthropic(api_key=settings.anthropic_api_key))
-    except Exception:  # noqa: BLE001
+        return ClaudeBrainAdapter(
+            anthropic.Anthropic(api_key=settings.anthropic_api_key, http_client=http_client)
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Never a silent None: a key is set, so "no brain" here is a broken
+        # install (missing SDK, or an SDK that rejects the injected client —
+        # anthropic 1.x wants httpx2; see requirements.txt), and it must be
+        # visible in the engine log, not discovered as "no brain is
+        # configured" in the living room.
+        logger.warning("claude brain unavailable: %s: %s", type(exc).__name__, exc)
         return None
 
 

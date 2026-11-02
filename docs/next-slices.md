@@ -2,6 +2,45 @@
 
 Written 2026-06-09, after the architecture/eval reconciliation pass; status updated later the same day. Each slice is one focused session: small diff, tests included, no broad rewrite. Order matters — earlier slices de-risk later ones.
 
+## Current next sprint — companion stack + local Hermes (2026-09-02)
+
+The active execution plan is [2026-09-02-parker-hermes-current-information-sprint.md](plans/2026-09-02-parker-hermes-current-information-sprint.md). It first closes the exact-revision review blockers in PRs #40/#43/#45 and preserves #46's motion contribution, then reconciles the divergent stack from live `main`. Only after that gate passes does it add the isolated local-Hermes worker, run the Parallel/Exa/Tavily direct-search bake-off, integrate deterministic current-fact routing, and test one Curiosity Continuity vertical. The four independent review artifacts live in `docs/reviews/2026-09-02-pr{40,43,45,46}-independent-review.md`.
+
+### Selected source integration: cached model startup + CAD Reachy (2026-09-22)
+
+- Cached Whisper models now load without a model-hub metadata request: a
+  complete default-revision snapshot (weights, config, tokenizer, either
+  vocabulary format, all nonempty) is handed to faster-whisper as a directory with
+  `local_files_only`; partial or badly referenced caches keep the original
+  download path. Contract pinned by `test_paths.py` / `test_voice_transcribe.py`
+  (invalid refs, dangling revisions, partial-Parker-plus-complete-HF, priority).
+- Replaced the primitive Reachy body/head with six locally packaged official
+  Pollen Robotics CAD shells (`static/vendor/reachy-mini`, Apache 2.0,
+  upstream revision and per-STL hashes recorded; the packed binary was
+  regenerated from the pinned sources and matched byte-for-byte). Lenses,
+  antennae, and visual neck rods are Parker presentation code in
+  `reachy-model.js`; poses, cancellation, and reduced motion stay downstream
+  of the controller. Both pages guard the awaited module import so a late
+  load cannot recreate a scene after `pagehide`; executable page tests pin it.
+  The companion now negotiates local-wake readiness before inviting speech or
+  sending PCM, and distinguishes loading from a cloud connection in progress.
+  OFF remains available while connecting; cold-start disconnects unregister cleanly.
+  Still deferred from the same source commit: broader conversational prompt
+  rewrites and live-probe options. Native input/device checks remain separate gates.
+- Live lookup is advertised and accepted only with a configured research gateway
+  or a Claude key plus enabled web search. A stale lookup call under disabled
+  web search is refused without dispatching work; ordinary conversation remains.
+- The fresh [synthetic wake soak](../benchmark/reports/wake_soak_2026-09-23_night-20260923-base.md)
+  still **FAILS**: 48/48 normal greetings, 19/24 paused positives, one false wake
+  in four minutes of deliberately confusable TV-like speech. These are generated
+  macOS voices through the real local model, not patient or room evidence. All
+  original gates and failed rows remain; unit/CI success does not waive this result.
+- Realtime startup now owns its first browser receive before the hello wait,
+  preserves the normal timeout-to-pump handoff, and includes an unconsumed read
+  in terminal cancellation/draining. Completed disconnect exceptions are observed
+  rather than becoming unhandled-task warnings; cancellation is not mistaken for
+  an absent hello. These are bounded software lifecycle tests, not device proof.
+
 ## Slice 1: Route classifier seam + task-taxonomy evaluator — DONE (2026-06-09)
 
 Shipped: `benchmark/evaluate_tasks_v0.py` (CLI evaluator + deterministic rule-based baseline), `backend/tests/test_task_evaluator.py`, `make eval-tasks`, reports under `benchmark/reports/`. Metrics: route accuracy, action-type accuracy, escalation precision/recall, refusal recall, clarify recall, repair-choice coverage; safety-critical misses listed case-by-case. Original baseline: 80% route accuracy, 0 unsafe misses; superseded by the Night4 report-freshness cleanup below, which removed the known disfluent-but-specific false mismatches.
@@ -1478,3 +1517,55 @@ confirmation accessibility, lifecycle/performance verification, semantic
 state transitions in the session-review trail, and a branch/PR/Fable-review/
 CI flow. Physical Reachy control, cameras, and a general avatar system are
 explicitly outside this slice.
+
+### Status: BUILT overnight 2026-08-31→09-01 (PRs open, mic pass pending)
+
+Fable's overnight session shipped both fronts as separate PRs:
+"yes one" spoken selection (`fable/spoken-selection-yes-one`, CI green)
+and the 3D Reachy Mini presence (`fable/reachy-mini-converse-3d`):
+expression state machine (33 node tests under pytest), procedural
+Three.js Reachy (vendored 0.185.1, SHA-pinned, sidecar-packaged),
+Live-primary layout, truthful `working` presence frames from the bridge,
+reduced-motion/no-WebGL fallbacks. Full record, deliberate deviations,
+and the morning checklist:
+[2026-09-01-reachy-overnight-handoff.md](plans/2026-09-01-reachy-overnight-handoff.md).
+Remaining gates: Pras's real-microphone session, then the packaged
+Tauri/WKWebView capture (release gate). Named follow-ups: expression
+trail into session review; audio-deck spoken-selection variants;
+server-VAD-driven hearing.
+
+## 2026-09-01 — Independent review + always-available companion direction
+
+Hermes (GPT-5.6 SOL, acting AI CEO and Pras's planning/strategy/review
+extension) reviewed PR #37 at `9639fc8` and the merged PR #36 at
+`19d4f1c`. Verdict: **NEEDS_FIX**. The permanent review is
+[2026-09-01-pr37-independent-review.md](reviews/2026-09-01-pr37-independent-review.md).
+It records the guard-TTS/Stop bypass, missing response-active lifecycle,
+worker start/finish ordering race, stale event fences, fallback
+repair/confirmation state loss, page-hide resource retention, missing
+expression trail, open real-mic/Tauri gates, and the `thank you two` /
+repeated-ordinal spoken-selection false positives. PR #37 remains open.
+
+Pras also set the next product direction: Parker has two separate
+interfaces. The primary experience is an always-available virtual Reachy
+companion—Reachy plus one real power control, local "Hey Parker" wake while
+dormant, continuous full-duplex conversation while active, and return to
+dormancy after a conservative session end. Power off means no wake,
+listening, streaming, processing, or response. Visible transcript/type/
+numbered controls leave the primary scene; an optional CC/subtitles mode is
+a future setting. The separate session lab owns transcripts, played speech,
+actions, visual-state evidence, corrections, and local learning.
+
+The full product/architecture brief, including wake/session state, power
+semantics, correction provenance, future controlled expert review, and the
+critical gaps around endpointing, pending workers, consent, and physical
+Reachy parity, is
+[2026-09-01-always-available-reachy-companion.md](plans/2026-09-01-always-available-reachy-companion.md).
+It explicitly keeps the current Start/Done/type surface as a separate
+harness/fallback rather than the flagship.
+
+Implementation order: first close PR #36/#37 correctness and acceptance
+gates; then split the minimal companion from the session/developer surfaces;
+then build/evaluate local wake + dormant/active session ownership. Do not
+expand PR #37 into the entire wake-word/companion program before its current
+contract is fixed and independently re-reviewed.

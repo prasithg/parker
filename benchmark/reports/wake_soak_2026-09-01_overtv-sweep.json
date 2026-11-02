@@ -1,0 +1,217 @@
+{
+  "confusables": {
+    "extra_wakes": 0,
+    "policy": "reported, not gated \u2014 chairman decision 2026-09-01 (calibrate for Dad's recall)",
+    "rows": []
+  },
+  "date": "2026-09-01",
+  "eval": "wake_soak_v0",
+  "gate": {
+    "false_wakes": 0,
+    "misses": 0,
+    "passed": true
+  },
+  "over_tv": {
+    "rows": [
+      {
+        "heard": "",
+        "snr_db": 12.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down here-",
+          "the parking garage down here"
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "snr_db": 12.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down top.",
+          "the parking garage down there"
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "The parking garage down here. Hey, parko.",
+        "snr_db": 12.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down here.",
+          "The parking garage down here. Hey, parko.",
+          "You have someone.",
+          "You help me on day, and draw."
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker. Can you help me?",
+        "snr_db": 12.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down top.",
+          "The parking garage down down here goes for-",
+          "Hey, Parker. Can you help me?",
+          "and draw"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "snr_db": 6.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down here-",
+          "the parking garage down here"
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "snr_db": 6.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down top.",
+          "the parking garage down there"
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "The parking garage down here. Hey Parker.",
+        "snr_db": 6.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down here.",
+          "The parking garage down here. Hey Parker.",
+          "Thank you, Helsinki.",
+          "You held on me on day, and drunk."
+        ],
+        "voice": "Samantha",
+        "woke": true
+      },
+      {
+        "heard": "Hey, Parker. Can you help me?",
+        "snr_db": 6.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down top.",
+          "The parking garage down down here goes for-",
+          "Hey, Parker. Can you help me?",
+          "and draw"
+        ],
+        "voice": "Daniel",
+        "woke": true
+      },
+      {
+        "heard": "",
+        "snr_db": 0.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage downtown",
+          "The parking garage downtown parking closed for"
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "snr_db": 0.0,
+        "text": "hey parker",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down down.",
+          "The parking garage down down the close for-"
+        ],
+        "voice": "Daniel",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "snr_db": 0.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage downtown.",
+          "The parking garage down town will close for...",
+          "The rush down town will close for you as I'm on.",
+          "Marcos for repairs on Monday and dry."
+        ],
+        "voice": "Samantha",
+        "woke": false
+      },
+      {
+        "heard": "",
+        "snr_db": 0.0,
+        "text": "hey parker, can you help me",
+        "transcripts": [
+          "Good evening.",
+          "Good evening, the parking garage.",
+          "Good evening, the parking garage down top.",
+          "the parking garage down down the coast for",
+          "Can you help me?",
+          "Can you help me? And draw..."
+        ],
+        "voice": "Daniel",
+        "woke": false
+      }
+    ],
+    "total": 12,
+    "woke": 4
+  },
+  "provenance": {
+    "audio": "macOS say synthesized speech only; no private audio",
+    "model": "local faster-whisper"
+  },
+  "recall": {
+    "positives": 1,
+    "recall": 1.0,
+    "rows": [],
+    "woke": 1
+  },
+  "soak": {
+    "audio_minutes": 0.0,
+    "config": {
+      "hop": 0.7,
+      "model": "base",
+      "relative_gate": 0.0,
+      "threads": 2
+    },
+    "cpu_fraction_of_realtime": 0.1,
+    "cpu_seconds_per_audio_minute": 6.0,
+    "false_wakes": [],
+    "hops_gated_by_background": 0,
+    "infer_ms_max": 0.0,
+    "infer_ms_p50": 0.0,
+    "infer_ms_p95": 0.0,
+    "inferences": 0,
+    "inferences_per_audio_minute": 0.0,
+    "wall_seconds": 0.0
+  }
+}

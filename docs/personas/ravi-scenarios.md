@@ -192,3 +192,17 @@ fixed and pinned):
   injected" is the number that means something to a human.
 
 ## Rounds 5+ (appended by the gauntlet)
+
+### Contract change — one owner, one line (2026-09-01)
+
+Companion power is now server-authoritative and single-owner
+(`app/parker/companion_power.py`): a second screen's claim is refused
+409 `elsewhere` while the owner is listening; the same owner's reconnect
+supersedes its old line (`revoked`/`superseded`); power off from any
+screen revokes every line (`revoked`/`power_off`). `MAX_LIVE_BRIDGES = 2`
+exists only for the handover overlap. `test_scenarios_concurrency.py`
+was rewritten from "two simultaneous lines" to handover, refusal, and
+per-line isolation across sequential lines (8 scenarios, C01–C08).
+Round 2's screen-identity design question (Sarah's phone overwriting
+Ravi's tablet row) is closed by the contract — there is no second live
+line to overwrite it.

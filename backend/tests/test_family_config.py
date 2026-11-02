@@ -132,5 +132,55 @@ def test_malformed_config_file_never_crashes_settings(home):
     assert Settings(_env_file=None).patient_name == "Dad"
 
 
+def test_shared_dotenv_ignores_unrelated_keys_without_storing_them(home, monkeypatch):
+    monkeypatch.delenv("PATIENT_NAME", raising=False)
+    dotenv = home / "shared-settings.env"
+    dotenv.write_text("PATIENT_NAME=FromDotenv\nEXA_API_KEY=SYNTHETIC_UNUSED_SECRET\nUNRELATED_SERVICE_SETTING=42\n")
+    fresh = Settings(_env_file=dotenv)
+    assert fresh.patient_name == "FromDotenv"
+    keys = set(fresh.model_dump())
+    assert "exa_api_key" not in keys
+    assert "unrelated_service_setting" not in keys
+    assert not hasattr(fresh, "exa_api_key")
+    assert fresh.model_extra is None
+
+
+def test_settings_layering_survives_shared_dotenv(home, monkeypatch):
+    monkeypatch.delenv("PATIENT_NAME", raising=False)
+    (home / "config.json").write_text(json.dumps({"patient_name": "FromFamily"}))
+    assert Settings(_env_file=None).patient_name == "FromFamily"
+    dotenv = home / "shared-settings.env"
+    dotenv.write_text("PATIENT_NAME=FromDotenv\nUNRELATED_TOKEN=SYNTHETIC_UNUSED_SECRET\n")
+    assert Settings(_env_file=dotenv).patient_name == "FromDotenv"
+    monkeypatch.setenv("PATIENT_NAME", "FromEnvironment")
+    assert Settings(_env_file=dotenv).patient_name == "FromEnvironment"
+    assert Settings(_env_file=dotenv, patient_name="FromInit").patient_name == "FromInit"
+
+
+@pytest.mark.parametrize("field", ["PARKER_BRAIN_WEB_SEARCH", "PARKER_BRAIN_MAX_TOKENS"])
+def test_invalid_known_dotenv_setting_fails_without_echoing_input(home, monkeypatch, field):
+    from pydantic import ValidationError
+
+    monkeypatch.delenv(field, raising=False)
+    sentinel = "SYNTHETIC_PRIVATE_INPUT_MUST_NOT_APPEAR"
+    dotenv = home / "invalid-settings.env"
+    dotenv.write_text(f"{field}={sentinel}\n")
+    with pytest.raises(ValidationError) as caught:
+        Settings(_env_file=dotenv)
+    assert sentinel not in str(caught.value)
+    assert sentinel not in repr(caught.value)
+    assert field.lower() in str(caught.value)
+
+
+def test_unrelated_init_extras_are_ignored_but_family_writes_stay_strict(home):
+    fresh = Settings(_env_file=None, unrelated_service_key="SYNTHETIC_UNUSED_SECRET")
+    assert fresh.model_extra is None
+    assert not hasattr(fresh, "unrelated_service_key")
+    with pytest.raises(family_config.ConfigWriteError, match="unknown"):
+        family_config.validate_updates({"unrelated_service_key": "SYNTHETIC_UNUSED_SECRET"})
+    with pytest.raises(family_config.ConfigWriteError, match="secrets"):
+        family_config.validate_updates({"anthropic_api_key": "SYNTHETIC_UNUSED_SECRET"})
+
+
 def test_missing_config_file_is_fine(home):
     assert Settings(_env_file=None).patient_name == "Dad"

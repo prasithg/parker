@@ -102,11 +102,14 @@ def load_local_transcriber(
     model_size: str = DEFAULT_ASR_MODEL,
     language: str | None = "en",
     initial_prompt: str | None = None,
+    cpu_threads: int = 0,
 ) -> Transcriber:
     """Build a transcriber backed by a local faster-whisper model.
 
     ``initial_prompt`` defaults to the personal-lexicon bias prompt when the
-    family has configured one.
+    family has configured one. ``cpu_threads`` caps the inference threads
+    (0 = the library default, which takes every core — the dormant wake
+    lane measured ~2.6 cores continuously against TV speech, 2026-09-02).
     """
 
     try:
@@ -119,11 +122,16 @@ def load_local_transcriber(
     # PARKER_HOME/models when the app downloaded the weights; an existing
     # HF-cache copy keeps being used as-is (None = faster-whisper default).
     download_root = paths.whisper_download_root(model_size)
+    cached = paths.cached_whisper_snapshot(model_size)
     model = WhisperModel(
-        model_size,
+        str(cached) if cached is not None else model_size,
         device="cpu",
         compute_type="int8",
+        cpu_threads=max(0, int(cpu_threads)),
         download_root=str(download_root) if download_root is not None else None,
+        # Cached wake startup must not wait on model-hub metadata. Missing
+        # weights still follow the normal first-install download path.
+        local_files_only=cached is not None,
     )
     prompt = initial_prompt if initial_prompt is not None else lexicon_initial_prompt()
 

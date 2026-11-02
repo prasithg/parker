@@ -1,9 +1,13 @@
 """Tests for medication tracking logic."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+import pytest
 
 from app.db.models import CallLog, DoseLog, Medication
+from app.meds import tracker
 from app.meds.tracker import (
     get_adherence_calendar,
     get_adherence_rate,
@@ -58,6 +62,44 @@ class TestGetDueMedications:
         now = datetime(2026, 4, 25, 13, 45)  # 15 min before 14:00
         due = get_due_medications(db, now)
         assert len(due) == 1
+
+    @pytest.mark.parametrize(
+        "instant",
+        [
+            datetime(2026, 1, 15, 14, 0, tzinfo=timezone.utc),
+            datetime(2026, 7, 15, 13, 0, tzinfo=timezone.utc),
+        ],
+    )
+    def test_aware_now_is_compared_as_named_home_wall_time(self, db, monkeypatch, instant):
+        monkeypatch.setattr(
+            "app.parker.rollup.home_timezone", lambda: ZoneInfo("America/New_York")
+        )
+        _add_medication(db, times=["09:15"])
+
+        due = get_due_medications(db, instant)
+
+        assert [scheduled for _medication, scheduled in due] == ["09:15"]
+
+    def test_default_now_uses_named_home_wall_time(self, db, monkeypatch):
+        home = ZoneInfo("America/New_York")
+        instant = datetime(2026, 7, 15, 13, 0, tzinfo=timezone.utc)
+
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+            @classmethod
+            def utcnow(cls):
+                return instant.replace(tzinfo=None)
+
+        monkeypatch.setattr(tracker, "datetime", FrozenDateTime)
+        monkeypatch.setattr("app.parker.rollup.home_timezone", lambda: home)
+        _add_medication(db, times=["09:15"])
+
+        due = get_due_medications(db)
+
+        assert [scheduled for _medication, scheduled in due] == ["09:15"]
 
 
 class TestLogDose:

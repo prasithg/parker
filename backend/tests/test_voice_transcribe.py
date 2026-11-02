@@ -52,6 +52,119 @@ def test_transcribe_audio_without_dependency_explains_install(audio_file, monkey
         transcribe_audio(audio_file)
 
 
+# --- cached model startup ---------------------------------------------------
+# A complete cached snapshot loads from its directory with local_files_only,
+# so a fresh server process never waits on model-hub metadata. Anything less
+# keeps the exact pre-existing constructor call (bare size, download root,
+# hub allowed) so first installs and half downloads still repair themselves.
+# The fake WhisperModel is the only "model" here: no downloader, no network.
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    import socket
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("the test attempted a network connection")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+
+
+def _tree(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*")) if root.exists() else []
+
+
+def _install_fake_whisper(monkeypatch, observed):
+    from types import SimpleNamespace
+
+    def model(size_or_path, **kwargs):
+        observed.append((size_or_path, kwargs))
+        return SimpleNamespace(transcribe=lambda *args, **kw: ([], None))
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=model))
+
+
+def _complete_snapshot(root, size="base", revision="rev1", files=("model.bin", "config.json", "tokenizer.json", "vocabulary.txt")):
+    repo = root / f"models--Systran--faster-whisper-{size}"
+    snap = repo / "snapshots" / revision
+    snap.mkdir(parents=True)
+    for name in files:
+        (snap / name).write_bytes(b"synthetic")
+    (repo / "refs").mkdir()
+    (repo / "refs" / "main").write_text(revision)
+    return snap
+
+
+def test_complete_cached_snapshot_loads_offline_from_its_directory(monkeypatch, tmp_path, no_network):
+    from app import paths
+    from app.voice.transcribe import load_local_transcriber
+
+    parker_models, hf_cache = tmp_path / "parker-models", tmp_path / "hf-cache"
+    monkeypatch.setattr(paths, "models_dir", lambda: parker_models)
+    monkeypatch.setattr(paths, "hf_cache_dir", lambda: hf_cache)
+    snap = _complete_snapshot(parker_models)
+    before = _tree(tmp_path)
+    observed = []
+    _install_fake_whisper(monkeypatch, observed)
+
+    load_local_transcriber(model_size="base", initial_prompt="", cpu_threads=2)
+
+    (target, kwargs), = observed
+    assert target == str(snap)
+    assert kwargs["local_files_only"] is True
+    assert kwargs["download_root"] == str(parker_models)
+    assert (kwargs["device"], kwargs["compute_type"], kwargs["cpu_threads"]) == ("cpu", "int8", 2)
+    assert _tree(tmp_path) == before  # selection never touches the cache
+
+
+@pytest.mark.parametrize("state", ["missing", "partial", "bad-ref"])
+def test_incomplete_cache_keeps_the_original_download_path(monkeypatch, tmp_path, no_network, state):
+    from app import paths
+    from app.voice.transcribe import load_local_transcriber
+
+    parker_models, hf_cache = tmp_path / "parker-models", tmp_path / "hf-cache"
+    monkeypatch.setattr(paths, "models_dir", lambda: parker_models)
+    monkeypatch.setattr(paths, "hf_cache_dir", lambda: hf_cache)
+    if state == "partial":
+        _complete_snapshot(parker_models, files=("model.bin",))
+    elif state == "bad-ref":
+        snap = _complete_snapshot(parker_models)
+        (snap.parent.parent / "refs" / "main").write_text("../snapshots/rev1")
+    before = _tree(tmp_path)
+    observed = []
+    _install_fake_whisper(monkeypatch, observed)
+
+    load_local_transcriber(model_size="base", initial_prompt="")
+
+    (target, kwargs), = observed
+    assert target == "base"  # the bare size: faster-whisper resolves/repairs it
+    assert kwargs["local_files_only"] is False
+    assert kwargs["download_root"] == str(parker_models)  # unchanged pre-existing root
+    assert (kwargs["device"], kwargs["compute_type"], kwargs["cpu_threads"]) == ("cpu", "int8", 0)
+    assert _tree(tmp_path) == before  # no repair or download was attempted here
+
+
+def test_partial_parker_cache_falls_through_to_complete_hf_cache(monkeypatch, tmp_path, no_network):
+    from app import paths
+    from app.voice.transcribe import load_local_transcriber
+
+    parker_models, hf_cache = tmp_path / "parker-models", tmp_path / "hf-cache"
+    monkeypatch.setattr(paths, "models_dir", lambda: parker_models)
+    monkeypatch.setattr(paths, "hf_cache_dir", lambda: hf_cache)
+    _complete_snapshot(parker_models, files=("model.bin",))
+    complete = _complete_snapshot(hf_cache)
+    observed = []
+    _install_fake_whisper(monkeypatch, observed)
+
+    load_local_transcriber(model_size="base", initial_prompt="")
+
+    (target, kwargs), = observed
+    assert target == str(complete)
+    assert kwargs["local_files_only"] is True
+
+
 def test_split_utterances_on_sentence_boundaries():
     assert split_utterances(
         ["Remind me to water the plants. Tell Sarah the visit went well today."]

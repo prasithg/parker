@@ -9,6 +9,8 @@ re-downloaded.
 
 from pathlib import Path
 
+import pytest
+
 from app import paths
 
 
@@ -109,3 +111,131 @@ def test_location_prefers_parker_models_then_hf_cache(monkeypatch, tmp_path):
     _fake_model(parker_models, "base")
     assert paths.whisper_model_location("base") == "parker_models"
     assert paths.whisper_download_root("base") == parker_models
+
+
+# --- offline cached snapshot selection ----------------------------------
+#
+# faster-whisper with a bare model name asks the model hub for metadata on
+# process start, even when the weights are cached. A *complete* cached
+# snapshot (weights + config + tokenizer + vocabulary, under the revision
+# that refs/main names) can be handed to it as a directory instead; anything
+# less keeps the normal download/repair path so a half install never turns
+# into a broken offline load.
+
+_REQUIRED = ("model.bin", "config.json", "tokenizer.json")
+
+
+def _snapshot(root: Path, size: str, revision: str = "rev1", *, files=_REQUIRED + ("vocabulary.json",), ref=None) -> Path:
+    repo = root / f"models--Systran--faster-whisper-{size}"
+    snap = repo / "snapshots" / revision
+    snap.mkdir(parents=True, exist_ok=True)
+    for name in files:
+        (snap / name).write_text("synthetic")
+    (repo / "refs").mkdir(exist_ok=True)
+    (repo / "refs" / "main").write_text(revision if ref is None else ref)
+    return snap
+
+
+@pytest.fixture
+def caches(monkeypatch, tmp_path):
+    parker_models = tmp_path / "parker-models"
+    hf_cache = tmp_path / "hf-cache"
+    monkeypatch.setattr(paths, "models_dir", lambda: parker_models)
+    monkeypatch.setattr(paths, "hf_cache_dir", lambda: hf_cache)
+    return parker_models, hf_cache
+
+
+def test_cached_snapshot_none_when_nothing_is_installed(caches):
+    assert paths.cached_whisper_snapshot("base") is None
+
+
+@pytest.mark.parametrize("vocabulary", ["vocabulary.json", "vocabulary.txt"])
+def test_cached_snapshot_accepts_either_vocabulary_format(caches, vocabulary):
+    # Systran's faster-whisper-base ships vocabulary.txt, other sizes ship
+    # vocabulary.json; both are the complete tokenizer vocabulary.
+    parker_models, _ = caches
+    snap = _snapshot(parker_models, "base", files=_REQUIRED + (vocabulary,))
+    assert paths.cached_whisper_snapshot("base") == snap
+
+
+@pytest.mark.parametrize("missing", ["model.bin", "config.json", "tokenizer.json", "vocabulary"])
+def test_cached_snapshot_requires_every_file(caches, missing):
+    parker_models, _ = caches
+    files = tuple(name for name in _REQUIRED + ("vocabulary.json",) if not name.startswith(missing))
+    _snapshot(parker_models, "base", files=files)
+    assert paths.cached_whisper_snapshot("base") is None
+
+
+@pytest.mark.parametrize("empty", _REQUIRED + ("vocabulary.json",))
+def test_cached_snapshot_empty_files_are_incomplete(caches, empty):
+    parker_models, hf_cache = caches
+    broken = _snapshot(parker_models, "base")
+    (broken / empty).write_bytes(b"")
+    assert paths.cached_whisper_snapshot("base") is None
+    complete = _snapshot(hf_cache, "base")
+    assert paths.cached_whisper_snapshot("base") == complete
+
+
+def test_cached_snapshot_dangling_symlink_is_incomplete(caches):
+    # HF layout: snapshot files are symlinks into blobs/; a half download
+    # leaves a dangling model.bin link that must not count as complete.
+    parker_models, _ = caches
+    snap = _snapshot(parker_models, "base")
+    (snap / "model.bin").unlink()
+    (snap / "model.bin").symlink_to(snap / "missing-blob")
+    assert paths.cached_whisper_snapshot("base") is None
+
+
+@pytest.mark.parametrize("ref", ["", "   \n", ".", "..", "rev1/", "../snapshots/rev1", "snapshots/rev1", "/rev1"])
+def test_cached_snapshot_rejects_invalid_refs(caches, ref):
+    # The complete snapshot exists at rev1, and several of these refs would
+    # even resolve to it through path tricks — none may be honoured.
+    parker_models, _ = caches
+    _snapshot(parker_models, "base", ref=ref)
+    assert paths.cached_whisper_snapshot("base") is None
+
+
+def test_cached_snapshot_without_refs_main_is_not_selected(caches):
+    parker_models, _ = caches
+    snap = _snapshot(parker_models, "base")
+    (snap.parent.parent / "refs" / "main").unlink()
+    assert paths.cached_whisper_snapshot("base") is None
+
+
+def test_cached_snapshot_never_picks_an_unreferenced_revision(caches):
+    # refs/main names a revision that is not on disk while another complete
+    # snapshot is: the default revision is the contract, not "whatever is there".
+    parker_models, _ = caches
+    _snapshot(parker_models, "base", "rev1", ref="rev2")
+    assert paths.cached_whisper_snapshot("base") is None
+
+
+def test_partial_parker_cache_does_not_hide_a_complete_hf_cache(caches):
+    parker_models, hf_cache = caches
+    _snapshot(parker_models, "base", files=("model.bin",))
+    complete = _snapshot(hf_cache, "base")
+    assert paths.cached_whisper_snapshot("base") == complete
+    # Existing download-root semantics stay untouched: model.bin in
+    # PARKER_HOME/models still makes that the repair/download root.
+    assert paths.whisper_model_location("base") == "parker_models"
+    assert paths.whisper_download_root("base") == parker_models
+
+
+def test_invalid_parker_ref_does_not_hide_a_complete_hf_cache(caches):
+    parker_models, hf_cache = caches
+    _snapshot(parker_models, "base", ref="../snapshots/rev1")
+    complete = _snapshot(hf_cache, "base")
+    assert paths.cached_whisper_snapshot("base") == complete
+
+
+def test_complete_parker_cache_wins_over_complete_hf_cache(caches):
+    parker_models, hf_cache = caches
+    parker = _snapshot(parker_models, "base", "parker-rev")
+    _snapshot(hf_cache, "base", "hf-rev")
+    assert paths.cached_whisper_snapshot("base") == parker
+
+
+def test_cached_snapshot_is_per_model_size(caches):
+    parker_models, _ = caches
+    _snapshot(parker_models, "base")
+    assert paths.cached_whisper_snapshot("small") is None

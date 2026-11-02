@@ -171,12 +171,23 @@ def test_sessions_page_serves_with_conventions(db):
         "${d.note}",
         "${d.error}",
         "${d.action_type}",  # model-controlled — must never be interpolated
+        "${d.name}",
+        "${d.value}",
+        "${d.unit}",
+        "${d.turn_id}",
         "${a.action_type}",
         "${s.minted_memory}",
     ):
         assert dangerous not in page
     # the one-tap judgment control exists
     assert "Felt wrong" in page
+    # Realtime metrics are explicit proxies: the human review page names
+    # what each clock actually bounded instead of presenting fake end-to-end
+    # latency or a raw internal event name.
+    assert "provider stop notice → first local audio scheduled" in page
+    assert "speech start notice → local source-stop calls completed" in page
+    assert "turn reopened before matching output" in page
+    assert "Browser control-path proxy — not physical mic-to-speaker timing." in page
 
 
 def test_page_module_docstring_states_the_contract():

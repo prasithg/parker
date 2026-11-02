@@ -235,6 +235,16 @@ class ConverseStore:
         create_tables()
         return SessionLocal()
 
+    def transcriber(self):
+        """The warmed shared local transcriber, or None when unavailable.
+
+        The wake lane (app/parker/wake.py) runs on the SAME model the
+        push-button lane transcribes with — one load, one cache.
+        """
+
+        self._warm_transcriber()
+        return self._transcriber
+
     def _warm_transcriber(self) -> bool:
         """Load the shared local model exactly once; remember an unavailable state."""
 
@@ -243,15 +253,25 @@ class ConverseStore:
                 return True
             loader = self._transcriber_loader
             if loader is None:
+                from app.config import settings
                 from app.voice.transcribe import load_local_transcriber
 
-                loader = load_local_transcriber
+                def loader():  # the family's thread cap applies to the shared model
+                    return load_local_transcriber(cpu_threads=settings.parker_asr_cpu_threads)
             try:
                 self._transcriber = loader()
                 self._transcriber_error = None
                 return True
-            except RuntimeError as exc:
-                self._transcriber_error = str(exc)
+            except Exception as exc:  # noqa: BLE001 — any load failure is "unavailable", never a dead socket
+                # ImportError arrives as RuntimeError(VOICE_DEPS_HINT); the
+                # realistic first-run failures (weights not cached while
+                # offline, hub unreachable, a half-downloaded snapshot) are
+                # huggingface_hub's LocalEntryNotFoundError — a
+                # FileNotFoundError — and a bad model size is a ValueError.
+                # Not sticky: the next call retries the load, human-paced
+                # (the page powers off on "unavailable").
+                logger.warning("local transcriber failed to load: %s", exc, exc_info=True)
+                self._transcriber_error = str(exc) or type(exc).__name__
                 return False
 
     def _sweep_expired(self) -> None:
@@ -693,9 +713,33 @@ class ConverseStore:
                 "stop_to_silence_ms",
                 "capture_seconds",
                 "outcome",
+                "expression_dropped",
             }
             and isinstance(value, (int, float, str))
         }
+        # Bounded semantic presence transitions (what Reachy showed, when,
+        # and why) — the review trail for the Start/Done lane and the tail
+        # of a live session after its socket closed. Untrusted client
+        # input: allowlisted fields, typed, truncated, and capped.
+        transitions = marks.get("expression")
+        if isinstance(transitions, list):
+            cleaned = []
+            for item in transitions[:300]:
+                if not isinstance(item, dict):
+                    continue
+                entry: dict[str, Any] = {}
+                for field in ("from", "to", "action", "guard", "attention", "reason", "work"):
+                    value = item.get(field)
+                    if isinstance(value, str):
+                        entry[field] = value[:32]
+                for field in ("at_ms", "gen"):
+                    value = item.get(field)
+                    if isinstance(value, (int, float)):
+                        entry[field] = int(value)
+                if entry:
+                    cleaned.append(entry)
+            if cleaned:
+                allowed["expression"] = cleaned
         try:
             self._receipt_writer(
                 {
